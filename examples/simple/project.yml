@@ -1,0 +1,15 @@
+storage:
+  type: local
+  path: featherbox/storage
+
+database:
+  type: sqlite
+  path: featherbox/database.db
+
+connections:
+  test_data:
+    type: localfile
+    base_path: ./test_data
+
+deployments:
+  timeout: 600

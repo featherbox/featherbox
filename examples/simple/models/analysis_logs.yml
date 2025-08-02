@@ -1,0 +1,12 @@
+description: Logs for user analysis
+max_age: 86400
+sql: |
+  SELECT
+    timestamp,
+    path,
+    method,
+    status
+  FROM
+    logs
+  ORDER BY
+    timestamp DESC

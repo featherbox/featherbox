@@ -8,3 +8,4 @@ name = "fbox"
 path = "src/main.rs"
 
 [dependencies]
+yaml-rust2 = "0.10.3"
