@@ -239,9 +239,7 @@ graph TD
 CREATE TABLE IF NOT EXISTS nodes (
   id SERIAL PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
-  type VARCHAR(50) NOT NULL, -- 'adapter', 'model', 'pipeline'
-  config JSONB, -- configuration for the node
-  last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(name)
 );
 ```

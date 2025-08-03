@@ -1,17 +1,47 @@
-use std::fs;
-use yaml_rust2::YamlLoader;
+use anyhow::Result;
+use sqlparser::{ast::TableFactor, dialect::DuckDbDialect, parser::Parser};
 
 pub mod config;
+pub mod graph;
 
-fn main() {
-    let source = fs::read_to_string("examples/simple/project.yml").unwrap();
-    let project = &YamlLoader::load_from_str(&source).unwrap()[0];
-    let project = config::parse_project_config(project);
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config = config::parse_config("examples/simple".into());
+    println!("{config:#?}");
 
-    println!("{project:#?}");
+    let sql = "SELECT a, b FROM c AS d";
 
-    let source = fs::read_to_string("examples/simple/adapters/logs.yml").unwrap();
-    let adapter = &YamlLoader::load_from_str(&source).unwrap()[0];
-    let adapter = config::parse_adapter_config(adapter);
-    println!("{adapter:#?}");
+    let dialect = DuckDbDialect;
+    let ast = Parser::parse_sql(&dialect, sql).unwrap();
+
+    match ast[0] {
+        sqlparser::ast::Statement::Query(ref query) => match query.body.as_ref() {
+            sqlparser::ast::SetExpr::Select(select) => {
+                println!("{:?}", select.from[0].relation);
+                match &select.from[0].relation {
+                    TableFactor::Table { name, alias, .. } => {
+                        println!("Table name: {name}");
+                        if let Some(alias) = alias {
+                            println!("Alias: {}", alias.name);
+                        } else {
+                            println!("No alias provided");
+                        }
+                    }
+                    _ => {
+                        println!("Not a table factor");
+                    }
+                }
+            }
+            _ => {
+                println!("Not a SELECT statement");
+            }
+        },
+        _ => {
+            println!("Not a query statement");
+        }
+    }
+
+    // let db: DatabaseConnection = Database::connect("sqlite::memory:").await?;
+
+    Ok(())
 }

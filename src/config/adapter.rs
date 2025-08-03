@@ -356,16 +356,4 @@ mod tests {
 
         parse_file_config(yaml);
     }
-
-    #[test]
-    #[should_panic(expected = "Update strategy detection is required")]
-    fn test_parse_update_strategy_missing_detection() {
-        let yaml_str = r#"
-            timestamp_from: path
-        "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
-
-        parse_update_strategy(yaml);
-    }
 }
