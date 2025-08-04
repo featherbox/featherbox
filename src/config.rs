@@ -125,37 +125,34 @@ mod tests {
         fs::create_dir_all(project_path.join("models"))?;
 
         let project_yml = r#"
-storage:
-  type: local
-  path: ./storage
-database:
-  type: sqlite
-  path: ./database.db
-deployments:
-  timeout: 600
-connections: {}
-"#;
+            storage:
+              type: local
+              path: ./storage
+            database:
+              type: sqlite
+              path: ./database.db
+            deployments:
+              timeout: 600
+            connections: {}"#;
         fs::write(project_path.join("project.yml"), project_yml)?;
 
         let adapter_yml = r#"
-connection: test_connection
-description: "Test adapter"
-file:
-  path: test.csv
-  compression: none
-  max_batch_size: 100MB
-format:
-  type: csv
-  has_header: true
-columns: []
-"#;
+            connection: test_connection
+            description: "Test adapter"
+            file:
+              path: test.csv
+              compression: none
+              max_batch_size: 100MB
+            format:
+              type: csv
+              has_header: true
+            columns: []"#;
         fs::write(project_path.join("adapters/test_adapter.yml"), adapter_yml)?;
 
         let model_yml = r#"
-description: "Test model"
-sql: "SELECT * FROM test_adapter"
-max_age: 3600
-"#;
+            description: "Test model"
+            sql: "SELECT * FROM test_adapter"
+            max_age: 3600"#;
         fs::write(project_path.join("models/test_model.yml"), model_yml)?;
 
         let config = Config::load_from_directory(project_path)?;

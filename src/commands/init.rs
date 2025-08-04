@@ -56,12 +56,10 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // ファイル・ディレクトリの存在確認
         assert!(temp_dir.path().join("project.yml").exists());
         assert!(temp_dir.path().join("adapters").is_dir());
         assert!(temp_dir.path().join("models").is_dir());
 
-        // project.yml内容の確認
         let content = fs::read_to_string(temp_dir.path().join("project.yml"))?;
         assert!(content.contains("storage:"));
         assert!(content.contains("database:"));

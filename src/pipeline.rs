@@ -1,6 +1,10 @@
-use crate::{config::Config, ducklake::DuckLake, graph::Graph};
+use crate::{
+    config::Config,
+    ducklake::DuckLake,
+    graph::{Edge, Graph, Node},
+};
 use anyhow::Result;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
@@ -23,6 +27,11 @@ impl Pipeline {
             .collect();
 
         Pipeline { actions }
+    }
+
+    pub fn create_partial_pipeline(graph: &Graph, affected_nodes: &[String]) -> Self {
+        let subgraph = create_subgraph(graph, affected_nodes);
+        Self::from_graph(&subgraph)
     }
 
     pub async fn execute(&self, config: &Config, ducklake: &DuckLake) -> Result<()> {
@@ -93,6 +102,31 @@ fn topological_sort(graph: &Graph) -> Vec<String> {
     }
 
     sorted
+}
+
+fn create_subgraph(graph: &Graph, affected_nodes: &[String]) -> Graph {
+    let affected_set: HashSet<String> = affected_nodes.iter().cloned().collect();
+
+    let nodes: Vec<Node> = graph
+        .nodes
+        .iter()
+        .filter(|node| affected_set.contains(&node.name))
+        .map(|node| Node {
+            name: node.name.clone(),
+        })
+        .collect();
+
+    let edges: Vec<Edge> = graph
+        .edges
+        .iter()
+        .filter(|edge| affected_set.contains(&edge.from) && affected_set.contains(&edge.to))
+        .map(|edge| Edge {
+            from: edge.from.clone(),
+            to: edge.to.clone(),
+        })
+        .collect();
+
+    Graph { nodes, edges }
 }
 
 #[cfg(test)]
@@ -388,5 +422,114 @@ mod tests {
         assert_eq!(user_stats_result.len(), 2);
         assert_eq!(user_stats_result[0], vec!["1", "Alice", "1", "100"]);
         assert_eq!(user_stats_result[1], vec!["2", "Bob", "1", "200"]);
+    }
+
+    #[test]
+    fn test_create_partial_pipeline() {
+        let graph = Graph {
+            nodes: vec![
+                Node {
+                    name: "users".to_string(),
+                },
+                Node {
+                    name: "orders".to_string(),
+                },
+                Node {
+                    name: "user_stats".to_string(),
+                },
+                Node {
+                    name: "order_summary".to_string(),
+                },
+            ],
+            edges: vec![
+                Edge {
+                    from: "users".to_string(),
+                    to: "user_stats".to_string(),
+                },
+                Edge {
+                    from: "orders".to_string(),
+                    to: "user_stats".to_string(),
+                },
+                Edge {
+                    from: "orders".to_string(),
+                    to: "order_summary".to_string(),
+                },
+            ],
+        };
+
+        let affected_nodes = vec!["orders".to_string(), "user_stats".to_string()];
+        let partial_pipeline = Pipeline::create_partial_pipeline(&graph, &affected_nodes);
+
+        assert_eq!(partial_pipeline.actions.len(), 2);
+
+        let action_names: Vec<&str> = partial_pipeline
+            .actions
+            .iter()
+            .map(|a| a.table_name.as_str())
+            .collect();
+
+        assert!(action_names.contains(&"orders"));
+        assert!(action_names.contains(&"user_stats"));
+        assert!(!action_names.contains(&"users"));
+        assert!(!action_names.contains(&"order_summary"));
+
+        let orders_pos = partial_pipeline
+            .actions
+            .iter()
+            .position(|a| a.table_name == "orders")
+            .unwrap();
+        let user_stats_pos = partial_pipeline
+            .actions
+            .iter()
+            .position(|a| a.table_name == "user_stats")
+            .unwrap();
+
+        assert!(orders_pos < user_stats_pos);
+    }
+
+    #[test]
+    fn test_create_subgraph() {
+        let graph = Graph {
+            nodes: vec![
+                Node {
+                    name: "a".to_string(),
+                },
+                Node {
+                    name: "b".to_string(),
+                },
+                Node {
+                    name: "c".to_string(),
+                },
+                Node {
+                    name: "d".to_string(),
+                },
+            ],
+            edges: vec![
+                Edge {
+                    from: "a".to_string(),
+                    to: "b".to_string(),
+                },
+                Edge {
+                    from: "b".to_string(),
+                    to: "c".to_string(),
+                },
+                Edge {
+                    from: "c".to_string(),
+                    to: "d".to_string(),
+                },
+            ],
+        };
+
+        let affected_nodes = vec!["b".to_string(), "c".to_string()];
+        let subgraph = create_subgraph(&graph, &affected_nodes);
+
+        assert_eq!(subgraph.nodes.len(), 2);
+        let node_names: Vec<&str> = subgraph.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(node_names.contains(&"b"));
+        assert!(node_names.contains(&"c"));
+
+        assert_eq!(subgraph.edges.len(), 1);
+        assert_eq!(subgraph.edges[0].from, "b");
+        assert_eq!(subgraph.edges[0].to, "c");
     }
 }

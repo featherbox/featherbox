@@ -17,9 +17,13 @@ FeatherBox is a lightweight, easy-to-use data pipeline framework designed for de
 ## Command
 
 ```bash
-fbox init                  # Initialize a new FeatherBox project
-fbox adapter   new/delete  # Create or delete an adapter
-fbox model     new/delete  # Create or delete a model
+fbox init [project_name]   # Initialize a new FeatherBox project
+fbox adapter new <name>    # Create a new adapter
+fbox adapter delete <name> # Delete an adapter
+fbox model new <name>      # Create a new model
+fbox model delete <name>   # Delete a model
+fbox migrate up            # Apply pending migrations
+fbox migrate status        # Check migration status
 fbox run                   # Generate pipelines and run them
 ```
 
@@ -57,25 +61,16 @@ project.yml
 ```yaml
 storage:
   type: local
-  path: /home/user/featherbox/storage
+  path: ./storage
 
 database:
-  type: sqlite # or 'mysql', 'postgresql'
-  path: /home/user/featherbox/database.db
+  type: sqlite
+  path: ./database.db
 
 deployments:
-  timeout: 10m
+  timeout: 600
 
-connections:
-  app_logs:
-    type: s3
-    access_key: $YOUR_ACCESS_KEY
-    secret_key: $YOUR_SECRET_KEY
-    bucket: $YOUR_BUCKET_NAME
-    region: $YOUR_REGION
-    endpoint: https://s3.amazonaws.com
-    path_style: true
-    ssl: true
+connections: {}
 ```
 
 ### Adapters
@@ -97,10 +92,10 @@ update_strategy:
     since: 2023-01-01 00:00:00
 
 format:
-  type: 'csv'
-  delim: ' '
-  nullstr: '-'
-  header: false
+  type: csv
+  delimiter: ' '
+  null_value: '-'
+  has_header: false
 
 columns:
   - name: timestamp
@@ -233,93 +228,45 @@ graph TD
 
 ## Database Schema
 
-### Nodes
-
 ```sql
-CREATE TABLE IF NOT EXISTS nodes (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(name)
-);
-```
-
-```sql
-CREATE TABLE IF NOT EXISTS edges (
-  id SERIAL PRIMARY KEY,
-  from_node_id INT NOT NULL,
-  to_node_id INT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (from_node_id) REFERENCES nodes(id),
-  FOREIGN KEY (to_node_id) REFERENCES nodes(id),
-  UNIQUE(from_node_id, to_node_id)
-);
-```
-
-### Pipelines
-
-```sql
-CREATE TABLE IF NOT EXISTS pipelines (
-  id SERIAL PRIMARY KEY,
-  commit_hash VARCHAR(64) NOT NULL, -- Git commit hash
-  type VARCHAR(50) NOT NULL, -- 'migrate' or 'sync'
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  status VARCHAR(50) NOT NULL, -- 'queued', 'running', 'completed'
-  action VARCHAR(50) NOT NULL,
+-- Graphs: Pipeline execution versions
+CREATE TABLE IF NOT EXISTS "__fbox_graphs" (
+  "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "created_at" datetime_text NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
-  id SERIAL PRIMARY KEY,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  pipeline_id INT NOT NULL,
-  table_name VARCHAR(255) NOT NULL,
-  update_since TIMESTAMP NOT NULL,
-  update_until TIMESTAMP NOT NULL,
-  execution_order INT NOT NULL, -- order of execution in the pipeline
-  execution_time_ms INT,
-  status VARCHAR(50) NOT NULL, -- 'queued', 'running', 'completed', 'failed'
-  FOREIGN KEY (pipeline_id) REFERENCES pipelines(id)
-);
-```
-
-### Delta
-
-```sql
-CREATE TABLE IF NOT EXISTS delta (
-  id SERIAL PRIMARY KEY,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  pipeline_id INT NOT NULL,
-  table_name VARCHAR(255) NOT NULL,
-  update_since TIMESTAMP NOT NULL,
-  update_until TIMESTAMP NOT NULL,
-  delta_records_path VARCHAR(255) NOT NULL, -- path to delta records file
+-- Pipelines: Execution records
+CREATE TABLE IF NOT EXISTS "__fbox_pipelines" (
+  "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "graph_id" integer NOT NULL,
+  "created_at" datetime_text NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY ("graph_id") REFERENCES "__fbox_graphs" ("id")
 );
 
-CREATE TABLE IF NOT EXISTS delta_records (
-  id SERIAL PRIMARY KEY,
-  type VARCHAR(50) NOT NULL, -- 'create', 'update', 'delete'
-  column_name VARCHAR(255) NOT NULL,
-  value TEXT NOT NULL
-);
-```
-
-### Deployments
-
-```sql
-CREATE TABLE IF NOT EXISTS deployments (
-  id SERIAL PRIMARY KEY,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  status VARCHAR(50) NOT NULL, -- 'running', 'completed', 'failed'
-  pipeline_id INT NOT NULL,
-  FOREIGN KEY (pipeline_id) REFERENCES pipelines(id)
+-- Nodes: Tables/models in the pipeline
+CREATE TABLE IF NOT EXISTS "__fbox_nodes" (
+  "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "graph_id" integer NOT NULL,
+  "name" varchar NOT NULL,
+  FOREIGN KEY ("graph_id") REFERENCES "__fbox_graphs" ("id")
 );
 
-CREATE TABLE IF NOT EXISTS deployment_logs (
-  id SERIAL PRIMARY KEY,
-  deployment_id INT NOT NULL,
-  message TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (deployment_id) REFERENCES deployments(id)
+-- Edges: Dependencies between nodes
+CREATE TABLE IF NOT EXISTS "__fbox_edges" (
+  "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "graph_id" integer NOT NULL,
+  "from_node" varchar NOT NULL,
+  "to_node" varchar NOT NULL,
+  FOREIGN KEY ("graph_id") REFERENCES "__fbox_graphs" ("id")
+);
+
+-- Pipeline Actions: Execution steps
+CREATE TABLE IF NOT EXISTS "__fbox_pipeline_actions" (
+  "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "pipeline_id" integer NOT NULL,
+  "table_name" varchar NOT NULL,
+  "execution_order" integer NOT NULL,
+  FOREIGN KEY ("pipeline_id") REFERENCES "__fbox_pipelines" ("id")
 );
 ```
 
@@ -363,8 +310,8 @@ fbox adapter new <adapter_name>
    - Registers adapter in database
 
 2. **Supported Types**
-   - **Time-series data**: S3, GCS, local files with pattern matching
-   - **Relational data**: MySQL, PostgreSQL with CDC or incremental updates
+   - **Time-series data**: Currently supports local files only (S3, GCS planned)
+   - **Relational data**: Currently supports SQLite only (MySQL, PostgreSQL planned)
 
 ### Delete Adapters
 

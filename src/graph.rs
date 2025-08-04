@@ -104,9 +104,7 @@ fn collect_table_names(table_factor: &TableFactor, tables: &mut Vec<String>) {
                 collect_table_names(&join.relation, tables);
             }
         }
-        _ => {
-            // Other table factors (subqueries, functions, etc.) don't represent direct table dependencies
-        }
+        _ => {}
     }
 }
 

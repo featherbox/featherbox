@@ -3,8 +3,13 @@ use clap::{Parser, Subcommand};
 
 pub mod commands;
 pub mod config;
+pub mod database;
 pub mod ducklake;
+pub mod entities;
 pub mod graph;
+pub mod impact_analysis;
+pub mod metadata;
+pub mod migration;
 pub mod pipeline;
 pub mod project;
 
@@ -17,51 +22,40 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new FeatherBox project
     Init {
-        /// Project name (optional)
         name: Option<String>,
     },
-    /// Manage adapters
     Adapter {
         #[command(subcommand)]
         action: AdapterAction,
     },
-    /// Manage models
     Model {
         #[command(subcommand)]
         action: ModelAction,
     },
-    /// Generate pipelines and run them
     Run,
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateAction {
+    Up,
+    Status,
 }
 
 #[derive(Subcommand)]
 enum AdapterAction {
-    /// Create a new adapter
-    New {
-        /// Adapter name
-        name: String,
-    },
-    /// Delete an adapter
-    Delete {
-        /// Adapter name
-        name: String,
-    },
+    New { name: String },
+    Delete { name: String },
 }
 
 #[derive(Subcommand)]
 enum ModelAction {
-    /// Create a new model
-    New {
-        /// Model name
-        name: String,
-    },
-    /// Delete a model
-    Delete {
-        /// Model name
-        name: String,
-    },
+    New { name: String },
+    Delete { name: String },
 }
 
 #[tokio::main]
@@ -86,6 +80,10 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Run => commands::run::execute_run(&current_dir).await,
+        Commands::Migrate { action } => match action {
+            MigrateAction::Up => commands::migrate::execute_migrate_up(&current_dir).await,
+            MigrateAction::Status => commands::migrate::execute_migrate_status(&current_dir).await,
+        },
     };
 
     if let Err(err) = result {
