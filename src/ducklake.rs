@@ -73,8 +73,7 @@ impl DuckLake {
         Ok(())
     }
 
-    pub async fn extract_and_load(&self, adapter: &AdapterConfig) -> Result<()> {
-        let table_name = &adapter.connection;
+    pub async fn extract_and_load(&self, adapter: &AdapterConfig, table_name: &str) -> Result<()> {
         let create_and_load_sql = self.build_create_and_load_sql(table_name, adapter)?;
 
         self.connection
@@ -88,9 +87,13 @@ impl DuckLake {
         let create_table_sql =
             format!("CREATE OR REPLACE TABLE {} AS ({});", model_name, model.sql);
 
+        println!("    Executing SQL: {create_table_sql}");
+
         self.connection
             .execute_batch(&create_table_sql)
-            .context("Failed to execute model transformation")?;
+            .with_context(|| {
+                format!("Failed to execute model transformation. SQL: {create_table_sql}")
+            })?;
 
         Ok(())
     }

@@ -5,7 +5,7 @@ pub struct ModelConfig {
     pub sql: String,
 }
 
-pub fn parse_model_config(yaml: &yaml_rust2::Yaml) -> ModelConfig {
+pub fn parse_model_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<ModelConfig> {
     let description = yaml["description"].as_str().map(|s| s.to_string());
     let max_age = yaml["max_age"].as_i64().map(|v| v as u64);
 
@@ -14,11 +14,11 @@ pub fn parse_model_config(yaml: &yaml_rust2::Yaml) -> ModelConfig {
         .expect("Model SQL is required")
         .to_string();
 
-    ModelConfig {
+    Ok(ModelConfig {
         description,
         max_age,
         sql,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -45,7 +45,7 @@ mod tests {
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        let config = parse_model_config(yaml);
+        let config = parse_model_config(yaml).unwrap();
 
         assert_eq!(
             config.description,
@@ -66,7 +66,7 @@ mod tests {
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        let config = parse_model_config(yaml);
+        let config = parse_model_config(yaml).unwrap();
 
         assert_eq!(config.description, None);
         assert_eq!(config.max_age, None);
@@ -95,7 +95,7 @@ mod tests {
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        let config = parse_model_config(yaml);
+        let config = parse_model_config(yaml).unwrap();
 
         assert_eq!(
             config.description,
@@ -116,6 +116,6 @@ mod tests {
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        parse_model_config(yaml);
+        parse_model_config(yaml).unwrap();
     }
 }

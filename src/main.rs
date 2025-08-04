@@ -32,6 +32,8 @@ enum Commands {
         #[command(subcommand)]
         action: ModelAction,
     },
+    /// Generate pipelines and run them
+    Run,
 }
 
 #[derive(Subcommand)]
@@ -83,6 +85,7 @@ async fn main() -> Result<()> {
                 commands::model::execute_model_delete(name, &current_dir)
             }
         },
+        Commands::Run => commands::run::execute_run(&current_dir).await,
     };
 
     if let Err(err) = result {

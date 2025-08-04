@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod init;
 pub mod model;
+pub mod run;
 
 pub const ADAPTER_TEMPLATE: &str = include_str!("templates/adapter.yml");
 pub const MODEL_TEMPLATE: &str = include_str!("templates/model.yml");

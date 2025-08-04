@@ -43,7 +43,7 @@ pub struct ColumnConfig {
     pub description: Option<String>,
 }
 
-pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> AdapterConfig {
+pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterConfig> {
     let connection = yaml["connection"]
         .as_str()
         .expect("Adapter connection is required")
@@ -56,14 +56,14 @@ pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> AdapterConfig {
     let format = parse_format_config(&yaml["format"]);
     let columns = parse_columns(&yaml["columns"]);
 
-    AdapterConfig {
+    Ok(AdapterConfig {
         connection,
         description,
         file,
         update_strategy,
         format,
         columns,
-    }
+    })
 }
 
 fn parse_file_config(yaml: &yaml_rust2::Yaml) -> FileConfig {
@@ -186,7 +186,7 @@ mod tests {
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        let config = parse_adapter_config(yaml);
+        let config = parse_adapter_config(yaml).unwrap();
 
         assert_eq!(config.connection, "test_data");
         assert_eq!(
@@ -342,7 +342,7 @@ mod tests {
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        parse_adapter_config(yaml);
+        parse_adapter_config(yaml).unwrap();
     }
 
     #[test]

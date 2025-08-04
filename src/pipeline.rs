@@ -31,10 +31,15 @@ impl Pipeline {
 
             if let Some(adapter) = config.adapters.get(&action.table_name) {
                 println!("  Loading adapter: {}", action.table_name);
-                ducklake.extract_and_load(adapter).await?;
+                ducklake
+                    .extract_and_load(adapter, &action.table_name)
+                    .await?;
             } else if let Some(model) = config.models.get(&action.table_name) {
                 println!("  Executing model: {}", action.table_name);
-                ducklake.transform(model, &action.table_name).await?;
+                if let Err(e) = ducklake.transform(model, &action.table_name).await {
+                    eprintln!("    Transform failed: {e}");
+                    return Err(e);
+                }
             } else {
                 return Err(anyhow::anyhow!(
                     "Table '{}' not found in adapters or models",
