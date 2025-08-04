@@ -4,10 +4,10 @@ use std::fs;
 use super::{render_model_template, validate_name};
 use crate::project::ensure_project_directory;
 
-pub fn execute_model_new(name: &str) -> Result<()> {
+pub fn execute_model_new(name: &str, project_path: &std::path::Path) -> Result<()> {
     validate_name(name)?;
 
-    let project_root = ensure_project_directory(None)?;
+    let project_root = ensure_project_directory(Some(project_path))?;
     let model_file = project_root.join("models").join(format!("{name}.yml"));
 
     if model_file.exists() {
@@ -22,10 +22,10 @@ pub fn execute_model_new(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn execute_model_delete(name: &str) -> Result<()> {
+pub fn execute_model_delete(name: &str, project_path: &std::path::Path) -> Result<()> {
     validate_name(name)?;
 
-    let project_root = ensure_project_directory(None)?;
+    let project_root = ensure_project_directory(Some(project_path))?;
     let model_file = project_root.join("models").join(format!("{name}.yml"));
 
     if !model_file.exists() {
@@ -59,13 +59,8 @@ mod tests {
     #[test]
     fn test_execute_model_new_success() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_model_new("user_stats");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_model_new("user_stats", temp_dir.path());
 
         assert!(result.is_ok());
 
@@ -83,15 +78,10 @@ mod tests {
     #[test]
     fn test_execute_model_new_already_exists() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
         fs::write(temp_dir.path().join("models/existing.yml"), "test")?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_model_new("existing");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_model_new("existing", temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
@@ -102,15 +92,10 @@ mod tests {
     #[test]
     fn test_execute_model_delete_success() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
         fs::write(temp_dir.path().join("models/to_delete.yml"), "test")?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_model_delete("to_delete");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_model_delete("to_delete", temp_dir.path());
 
         assert!(result.is_ok());
         assert!(!temp_dir.path().join("models/to_delete.yml").exists());
@@ -121,13 +106,8 @@ mod tests {
     #[test]
     fn test_execute_model_delete_not_exists() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_model_delete("nonexistent");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_model_delete("nonexistent", temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("does not exist"));

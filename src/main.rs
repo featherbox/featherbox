@@ -65,16 +65,23 @@ enum ModelAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let current_dir = std::env::current_dir()?;
 
     let result = match &cli.command {
-        Commands::Init { name } => commands::init::execute_init(name.as_deref()),
+        Commands::Init { name } => commands::init::execute_init(name.as_deref(), &current_dir),
         Commands::Adapter { action } => match action {
-            AdapterAction::New { name } => commands::adapter::execute_adapter_new(name),
-            AdapterAction::Delete { name } => commands::adapter::execute_adapter_delete(name),
+            AdapterAction::New { name } => {
+                commands::adapter::execute_adapter_new(name, &current_dir)
+            }
+            AdapterAction::Delete { name } => {
+                commands::adapter::execute_adapter_delete(name, &current_dir)
+            }
         },
         Commands::Model { action } => match action {
-            ModelAction::New { name } => commands::model::execute_model_new(name),
-            ModelAction::Delete { name } => commands::model::execute_model_delete(name),
+            ModelAction::New { name } => commands::model::execute_model_new(name, &current_dir),
+            ModelAction::Delete { name } => {
+                commands::model::execute_model_delete(name, &current_dir)
+            }
         },
     };
 

@@ -4,10 +4,10 @@ use std::fs;
 use super::{render_adapter_template, validate_name};
 use crate::project::ensure_project_directory;
 
-pub fn execute_adapter_new(name: &str) -> Result<()> {
+pub fn execute_adapter_new(name: &str, project_path: &std::path::Path) -> Result<()> {
     validate_name(name)?;
 
-    let project_root = ensure_project_directory(None)?;
+    let project_root = ensure_project_directory(Some(project_path))?;
     let adapter_file = project_root.join("adapters").join(format!("{name}.yml"));
 
     if adapter_file.exists() {
@@ -22,10 +22,10 @@ pub fn execute_adapter_new(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn execute_adapter_delete(name: &str) -> Result<()> {
+pub fn execute_adapter_delete(name: &str, project_path: &std::path::Path) -> Result<()> {
     validate_name(name)?;
 
-    let project_root = ensure_project_directory(None)?;
+    let project_root = ensure_project_directory(Some(project_path))?;
     let adapter_file = project_root.join("adapters").join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
@@ -59,14 +59,8 @@ mod tests {
     #[test]
     fn test_execute_adapter_new_success() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
-        let result = {
-            std::env::set_current_dir(temp_dir.path())?;
-            let result = execute_adapter_new("test_logs");
-            std::env::set_current_dir(&original_dir)?;
-            result
-        };
+        let result = execute_adapter_new("test_logs", temp_dir.path());
 
         assert!(result.is_ok());
 
@@ -84,15 +78,10 @@ mod tests {
     #[test]
     fn test_execute_adapter_new_already_exists() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
         fs::write(temp_dir.path().join("adapters/existing.yml"), "test")?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_adapter_new("existing");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_adapter_new("existing", temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
@@ -103,15 +92,10 @@ mod tests {
     #[test]
     fn test_execute_adapter_delete_success() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
         fs::write(temp_dir.path().join("adapters/to_delete.yml"), "test")?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_adapter_delete("to_delete");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_adapter_delete("to_delete", temp_dir.path());
 
         assert!(result.is_ok());
         assert!(!temp_dir.path().join("adapters/to_delete.yml").exists());
@@ -122,13 +106,8 @@ mod tests {
     #[test]
     fn test_execute_adapter_delete_not_exists() -> Result<()> {
         let temp_dir = setup_test_project()?;
-        let original_dir = std::env::current_dir()?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_adapter_delete("nonexistent");
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_adapter_delete("nonexistent", temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("does not exist"));

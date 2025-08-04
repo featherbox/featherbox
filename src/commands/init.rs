@@ -2,17 +2,15 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
-pub fn execute_init(project_name: Option<&str>) -> Result<()> {
-    let current_dir = std::env::current_dir()?;
-
-    if current_dir.join("project.yml").exists() {
+pub fn execute_init(project_name: Option<&str>, project_path: &Path) -> Result<()> {
+    if project_path.join("project.yml").exists() {
         return Err(anyhow::anyhow!(
             "FeatherBox project already exists in this directory"
         ));
     }
 
-    create_project_structure(&current_dir)?;
-    create_project_yml(&current_dir, project_name)?;
+    create_project_structure(project_path)?;
+    create_project_yml(project_path, project_name)?;
 
     println!("FeatherBox project initialized successfully");
     Ok(())
@@ -53,16 +51,8 @@ mod tests {
     #[test]
     fn test_execute_init_success() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let original_dir = std::env::current_dir()?;
 
-        let result = {
-            // 一時ディレクトリに移動
-            std::env::set_current_dir(temp_dir.path())?;
-            let result = execute_init(None);
-            // 元のディレクトリに戻す
-            std::env::set_current_dir(&original_dir)?;
-            result
-        };
+        let result = execute_init(None, temp_dir.path());
 
         assert!(result.is_ok());
 
@@ -84,15 +74,10 @@ mod tests {
     #[test]
     fn test_execute_init_already_exists() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let original_dir = std::env::current_dir()?;
 
         fs::write(temp_dir.path().join("project.yml"), "existing")?;
 
-        std::env::set_current_dir(temp_dir.path())?;
-
-        let result = execute_init(None);
-
-        std::env::set_current_dir(&original_dir)?;
+        let result = execute_init(None, temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
