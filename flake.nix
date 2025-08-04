@@ -84,9 +84,11 @@
               sqlite.dev
               duckdb-131
               duckdb-cli-131
+              gcc
+              stdenv.cc.cc.lib
             ];
             shellHook = ''
-              export LD_LIBRARY_PATH="${duckdb-131}/lib:$LD_LIBRARY_PATH"
+              export LD_LIBRARY_PATH="${duckdb-131}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
               export PKG_CONFIG_PATH="${duckdb-131}/lib/pkgconfig:$PKG_CONFIG_PATH"
             '';
           };

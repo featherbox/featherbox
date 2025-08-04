@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo fix --allow-dirty && cargo fmt"
+            "command": "cargo fix --allow-dirty && cargo clippy --fix --allow-dirty && cargo fmt"
           }
         ]
       }
