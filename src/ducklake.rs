@@ -122,7 +122,7 @@ impl DuckLake {
                     Ok(Value::Double(f)) => f.to_string(),
                     Ok(Value::Decimal(d)) => d.to_string(),
                     Ok(Value::Text(s)) => s,
-                    Ok(Value::Blob(b)) => format!("{:?}", b),
+                    Ok(Value::Blob(b)) => format!("{b:?}"),
                     Ok(Value::Date32(d)) => d.to_string(),
                     Ok(Value::Time64(_, t)) => t.to_string(),
                     Ok(Value::Timestamp(_, t)) => t.to_string(),
@@ -131,10 +131,7 @@ impl DuckLake {
                         days,
                         nanos,
                     }) => {
-                        format!(
-                            "Interval({} months, {} days, {} nanos)",
-                            months, days, nanos
-                        )
+                        format!("Interval({months} months, {days} days, {nanos} nanos)")
                     }
                     Ok(_) => "UNKNOWN".to_string(),
                     Err(_) => "ERROR".to_string(),
@@ -253,8 +250,7 @@ mod tests {
         let dialect = DuckDbDialect {};
         let parsed = Parser::parse_sql(&dialect, &sql).unwrap();
 
-        let expected_sql =
-            "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto('test.csv', header=true);";
+        let expected_sql = "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto('test.csv', header=true);";
         let expected_parsed = Parser::parse_sql(&dialect, expected_sql).unwrap();
 
         assert_eq!(parsed, expected_parsed);

@@ -314,7 +314,8 @@ mod tests {
                         orders o ON u.id = o.user_id
                     GROUP BY
                         u.id, u.name
-                "#.to_string(),
+                "#
+                .to_string(),
             },
         );
 
