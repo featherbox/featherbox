@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 
 use super::{render_adapter_template, validate_name};
-use crate::project::ensure_project_directory;
+use crate::commands::workspace::ensure_project_directory;
 
 pub fn execute_adapter_new(name: &str, project_path: &std::path::Path) -> Result<()> {
     validate_name(name)?;

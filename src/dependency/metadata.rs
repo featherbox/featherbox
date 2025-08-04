@@ -5,9 +5,9 @@ use sea_orm::{
 };
 use std::collections::HashSet;
 
-use crate::entities::{edges, graphs, nodes, pipeline_actions, pipelines};
-use crate::graph::Graph;
-use crate::pipeline::Pipeline;
+use crate::database::entities::{edges, graphs, nodes, pipeline_actions, pipelines};
+use crate::dependency::graph::Graph;
+use crate::pipeline::execution::Pipeline;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphChanges {
@@ -167,9 +167,9 @@ mod tests {
     use super::*;
     use crate::config::project::{DatabaseConfig, DatabaseType, ProjectConfig};
     use crate::database::connect_app_db;
-    use crate::graph::Node;
-    use crate::migration::Migrator;
-    use crate::pipeline::Action;
+    use crate::database::migration::Migrator;
+    use crate::dependency::graph::Node;
+    use crate::pipeline::execution::Action;
     use sea_orm_migration::MigratorTrait;
     use tempfile;
 
@@ -338,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_added_edges() -> Result<()> {
-        use crate::graph::Edge;
+        use crate::dependency::graph::Edge;
 
         let db = setup_test_db().await?;
 
@@ -399,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_removed_edges() -> Result<()> {
-        use crate::graph::Edge;
+        use crate::dependency::graph::Edge;
 
         let db = setup_test_db().await?;
 
@@ -460,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_multiple_changes() -> Result<()> {
-        use crate::graph::Edge;
+        use crate::dependency::graph::Edge;
 
         let db = setup_test_db().await?;
 

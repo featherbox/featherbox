@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::graph::Graph;
-use crate::metadata::GraphChanges;
+use crate::dependency::graph::Graph;
+use crate::dependency::metadata::GraphChanges;
 
 pub fn calculate_affected_nodes(graph: &Graph, changes: &GraphChanges) -> Vec<String> {
     let mut affected_nodes = HashSet::new();
@@ -57,7 +57,7 @@ fn build_adjacency_map(graph: &Graph) -> HashMap<String, Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{Edge, Graph, Node};
+    use crate::dependency::graph::{Edge, Graph, Node};
 
     #[test]
     fn test_calculate_affected_nodes_simple() {

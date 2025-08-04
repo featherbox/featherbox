@@ -2,14 +2,11 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::{
+    commands::workspace::ensure_project_directory,
     config::Config,
     database::{check_migration_status, connect_app_db},
-    ducklake::{CatalogConfig, DuckLake, StorageConfig},
-    graph::Graph,
-    impact_analysis::calculate_affected_nodes,
-    metadata::{detect_changes, save_execution_history},
-    pipeline::Pipeline,
-    project::ensure_project_directory,
+    dependency::{Graph, calculate_affected_nodes, detect_changes, save_execution_history},
+    pipeline::{CatalogConfig, DuckLake, Pipeline, StorageConfig},
 };
 
 #[cfg(test)]
@@ -96,8 +93,8 @@ pub async fn execute_run(project_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::Node;
-    use crate::pipeline::Action;
+    use crate::dependency::graph::Node;
+    use crate::pipeline::execution::Action;
     use std::fs;
     use tempfile;
 
@@ -234,7 +231,7 @@ mod tests {
 
         let config = Config::load_from_directory(project_path)?;
         let app_db = connect_app_db(&config.project).await?;
-        crate::migration::Migrator::up(&app_db, None).await?;
+        crate::database::migration::Migrator::up(&app_db, None).await?;
 
         let result = execute_run(project_path).await;
         assert!(result.is_ok());
@@ -332,7 +329,7 @@ mod tests {
 
         let config = Config::load_from_directory(project_path)?;
         let app_db = connect_app_db(&config.project).await?;
-        crate::migration::Migrator::up(&app_db, None).await?;
+        crate::database::migration::Migrator::up(&app_db, None).await?;
 
         let initial_graph = Graph {
             nodes: vec![Node {
@@ -455,7 +452,7 @@ mod tests {
 
         let config = Config::load_from_directory(project_path)?;
         let app_db = connect_app_db(&config.project).await?;
-        crate::migration::Migrator::up(&app_db, None).await?;
+        crate::database::migration::Migrator::up(&app_db, None).await?;
 
         let initial_graph = Graph::from_config(&config)?;
         let initial_pipeline = Pipeline::from_graph(&initial_graph);

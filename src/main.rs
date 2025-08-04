@@ -4,14 +4,8 @@ use clap::{Parser, Subcommand};
 pub mod commands;
 pub mod config;
 pub mod database;
-pub mod ducklake;
-pub mod entities;
-pub mod graph;
-pub mod impact_analysis;
-pub mod metadata;
-pub mod migration;
+pub mod dependency;
 pub mod pipeline;
-pub mod project;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

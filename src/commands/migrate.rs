@@ -4,8 +4,9 @@ use sea_orm_migration::prelude::*;
 use std::path::Path;
 
 use crate::{
-    config::Config, database::connect_app_db, migration::Migrator,
-    project::ensure_project_directory,
+    commands::workspace::ensure_project_directory,
+    config::Config,
+    database::{connect_app_db, migration::Migrator},
 };
 
 pub async fn execute_migrate_up(project_path: &Path) -> Result<()> {

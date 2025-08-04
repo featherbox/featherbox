@@ -25,25 +25,47 @@ target/debug/fbox run                     # Execute pipeline
 
 ## Architecture Overview
 
-### Core Components
+### Domain-Based Architecture
 
-1. **CLI (`src/main.rs`)**: Command routing and argument parsing using clap
-2. **Configuration System (`src/config/`)**: YAML-based configuration loading
-   - `project.rs`: Project-wide settings (storage, database, connections)
-   - `adapter.rs`: Data source definitions (CSV, JSON, Parquet)
-   - `model.rs`: SQL-based transformation definitions
-3. **Graph Engine (`src/graph.rs`)**: Dependency analysis and DAG generation
-4. **Pipeline (`src/pipeline.rs`)**: Execution orchestration with topological sorting
-5. **DuckLake (`src/ducklake.rs`)**: DuckDB integration for data processing
-6. **Metadata (`src/metadata.rs`)**: Change detection and execution history using Sea-ORM
+FeatherBox follows domain-driven design principles with clear separation of concerns:
+
+1. **CLI Commands Domain (`src/commands/`)**: Command interface and workspace management
+   - `workspace.rs`: Project directory detection and workspace management
+   - `init.rs`, `adapter.rs`, `model.rs`, `run.rs`, `migrate.rs`: Individual command implementations
+   - `templates/`: YAML templates for configuration generation
+
+2. **Configuration Domain (`src/config/`)**: YAML-based configuration management
+   - `project.rs`: Project-wide settings structure (storage, database, connections)
+   - `adapter.rs`: Data source configuration structures (CSV, JSON, Parquet)
+   - `model.rs`: SQL transformation configuration structures
+
+3. **Pipeline Execution Domain (`src/pipeline/`)**: Data processing pipeline
+   - `execution.rs`: Pipeline orchestration with topological sorting
+   - `ducklake.rs`: DuckDB integration for ELT operations
+
+4. **Dependency Resolution Domain (`src/dependency/`)**: Graph analysis and change detection
+   - `graph.rs`: Dependency analysis and DAG generation from SQL parsing
+   - `impact_analysis.rs`: Change impact analysis for differential execution  
+   - `metadata.rs`: Change detection and execution history management
+
+5. **Database Layer (`src/database/`)**: Persistence and migrations
+   - `connection.rs`: Database connection management
+   - `entities/`: Sea-ORM entity definitions for metadata storage
+   - `migration/`: Database schema migrations
 
 ### Data Flow
 
 ```
-Data Sources → Adapters → Graph → Pipeline → DuckLake → Results
+Data Sources → Configuration → Dependency Resolution → Pipeline Execution → Results
+     ↓              ↓                    ↓                      ↓
+  Adapters    →  Graph Analysis  →  Impact Analysis  →  DuckDB Processing
 ```
 
-The system automatically builds a dependency graph from SQL analysis, performs topological sorting for execution order, and uses differential execution to avoid unnecessary reprocessing.
+The system follows a domain-driven approach:
+1. **Configuration Domain** loads and validates YAML settings
+2. **Dependency Resolution Domain** builds dependency graphs from SQL analysis and detects changes
+3. **Pipeline Execution Domain** performs topological sorting and executes ELT operations
+4. **Database Layer** handles metadata persistence and change tracking for differential execution
 
 ### Database Schema
 
@@ -78,7 +100,7 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 - Configuration loading with proper error reporting
 
 ### Migration System
-- Sea-ORM migrations in `src/migration/`
+- Sea-ORM migrations in `src/database/migration/`
 - Separate `fbox migrate` command for schema management
 - `fbox run` fails if pending migrations exist
 - Embedded migrations for single-binary distribution
@@ -86,19 +108,29 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 ## Key Implementation Details
 
 ### Dependency Detection
-SQL parsing using `sqlparser` crate to extract table references and build dependency graphs. Circular dependency detection prevents invalid configurations.
+Implemented in `src/dependency/graph.rs` using `sqlparser` crate to extract table references and build dependency graphs. Circular dependency detection prevents invalid configurations.
 
 ### Differential Execution
-Compares current graph structure with previously executed graphs to determine if processing is needed. Only executes when changes are detected.
+Implemented across the Dependency Resolution Domain:
+- `src/dependency/metadata.rs`: Compares current graph structure with previously executed graphs
+- `src/dependency/impact_analysis.rs`: Calculates downstream impact of changes  
+- Only executes affected parts of the pipeline when changes are detected
 
 ### Async Architecture
 Uses Tokio runtime throughout with proper async/await patterns. Database operations and file I/O are async.
 
 ### Single Binary Design
 All functionality is embedded in a single binary including:
-- Templates for adapter/model creation
-- Database migrations
+- Templates for adapter/model creation (`src/commands/templates/`)
+- Database migrations (`src/database/migration/`)
 - All dependencies statically linked
+
+### Domain Interaction Patterns
+- **Commands Domain** coordinates with all other domains for CLI operations
+- **Configuration Domain** provides validated settings to Pipeline and Dependency domains
+- **Dependency Resolution Domain** informs Pipeline Domain about what needs execution
+- **Database Layer** serves all domains for persistence needs
+- **Pipeline Execution Domain** focuses solely on data processing execution
 
 ## Configuration Structure
 
@@ -135,6 +167,40 @@ Contains SQL transformations with dependency resolution and caching settings (`m
 - **Refactor for clarity**: If code is unclear, extract functions with descriptive names instead of adding comments
 - **Function extraction**: Break down complex logic into small, well-named functions
 - **YAML string indentation**: In tests and template strings, use consistent indentation that matches the surrounding code context. Multi-line YAML strings should be indented to align with the code structure for better readability
+- **Domain-driven organization**: Keep related functionality within the same domain directory; cross-domain communication should be explicit and minimal
+
+## Directory Structure Guidelines
+
+### Domain Organization
+```
+src/
+├── main.rs                      # Application entry point
+├── commands.rs                  # CLI coordination and shared utilities
+├── config.rs                    # Configuration integration
+├── commands/                    # CLI Commands Domain
+│   ├── workspace.rs            # Project workspace management
+│   ├── [command].rs            # Individual command implementations
+│   └── templates/              # Configuration templates
+├── config/                      # Configuration Domain
+│   └── [type].rs              # Configuration structure definitions
+├── pipeline/                    # Pipeline Execution Domain
+│   ├── execution.rs           # Pipeline orchestration
+│   └── ducklake.rs           # Data processing engine
+├── dependency/                  # Dependency Resolution Domain
+│   ├── graph.rs              # Dependency graph construction
+│   ├── impact_analysis.rs    # Change impact analysis
+│   └── metadata.rs           # Change detection & execution history
+└── database/                    # Database Layer
+    ├── connection.rs         # Database connection management
+    ├── entities/             # ORM entity definitions  
+    └── migration/            # Schema migrations
+```
+
+### Module Naming Conventions
+- Domain directories use plural nouns (`commands/`, `config/`)
+- Domain coordination files use singular nouns (`commands.rs`, `config.rs`)
+- Avoid module inception (file names matching directory names)
+- Use descriptive names that indicate responsibility (`workspace.rs` vs `project.rs`)
 
 ## Important Notes
 
