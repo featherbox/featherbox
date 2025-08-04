@@ -3,8 +3,8 @@ pub mod init;
 pub mod model;
 pub mod run;
 
-pub const ADAPTER_TEMPLATE: &str = include_str!("templates/adapter.yml");
-pub const MODEL_TEMPLATE: &str = include_str!("templates/model.yml");
+pub const ADAPTER_TEMPLATE: &str = include_str!("commands/templates/adapter.yml");
+pub const MODEL_TEMPLATE: &str = include_str!("commands/templates/model.yml");
 
 pub fn render_adapter_template(name: &str) -> String {
     ADAPTER_TEMPLATE.replace("{name}", name)
@@ -14,7 +14,6 @@ pub fn render_model_template(name: &str) -> String {
     MODEL_TEMPLATE.replace("{name}", name)
 }
 
-// 共通のバリデーション関数
 pub fn validate_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() {
         return Err(anyhow::anyhow!("Name cannot be empty"));
@@ -46,8 +45,8 @@ mod tests {
     #[test]
     fn test_validate_name_invalid() {
         assert!(validate_name("").is_err());
-        assert!(validate_name("test adapter").is_err()); // スペース
-        assert!(validate_name("test@adapter").is_err()); // 特殊文字
-        assert!(validate_name("test/adapter").is_err()); // スラッシュ
+        assert!(validate_name("test adapter").is_err());
+        assert!(validate_name("test@adapter").is_err());
+        assert!(validate_name("test/adapter").is_err());
     }
 }
