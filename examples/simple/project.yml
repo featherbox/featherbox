@@ -1,5 +1,5 @@
 storage:
-  type: localfile
+  type: local
   path: featherbox/storage
 
 database:

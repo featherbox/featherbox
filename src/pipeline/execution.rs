@@ -312,6 +312,7 @@ mod tests {
                     has_header: Some(true),
                 },
                 columns: vec![],
+                limits: None,
             },
         );
         adapters.insert(
@@ -332,6 +333,7 @@ mod tests {
                     has_header: Some(true),
                 },
                 columns: vec![],
+                limits: None,
             },
         );
 

@@ -1,0 +1,28 @@
+connection: test_data
+description: 'Time series sensor data with date patterns'
+file:
+  path: test_data/time_series/{YYYY}-{MM}-{DD}T{HH}{mm}.json
+update_strategy:
+  detection: filename
+  timestamp_from: path
+  range:
+    since: "2024-01-15 10:00:00"
+    until: "2024-01-15 10:02:59"
+  limits:
+    max_files: 10
+    max_size: "10MB"
+format:
+  type: json
+columns:
+  - name: timestamp
+    type: DATETIME
+    description: 'Timestamp of the sensor reading'
+  - name: sensor_id
+    type: STRING
+    description: 'Unique identifier for the sensor'
+  - name: temperature
+    type: FLOAT
+    description: 'Temperature reading in Celsius'
+  - name: humidity
+    type: FLOAT
+    description: 'Humidity reading as percentage'

@@ -1,7 +1,7 @@
 connection: test_data
 description: 'Configuration for processing web server logs'
 file:
-  path: test.log
+  path: test_data/app_logs/logs_*.json
   max_batch_size: 100MB
 format:
   type: 'json'

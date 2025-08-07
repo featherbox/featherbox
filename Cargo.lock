@@ -873,6 +873,8 @@ dependencies = [
  "chrono",
  "clap",
  "duckdb",
+ "glob",
+ "regex",
  "sea-orm",
  "sea-orm-migration",
  "sqlparser",

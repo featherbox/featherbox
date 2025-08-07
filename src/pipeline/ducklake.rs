@@ -1,4 +1,5 @@
 use crate::config::{adapter::AdapterConfig, model::ModelConfig};
+use crate::pipeline::file_pattern::FilePatternProcessor;
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::Path;
@@ -74,7 +75,10 @@ impl DuckLake {
     }
 
     pub async fn extract_and_load(&self, adapter: &AdapterConfig, table_name: &str) -> Result<()> {
-        let create_and_load_sql = self.build_create_and_load_sql(table_name, adapter)?;
+        let file_paths = FilePatternProcessor::process_pattern(&adapter.file.path, adapter)?;
+
+        let create_and_load_sql =
+            self.build_create_and_load_sql_multiple(table_name, adapter, &file_paths)?;
 
         self.connection
             .execute_batch(&create_and_load_sql)
@@ -147,13 +151,57 @@ impl DuckLake {
         Ok(results)
     }
 
-    fn build_create_and_load_sql(
+    fn build_create_and_load_sql_multiple(
         &self,
         table_name: &str,
         adapter: &AdapterConfig,
+        file_paths: &[String],
     ) -> Result<String> {
-        let file_path = &adapter.file.path;
+        if file_paths.is_empty() {
+            return Err(anyhow::anyhow!("No files to load"));
+        }
 
+        if file_paths.len() == 1 {
+            let file_path = &file_paths[0];
+            return self.build_create_and_load_sql_single(table_name, adapter, file_path);
+        }
+
+        let file_paths_str = file_paths
+            .iter()
+            .map(|p| format!("'{p}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        match adapter.format.ty.as_str() {
+            "csv" => {
+                let has_header = adapter.format.has_header.unwrap_or(true);
+                let sql = format!(
+                    "CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto([{file_paths_str}], header={has_header});"
+                );
+                Ok(sql)
+            }
+            "parquet" => {
+                let sql = format!(
+                    "CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_parquet([{file_paths_str}]);"
+                );
+                Ok(sql)
+            }
+            "json" => {
+                let sql = format!(
+                    "CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_json_auto([{file_paths_str}]);"
+                );
+                Ok(sql)
+            }
+            _ => Err(anyhow::anyhow!("Unsupported format: {}", adapter.format.ty)),
+        }
+    }
+
+    fn build_create_and_load_sql_single(
+        &self,
+        table_name: &str,
+        adapter: &AdapterConfig,
+        file_path: &str,
+    ) -> Result<String> {
         match adapter.format.ty.as_str() {
             "csv" => {
                 let has_header = adapter.format.has_header.unwrap_or(true);
@@ -244,10 +292,11 @@ mod tests {
                 has_header: None,
             },
             columns: vec![],
+            limits: None,
         };
 
         let sql = ducklake
-            .build_create_and_load_sql("test_table", &adapter)
+            .build_create_and_load_sql_single("test_table", &adapter, "test.csv")
             .unwrap();
 
         let dialect = DuckDbDialect {};
@@ -257,5 +306,138 @@ mod tests {
         let expected_parsed = Parser::parse_sql(&dialect, expected_sql).unwrap();
 
         assert_eq!(parsed, expected_parsed);
+    }
+
+    #[tokio::test]
+    async fn test_build_create_and_load_sql_with_wildcards() {
+        use std::fs;
+
+        let test_dir = "/tmp/ducklake_test_wildcards";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
+
+        let test_cases = vec![
+            (
+                "*.csv",
+                "csv",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto('*.csv', header=true);",
+            ),
+            (
+                "data/*.csv",
+                "csv",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto('data/*.csv', header=true);",
+            ),
+            (
+                "logs/*/*.csv",
+                "csv",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto('logs/*/*.csv', header=true);",
+            ),
+            (
+                "**/*.csv",
+                "csv",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto('**/*.csv', header=true);",
+            ),
+            (
+                "data/*.json",
+                "json",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_json_auto('data/*.json');",
+            ),
+            (
+                "logs/*/*.parquet",
+                "parquet",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_parquet('logs/*/*.parquet');",
+            ),
+            (
+                "2024/*/sales_*.parquet",
+                "parquet",
+                "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_parquet('2024/*/sales_*.parquet');",
+            ),
+        ];
+
+        for (path, format_type, expected_sql) in test_cases {
+            let adapter = AdapterConfig {
+                connection: "test_table".to_string(),
+                description: None,
+                file: FileConfig {
+                    path: path.to_string(),
+                    compression: None,
+                    max_batch_size: None,
+                },
+                update_strategy: None,
+                format: FormatConfig {
+                    ty: format_type.to_string(),
+                    delimiter: None,
+                    null_value: None,
+                    has_header: None,
+                },
+                columns: vec![],
+                limits: None,
+            };
+
+            let sql = ducklake
+                .build_create_and_load_sql_single("test_table", &adapter, path)
+                .unwrap();
+
+            assert_eq!(sql, expected_sql, "Failed for path: {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_build_create_and_load_sql_multiple() {
+        use std::fs;
+
+        let test_dir = "/tmp/ducklake_test_multiple";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
+
+        let adapter = AdapterConfig {
+            connection: "test_table".to_string(),
+            description: None,
+            file: FileConfig {
+                path: "data/logs.csv".to_string(),
+                compression: None,
+                max_batch_size: None,
+            },
+            update_strategy: None,
+            format: FormatConfig {
+                ty: "csv".to_string(),
+                delimiter: None,
+                null_value: None,
+                has_header: None,
+            },
+            columns: vec![],
+            limits: None,
+        };
+
+        let file_paths = vec![
+            "data/logs_2024-01-01.csv".to_string(),
+            "data/logs_2024-01-02.csv".to_string(),
+            "data/logs_2024-01-03.csv".to_string(),
+        ];
+
+        let sql = ducklake
+            .build_create_and_load_sql_multiple("test_table", &adapter, &file_paths)
+            .unwrap();
+
+        let expected_sql = "CREATE OR REPLACE TABLE test_table AS SELECT * FROM read_csv_auto(['data/logs_2024-01-01.csv', 'data/logs_2024-01-02.csv', 'data/logs_2024-01-03.csv'], header=true);";
+        assert_eq!(sql, expected_sql);
     }
 }

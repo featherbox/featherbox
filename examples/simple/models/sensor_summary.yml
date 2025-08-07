@@ -1,0 +1,13 @@
+sql: |
+  SELECT
+    sensor_id,
+    MIN(temperature) as min_temperature,
+    MAX(temperature) as max_temperature,
+    AVG(temperature) as avg_temperature,
+    COUNT(*) as reading_count
+  FROM
+    time_series_sensors
+  GROUP BY
+    sensor_id
+  ORDER BY
+    sensor_id

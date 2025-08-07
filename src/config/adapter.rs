@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AdapterConfig {
     pub connection: String,
     pub description: Option<String>,
@@ -6,6 +6,7 @@ pub struct AdapterConfig {
     pub update_strategy: Option<UpdateStrategyConfig>,
     pub format: FormatConfig,
     pub columns: Vec<ColumnConfig>,
+    pub limits: Option<LimitsConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,17 +16,25 @@ pub struct FileConfig {
     pub max_batch_size: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UpdateStrategyConfig {
     pub detection: String,
     pub timestamp_from: Option<String>,
     pub range: Option<RangeConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RangeConfig {
     pub since: Option<String>,
     pub until: Option<String>,
+    pub since_parsed: Option<chrono::NaiveDateTime>,
+    pub until_parsed: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitsConfig {
+    pub max_files: Option<u32>,
+    pub max_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +64,11 @@ pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterCo
     let update_strategy = parse_update_strategy(&yaml["update_strategy"]);
     let format = parse_format_config(&yaml["format"]);
     let columns = parse_columns(&yaml["columns"]);
+    let limits = if !yaml["limits"].is_badvalue() {
+        Some(parse_limits(&yaml["limits"]))
+    } else {
+        None
+    };
 
     Ok(AdapterConfig {
         connection,
@@ -63,6 +77,7 @@ pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterCo
         update_strategy,
         format,
         columns,
+        limits,
     })
 }
 
@@ -107,7 +122,49 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
     let since = yaml["since"].as_str().map(|s| s.to_string());
     let until = yaml["until"].as_str().map(|s| s.to_string());
 
-    RangeConfig { since, until }
+    let since_parsed = since
+        .as_ref()
+        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok());
+    let until_parsed = until
+        .as_ref()
+        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok());
+
+    RangeConfig {
+        since,
+        until,
+        since_parsed,
+        until_parsed,
+    }
+}
+
+fn parse_limits(yaml: &yaml_rust2::Yaml) -> LimitsConfig {
+    let max_files = yaml["max_files"].as_i64().map(|i| i as u32);
+    let max_size_bytes = yaml["max_size"]
+        .as_str()
+        .and_then(|s| parse_size_to_bytes(s).ok());
+
+    LimitsConfig {
+        max_files,
+        max_size_bytes,
+    }
+}
+
+fn parse_size_to_bytes(size_str: &str) -> anyhow::Result<u64> {
+    let size_str = size_str.to_uppercase();
+    if size_str.ends_with("GB") {
+        let num: u64 = size_str[..size_str.len() - 2].parse()?;
+        Ok(num * 1024 * 1024 * 1024)
+    } else if size_str.ends_with("MB") {
+        let num: u64 = size_str[..size_str.len() - 2].parse()?;
+        Ok(num * 1024 * 1024)
+    } else if size_str.ends_with("KB") {
+        let num: u64 = size_str[..size_str.len() - 2].parse()?;
+        Ok(num * 1024)
+    } else {
+        size_str
+            .parse::<u64>()
+            .map_err(|e| anyhow::anyhow!("Invalid size format: {}", e))
+    }
 }
 
 fn parse_format_config(yaml: &yaml_rust2::Yaml) -> FormatConfig {
