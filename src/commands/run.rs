@@ -4,15 +4,13 @@ use std::path::Path;
 use crate::{
     commands::workspace::ensure_project_directory,
     config::Config,
-    database::ensure_database_ready,
-    dependency::{Graph, calculate_affected_nodes, detect_changes, save_execution_history},
+    database::connect_app_db,
+    dependency::{Graph, get_latest_graph_id, save_pipeline_execution},
     pipeline::{CatalogConfig, DuckLake, Pipeline, StorageConfig},
 };
 
 #[cfg(test)]
-use crate::database::connect_app_db;
-#[cfg(test)]
-use sea_orm_migration::MigratorTrait;
+use crate::dependency::{calculate_affected_nodes, detect_changes, save_execution_history};
 
 pub async fn execute_run(project_path: &Path) -> Result<()> {
     let project_root = ensure_project_directory(Some(project_path))?;
@@ -26,45 +24,34 @@ pub async fn execute_run(project_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let app_db = ensure_database_ready(&config.project).await?;
+    let app_db = connect_app_db(&config.project).await?;
 
-    let current_graph = Graph::from_config(&config)?;
+    let graph_id = get_latest_graph_id(&app_db).await?;
 
-    let changes = detect_changes(&app_db, &current_graph).await?;
-
-    let Some(changes) = changes else {
-        println!("No changes detected.");
+    let Some(graph_id) = graph_id else {
+        println!("No graph found. Run 'fbox migrate' first to create the initial graph.");
         return Ok(());
     };
 
-    println!("Changes detected:");
-    if !changes.added_nodes.is_empty() {
-        println!("  Added tables: {}", changes.added_nodes.join(", "));
-    }
-    if !changes.removed_nodes.is_empty() {
-        println!("  Removed tables: {}", changes.removed_nodes.join(", "));
-    }
-    if !changes.added_edges.is_empty() {
-        println!("  Added dependencies: {:?}", changes.added_edges);
-    }
-    if !changes.removed_edges.is_empty() {
-        println!("  Removed dependencies: {:?}", changes.removed_edges);
+    let current_graph = Graph::from_config(&config)?;
+
+    let ducklake = connect_ducklake(&config).await?;
+
+    let pipeline =
+        Pipeline::from_graph_with_ranges(&current_graph, &config, &app_db, graph_id).await?;
+    if let Err(e) = pipeline.execute(&config, &ducklake).await {
+        eprintln!("Pipeline execution failed: {e}");
+        return Err(e);
     }
 
-    let affected_nodes = calculate_affected_nodes(&current_graph, &changes);
-    if !affected_nodes.is_empty() {
-        println!(
-            "  Affected tables (including downstream): {}",
-            affected_nodes.join(", ")
-        );
-    }
+    save_pipeline_execution(&app_db, graph_id, &pipeline).await?;
 
-    let pipeline = if affected_nodes.is_empty() {
-        Pipeline::from_graph(&current_graph)
-    } else {
-        Pipeline::create_partial_pipeline(&current_graph, &affected_nodes)
-    };
+    println!("Pipeline execution completed successfully!");
 
+    Ok(())
+}
+
+pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
     let catalog_config = match &config.project.database.ty {
         crate::config::project::DatabaseType::Sqlite => CatalogConfig::Sqlite {
             path: config.project.database.path.clone(),
@@ -77,18 +64,7 @@ pub async fn execute_run(project_path: &Path) -> Result<()> {
         },
     };
 
-    let ducklake = DuckLake::new(catalog_config, storage_config).await?;
-
-    if let Err(e) = pipeline.execute(&config, &ducklake).await {
-        eprintln!("Pipeline execution failed: {e}");
-        return Err(e);
-    }
-
-    save_execution_history(&app_db, &current_graph, &pipeline).await?;
-
-    println!("Pipeline execution completed successfully!");
-
-    Ok(())
+    DuckLake::new(catalog_config, storage_config).await
 }
 
 #[cfg(test)]
@@ -231,8 +207,7 @@ mod tests {
         fs::write(project_path.join("project.yml"), project_yml)?;
 
         let config = Config::load_from_directory(project_path)?;
-        let app_db = connect_app_db(&config.project).await?;
-        crate::database::migration::Migrator::up(&app_db, None).await?;
+        let _app_db = connect_app_db(&config.project).await?;
 
         let result = execute_run(project_path).await;
         assert!(result.is_ok());
@@ -330,7 +305,6 @@ mod tests {
 
         let config = Config::load_from_directory(project_path)?;
         let app_db = connect_app_db(&config.project).await?;
-        crate::database::migration::Migrator::up(&app_db, None).await?;
 
         let initial_graph = Graph {
             nodes: vec![Node {
@@ -342,6 +316,8 @@ mod tests {
         let initial_pipeline = Pipeline {
             actions: vec![Action {
                 table_name: "users".to_string(),
+                since: None,
+                until: None,
             }],
         };
 
@@ -453,7 +429,6 @@ mod tests {
 
         let config = Config::load_from_directory(project_path)?;
         let app_db = connect_app_db(&config.project).await?;
-        crate::database::migration::Migrator::up(&app_db, None).await?;
 
         let initial_graph = Graph::from_config(&config)?;
         let initial_pipeline = Pipeline::from_graph(&initial_graph);

@@ -87,6 +87,50 @@ impl DuckLake {
         Ok(())
     }
 
+    pub async fn extract_and_load_with_range(
+        &self,
+        adapter: &AdapterConfig,
+        table_name: &str,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()> {
+        if since.is_none() && until.is_none() {
+            return self.extract_and_load(adapter, table_name).await;
+        }
+
+        let mut adapter_with_range = adapter.clone();
+
+        if let Some(ref mut strategy) = adapter_with_range.update_strategy {
+            if let Some(ref mut range) = strategy.range {
+                if let Some(since) = since {
+                    range.since_parsed = Some(since.naive_utc());
+                }
+                if let Some(until) = until {
+                    range.until_parsed = Some(until.naive_utc());
+                }
+            }
+        }
+
+        let file_paths = FilePatternProcessor::process_pattern(
+            &adapter_with_range.file.path,
+            &adapter_with_range,
+        )?;
+
+        if file_paths.is_empty() {
+            println!("    No files found in range {since:?} to {until:?}");
+            return Ok(());
+        }
+
+        let create_and_load_sql =
+            self.build_create_and_load_sql_multiple(table_name, &adapter_with_range, &file_paths)?;
+
+        self.connection
+            .execute_batch(&create_and_load_sql)
+            .context("Failed to create and load data with range")?;
+
+        Ok(())
+    }
+
     pub async fn transform(&self, model: &ModelConfig, model_name: &str) -> Result<()> {
         let create_table_sql =
             format!("CREATE OR REPLACE TABLE {} AS ({});", model_name, model.sql);

@@ -1,13 +1,13 @@
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, NotSet, QueryFilter,
-    QueryOrder, Set,
+    QueryOrder, QuerySelect, RelationTrait, Set,
 };
 use std::collections::HashSet;
 
 use crate::database::entities::{edges, graphs, nodes, pipeline_actions, pipelines};
 use crate::dependency::graph::Graph;
-use crate::pipeline::execution::Pipeline;
+use crate::pipeline::execution::{ExecutedRange, Pipeline};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphChanges {
@@ -155,11 +155,109 @@ pub async fn save_execution_history(
             pipeline_id: Set(saved_pipeline.id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(order as i32),
+            since: Set(action.since.map(|dt| dt.naive_utc())),
+            until: Set(action.until.map(|dt| dt.naive_utc())),
         };
         action_model.insert(db).await?;
     }
 
     Ok(())
+}
+
+pub async fn save_graph_if_changed(db: &DatabaseConnection, current_graph: &Graph) -> Result<i32> {
+    let graph_model = graphs::ActiveModel {
+        id: NotSet,
+        created_at: Set(chrono::Utc::now().naive_utc()),
+    };
+    let saved_graph = graph_model.insert(db).await?;
+
+    for node in &current_graph.nodes {
+        let node_model = nodes::ActiveModel {
+            id: NotSet,
+            graph_id: Set(saved_graph.id),
+            name: Set(node.name.clone()),
+        };
+        node_model.insert(db).await?;
+    }
+
+    for edge in &current_graph.edges {
+        let edge_model = edges::ActiveModel {
+            id: NotSet,
+            graph_id: Set(saved_graph.id),
+            from_node: Set(edge.from.clone()),
+            to_node: Set(edge.to.clone()),
+        };
+        edge_model.insert(db).await?;
+    }
+
+    Ok(saved_graph.id)
+}
+
+pub async fn get_latest_graph_id(db: &DatabaseConnection) -> Result<Option<i32>> {
+    let latest_graph = graphs::Entity::find()
+        .order_by_desc(graphs::Column::CreatedAt)
+        .one(db)
+        .await?;
+
+    Ok(latest_graph.map(|graph| graph.id))
+}
+
+pub async fn save_pipeline_execution(
+    db: &DatabaseConnection,
+    graph_id: i32,
+    pipeline: &Pipeline,
+) -> Result<()> {
+    let pipeline_model = pipelines::ActiveModel {
+        id: NotSet,
+        graph_id: Set(graph_id),
+        created_at: Set(chrono::Utc::now().naive_utc()),
+    };
+    let saved_pipeline = pipeline_model.insert(db).await?;
+
+    for (order, action) in pipeline.actions.iter().enumerate() {
+        let action_model = pipeline_actions::ActiveModel {
+            id: NotSet,
+            pipeline_id: Set(saved_pipeline.id),
+            table_name: Set(action.table_name.clone()),
+            execution_order: Set(order as i32),
+            since: Set(action.since.map(|dt| dt.naive_utc())),
+            until: Set(action.until.map(|dt| dt.naive_utc())),
+        };
+        action_model.insert(db).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn get_executed_ranges_for_graph(
+    db: &DatabaseConnection,
+    graph_id: i32,
+    table_name: &str,
+) -> Result<Vec<ExecutedRange>> {
+    use sea_orm::JoinType;
+
+    let pipeline_actions = pipeline_actions::Entity::find()
+        .filter(pipeline_actions::Column::TableName.eq(table_name))
+        .join(
+            JoinType::InnerJoin,
+            pipeline_actions::Relation::Pipeline.def(),
+        )
+        .filter(pipelines::Column::GraphId.eq(graph_id))
+        .all(db)
+        .await?;
+
+    let mut ranges = Vec::new();
+    for action in pipeline_actions {
+        let since = action
+            .since
+            .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+        let until = action
+            .until
+            .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+        ranges.push(ExecutedRange { since, until });
+    }
+
+    Ok(ranges)
 }
 
 #[cfg(test)]
@@ -234,6 +332,8 @@ mod tests {
         let pipeline = Pipeline {
             actions: vec![Action {
                 table_name: "users".to_string(),
+                since: None,
+                until: None,
             }],
         };
 
@@ -259,6 +359,8 @@ mod tests {
         let pipeline = Pipeline {
             actions: vec![Action {
                 table_name: "users".to_string(),
+                since: None,
+                until: None,
             }],
         };
 
@@ -308,9 +410,13 @@ mod tests {
             actions: vec![
                 Action {
                     table_name: "users".to_string(),
+                    since: None,
+                    until: None,
                 },
                 Action {
                     table_name: "orders".to_string(),
+                    since: None,
+                    until: None,
                 },
             ],
         };
@@ -358,9 +464,13 @@ mod tests {
             actions: vec![
                 Action {
                     table_name: "users".to_string(),
+                    since: None,
+                    until: None,
                 },
                 Action {
                     table_name: "user_stats".to_string(),
+                    since: None,
+                    until: None,
                 },
             ],
         };
@@ -422,9 +532,13 @@ mod tests {
             actions: vec![
                 Action {
                     table_name: "users".to_string(),
+                    since: None,
+                    until: None,
                 },
                 Action {
                     table_name: "user_stats".to_string(),
+                    since: None,
+                    until: None,
                 },
             ],
         };
@@ -483,9 +597,13 @@ mod tests {
             actions: vec![
                 Action {
                     table_name: "users".to_string(),
+                    since: None,
+                    until: None,
                 },
                 Action {
                     table_name: "old_table".to_string(),
+                    since: None,
+                    until: None,
                 },
             ],
         };

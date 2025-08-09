@@ -122,12 +122,23 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
     let since = yaml["since"].as_str().map(|s| s.to_string());
     let until = yaml["until"].as_str().map(|s| s.to_string());
 
-    let since_parsed = since
-        .as_ref()
-        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok());
-    let until_parsed = until
-        .as_ref()
-        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok());
+    let since_parsed = since.as_ref().and_then(|s| {
+        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
+            })
+            .ok()
+    });
+
+    let until_parsed = until.as_ref().and_then(|s| {
+        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map(|date| date.and_hms_opt(23, 59, 59).unwrap())
+            })
+            .ok()
+    });
 
     RangeConfig {
         since,

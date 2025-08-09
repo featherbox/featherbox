@@ -16,23 +16,20 @@ pub async fn connect_app_db(project_config: &ProjectConfig) -> Result<DatabaseCo
     };
 
     let db = Database::connect(&db_url).await?;
+    ensute_migrations(&db).await?;
     Ok(db)
 }
 
-pub async fn ensure_database_ready(project_config: &ProjectConfig) -> Result<DatabaseConnection> {
-    let db = connect_app_db(project_config).await?;
-
-    let pending = Migrator::get_pending_migrations(&db).await?;
-    if !pending.is_empty() {
-        match Migrator::up(&db, None).await {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(anyhow::anyhow!("Failed to run database migrations: {}", e));
-            }
-        }
+async fn ensute_migrations(db: &DatabaseConnection) -> Result<()> {
+    if Migrator::get_pending_migrations(db).await?.is_empty() {
+        return Ok(());
     }
 
-    Ok(db)
+    if let Err(e) = Migrator::up(db, None).await {
+        return Err(anyhow::anyhow!("Failed to run database migrations: {}", e));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -66,7 +63,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_database_ready() -> Result<()> {
+    async fn test_connect_app_db_with_migrations() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
 
@@ -83,7 +80,7 @@ mod tests {
             connections: std::collections::HashMap::new(),
         };
 
-        let db = ensure_database_ready(&project_config).await?;
+        let db = connect_app_db(&project_config).await?;
         assert!(db.ping().await.is_ok());
 
         let pending = Migrator::get_pending_migrations(&db).await?;

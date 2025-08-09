@@ -27,6 +27,7 @@ enum Commands {
         #[command(subcommand)]
         action: ModelAction,
     },
+    Migrate,
     Run,
 }
 
@@ -63,6 +64,7 @@ async fn main() -> Result<()> {
                 commands::model::execute_model_delete(name, &current_dir)
             }
         },
+        Commands::Migrate => commands::migrate::execute_migrate(&current_dir).await,
         Commands::Run => commands::run::execute_run(&current_dir).await,
     };
 

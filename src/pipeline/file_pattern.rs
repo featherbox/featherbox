@@ -11,7 +11,7 @@ impl FilePatternProcessor {
             let wildcard_pattern = Self::convert_date_pattern_to_wildcard(pattern);
             Self::filter_existing_files(vec![wildcard_pattern])?
         } else {
-            vec![pattern.to_string()]
+            Self::filter_existing_files(vec![pattern.to_string()])?
         };
 
         let filtered_paths = if let Some(strategy) = &adapter.update_strategy {
@@ -244,7 +244,7 @@ mod tests {
     fn test_process_pattern_without_update_strategy() {
         let adapter = create_test_adapter("data/*.csv");
         let result = FilePatternProcessor::process_pattern("data/*.csv", &adapter).unwrap();
-        assert_eq!(result, vec!["data/*.csv"]);
+        assert_eq!(result, vec![] as Vec<String>);
     }
 
     #[test]
@@ -291,6 +291,6 @@ mod tests {
         });
 
         let result = FilePatternProcessor::process_pattern("data/*.csv", &adapter).unwrap();
-        assert_eq!(result, vec!["data/*.csv"]);
+        assert_eq!(result, vec![] as Vec<String>);
     }
 }

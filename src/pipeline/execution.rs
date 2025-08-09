@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, adapter::RangeConfig},
     dependency::graph::{Edge, Graph, Node},
     pipeline::ducklake::DuckLake,
 };
@@ -9,6 +9,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
     pub table_name: String,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutedRange {
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug)]
@@ -23,10 +31,51 @@ impl Pipeline {
             .into_iter()
             .map(|node_name| Action {
                 table_name: node_name,
+                since: None,
+                until: None,
             })
             .collect();
 
         Pipeline { actions }
+    }
+
+    pub async fn from_graph_with_ranges(
+        graph: &Graph,
+        config: &Config,
+        db: &sea_orm::DatabaseConnection,
+        graph_id: i32,
+    ) -> Result<Self> {
+        use crate::dependency::metadata::get_executed_ranges_for_graph;
+
+        let sorted_nodes = topological_sort(graph);
+        let mut actions = Vec::new();
+
+        for node_name in sorted_nodes {
+            let (since, until) = if let Some(adapter) = config.adapters.get(&node_name) {
+                if let Some(strategy) = &adapter.update_strategy {
+                    if let Some(range) = &strategy.range {
+                        let executed_ranges =
+                            get_executed_ranges_for_graph(db, graph_id, &node_name).await?;
+                        let remaining_range = calculate_remaining_range(range, &executed_ranges);
+                        (remaining_range.since, remaining_range.until)
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
+            actions.push(Action {
+                table_name: node_name,
+                since,
+                until,
+            });
+        }
+
+        Ok(Pipeline { actions })
     }
 
     pub fn create_partial_pipeline(graph: &Graph, affected_nodes: &[String]) -> Self {
@@ -40,8 +89,16 @@ impl Pipeline {
 
             if let Some(adapter) = config.adapters.get(&action.table_name) {
                 println!("  Loading adapter: {}", action.table_name);
+                if action.since.is_some() || action.until.is_some() {
+                    println!("    Range: {:?} to {:?}", action.since, action.until);
+                }
                 ducklake
-                    .extract_and_load(adapter, &action.table_name)
+                    .extract_and_load_with_range(
+                        adapter,
+                        &action.table_name,
+                        action.since,
+                        action.until,
+                    )
                     .await?;
             } else if let Some(model) = config.models.get(&action.table_name) {
                 println!("  Executing model: {}", action.table_name);
@@ -127,6 +184,73 @@ fn create_subgraph(graph: &Graph, affected_nodes: &[String]) -> Graph {
         .collect();
 
     Graph { nodes, edges }
+}
+
+fn calculate_remaining_range(
+    config_range: &RangeConfig,
+    executed_ranges: &[ExecutedRange],
+) -> ExecutedRange {
+    let config_since = config_range
+        .since_parsed
+        .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+    let config_until = config_range
+        .until_parsed
+        .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+
+    if executed_ranges.is_empty() {
+        return ExecutedRange {
+            since: config_since,
+            until: config_until,
+        };
+    }
+
+    let mut latest_until: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    for executed_range in executed_ranges {
+        if let Some(until) = executed_range.until {
+            if latest_until.is_none() || Some(until) > latest_until {
+                latest_until = Some(until);
+            }
+        }
+    }
+
+    match (config_since, config_until, latest_until) {
+        (Some(config_since), Some(config_until), Some(latest_until)) => {
+            if latest_until >= config_until {
+                ExecutedRange {
+                    since: None,
+                    until: None,
+                }
+            } else if latest_until >= config_since {
+                ExecutedRange {
+                    since: Some(latest_until + chrono::Duration::seconds(1)),
+                    until: Some(config_until),
+                }
+            } else {
+                ExecutedRange {
+                    since: Some(config_since),
+                    until: Some(config_until),
+                }
+            }
+        }
+        (Some(config_since), None, Some(latest_until)) => {
+            if latest_until >= config_since {
+                ExecutedRange {
+                    since: Some(latest_until + chrono::Duration::seconds(1)),
+                    until: None,
+                }
+            } else {
+                ExecutedRange {
+                    since: Some(config_since),
+                    until: None,
+                }
+            }
+        }
+        _ => ExecutedRange {
+            since: config_since,
+            until: config_until,
+        },
+    }
 }
 
 #[cfg(test)]
