@@ -19,16 +19,20 @@ pub async fn connect_app_db(project_config: &ProjectConfig) -> Result<DatabaseCo
     Ok(db)
 }
 
-pub async fn check_migration_status(db: &DatabaseConnection) -> Result<()> {
-    let pending = Migrator::get_pending_migrations(db).await?;
+pub async fn ensure_database_ready(project_config: &ProjectConfig) -> Result<DatabaseConnection> {
+    let db = connect_app_db(project_config).await?;
+
+    let pending = Migrator::get_pending_migrations(&db).await?;
     if !pending.is_empty() {
-        let pending_names: Vec<String> = pending.iter().map(|m| m.name().to_string()).collect();
-        return Err(anyhow::anyhow!(
-            "There are pending migrations. Please run 'fbox migrate up' first.\nPending: {}",
-            pending_names.join(", ")
-        ));
+        match Migrator::up(&db, None).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to run database migrations: {}", e));
+            }
+        }
     }
-    Ok(())
+
+    Ok(db)
 }
 
 #[cfg(test)]
@@ -62,7 +66,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_migration_status() -> Result<()> {
+    async fn test_ensure_database_ready() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
 
@@ -79,15 +83,11 @@ mod tests {
             connections: std::collections::HashMap::new(),
         };
 
-        let db = connect_app_db(&project_config).await?;
+        let db = ensure_database_ready(&project_config).await?;
+        assert!(db.ping().await.is_ok());
 
-        let result_before_migration = check_migration_status(&db).await;
-        assert!(result_before_migration.is_err());
-
-        Migrator::up(&db, None).await?;
-
-        let result_after_migration = check_migration_status(&db).await;
-        assert!(result_after_migration.is_ok());
+        let pending = Migrator::get_pending_migrations(&db).await?;
+        assert!(pending.is_empty());
 
         Ok(())
     }

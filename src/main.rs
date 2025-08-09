@@ -28,16 +28,6 @@ enum Commands {
         action: ModelAction,
     },
     Run,
-    Migrate {
-        #[command(subcommand)]
-        action: MigrateAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum MigrateAction {
-    Up,
-    Status,
 }
 
 #[derive(Subcommand)]
@@ -74,10 +64,6 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Run => commands::run::execute_run(&current_dir).await,
-        Commands::Migrate { action } => match action {
-            MigrateAction::Up => commands::migrate::execute_migrate_up(&current_dir).await,
-            MigrateAction::Status => commands::migrate::execute_migrate_status(&current_dir).await,
-        },
     };
 
     if let Err(err) = result {

@@ -4,11 +4,13 @@ use std::path::Path;
 use crate::{
     commands::workspace::ensure_project_directory,
     config::Config,
-    database::{check_migration_status, connect_app_db},
+    database::ensure_database_ready,
     dependency::{Graph, calculate_affected_nodes, detect_changes, save_execution_history},
     pipeline::{CatalogConfig, DuckLake, Pipeline, StorageConfig},
 };
 
+#[cfg(test)]
+use crate::database::connect_app_db;
 #[cfg(test)]
 use sea_orm_migration::MigratorTrait;
 
@@ -24,8 +26,7 @@ pub async fn execute_run(project_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let app_db = connect_app_db(&config.project).await?;
-    check_migration_status(&app_db).await?;
+    let app_db = ensure_database_ready(&config.project).await?;
 
     let current_graph = Graph::from_config(&config)?;
 

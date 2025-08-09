@@ -1,6 +1,5 @@
 pub mod adapter;
 pub mod init;
-pub mod migrate;
 pub mod model;
 pub mod run;
 pub mod workspace;
