@@ -1,39 +1,22 @@
 use crate::{
     config::Config,
     pipeline::{
-        build::Pipeline,
-        delta::{DeltaManager, DeltaMetadata},
-        ducklake::DuckLake,
-        file_processor::FileProcessor,
+        build::Pipeline, delta::DeltaManager, ducklake::DuckLake, importer::Importer,
+        transformer::Transformer,
     },
 };
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 
 impl Pipeline {
     pub async fn execute(&self, config: &Config, ducklake: &DuckLake) -> Result<()> {
+        let import_processor = Importer::new(ducklake);
+        let transform_processor = Transformer::new(ducklake);
+
         for action in &self.actions {
             if let Some(adapter) = config.adapters.get(&action.table_name) {
-                let file_paths = crate::pipeline::file_processor::FileProcessor::process_pattern(
-                    &adapter.file.path,
-                    adapter,
-                )?;
-
-                if !file_paths.is_empty() {
-                    let sql = ducklake.build_create_and_load_sql_multiple(
-                        &action.table_name,
-                        adapter,
-                        &file_paths,
-                    )?;
-                    ducklake.execute_batch(&sql).with_context(|| {
-                        format!(
-                            "Failed to execute adapter SQL for table '{}'",
-                            action.table_name
-                        )
-                    })?;
-                }
+                import_processor.import_adapter(adapter, &action.table_name)?;
             } else if let Some(model) = config.models.get(&action.table_name) {
-                ducklake.transform(model, &action.table_name).await?;
+                transform_processor.transform_model(model, &action.table_name)?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Table '{}' not found in adapters or models",
@@ -52,6 +35,8 @@ impl Pipeline {
         app_db: &sea_orm::DatabaseConnection,
     ) -> Result<()> {
         let delta_manager = DeltaManager::new(&config.project_root)?;
+        let import_processor = Importer::new(ducklake);
+        let transform_processor = Transformer::new(ducklake);
 
         let action_ids = self.get_latest_pipeline_action_ids(app_db).await?;
 
@@ -59,28 +44,23 @@ impl Pipeline {
             let action_id = action_ids[idx];
 
             if let Some(adapter) = config.adapters.get(&action.table_name) {
-                let file_paths =
-                    FileProcessor::files_for_processing(adapter, action.time_range.clone())?;
-
-                if !file_paths.is_empty() {
-                    ducklake
-                        .process_delta(
-                            adapter,
-                            &action.table_name,
-                            &file_paths,
-                            &delta_manager,
-                            app_db,
-                            action_id,
-                        )
-                        .await?;
-                }
+                import_processor
+                    .import_adapter_with_delta(
+                        adapter,
+                        &action.table_name,
+                        action.time_range.clone(),
+                        &delta_manager,
+                        app_db,
+                        action_id,
+                    )
+                    .await?;
             } else if let Some(model) = config.models.get(&action.table_name) {
-                let dependency_deltas = self
+                let dependency_deltas = transform_processor
                     .collect_dependency_deltas(&action.table_name, &delta_manager, app_db, config)
                     .await?;
 
-                ducklake
-                    .transform_with_delta(
+                transform_processor
+                    .transform_model_with_delta(
                         model,
                         &action.table_name,
                         &delta_manager,
@@ -98,37 +78,6 @@ impl Pipeline {
         }
 
         Ok(())
-    }
-
-    async fn collect_dependency_deltas(
-        &self,
-        model_table_name: &str,
-        delta_manager: &DeltaManager,
-        app_db: &sea_orm::DatabaseConnection,
-        config: &Config,
-    ) -> Result<HashMap<String, DeltaMetadata>> {
-        use crate::dependency::graph::from_table;
-
-        let model = config
-            .models
-            .get(model_table_name)
-            .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_table_name))?;
-
-        let dependencies = from_table(&model.sql);
-        let mut dependency_deltas = HashMap::new();
-
-        for dep_table in dependencies {
-            if config.adapters.contains_key(&dep_table) {
-                if let Some(delta_metadata) = delta_manager
-                    .latest_delta_metadata(app_db, &dep_table)
-                    .await?
-                {
-                    dependency_deltas.insert(dep_table, delta_metadata);
-                }
-            }
-        }
-
-        Ok(dependency_deltas)
     }
 
     async fn get_latest_pipeline_action_ids(

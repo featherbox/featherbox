@@ -1,4 +1,6 @@
+use crate::config::adapter::AdapterConfig;
 use crate::database::entities::{deltas, pipeline_actions};
+use crate::pipeline::ducklake::DuckLake;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
@@ -127,9 +129,362 @@ impl DeltaManager {
     }
 }
 
+pub struct DeltaProcessor<'a> {
+    ducklake: &'a DuckLake,
+}
+
+impl<'a> DeltaProcessor<'a> {
+    pub fn new(ducklake: &'a DuckLake) -> Self {
+        Self { ducklake }
+    }
+
+    pub fn build_import_query_multiple(
+        &self,
+        adapter: &AdapterConfig,
+        file_paths: &[String],
+    ) -> Result<String> {
+        if file_paths.is_empty() {
+            return Err(anyhow::anyhow!("No files to load"));
+        }
+
+        if file_paths.len() == 1 {
+            let file_path = &file_paths[0];
+            return self.build_import_query_single(adapter, file_path);
+        }
+
+        let file_paths_str = file_paths
+            .iter()
+            .map(|p| format!("'{p}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        match adapter.format.ty.as_str() {
+            "csv" => {
+                let has_header = adapter.format.has_header.unwrap_or(true);
+                let query =
+                    format!("SELECT * FROM read_csv_auto([{file_paths_str}], header={has_header})");
+                Ok(query)
+            }
+            "parquet" => {
+                let query = format!("SELECT * FROM read_parquet([{file_paths_str}])");
+                Ok(query)
+            }
+            "json" => {
+                let query = format!("SELECT * FROM read_json_auto([{file_paths_str}])");
+                Ok(query)
+            }
+            _ => Err(anyhow::anyhow!("Unsupported format: {}", adapter.format.ty)),
+        }
+    }
+
+    pub fn build_import_query_single(
+        &self,
+        adapter: &AdapterConfig,
+        file_path: &str,
+    ) -> Result<String> {
+        match adapter.format.ty.as_str() {
+            "csv" => {
+                let has_header = adapter.format.has_header.unwrap_or(true);
+                let query =
+                    format!("SELECT * FROM read_csv_auto('{file_path}', header={has_header})");
+                Ok(query)
+            }
+            "parquet" => {
+                let query = format!("SELECT * FROM read_parquet('{file_path}')");
+                Ok(query)
+            }
+            "json" => {
+                let query = format!("SELECT * FROM read_json_auto('{file_path}')");
+                Ok(query)
+            }
+            _ => Err(anyhow::anyhow!("Unsupported format: {}", adapter.format.ty)),
+        }
+    }
+
+    pub async fn create_table_delta(
+        &self,
+        delta_files: &DeltaFiles,
+        adapter: &AdapterConfig,
+        file_paths: &[String],
+    ) -> Result<()> {
+        let temp_table_name = DuckLake::generate_temp_table_name("temp_delta");
+
+        let query = self.build_import_query_multiple(adapter, file_paths)?;
+
+        self.ducklake
+            .create_table_from_query(&temp_table_name, &query)
+            .context("Failed to create temporary delta table")?;
+
+        let export_insert_sql = format!(
+            "COPY (SELECT * FROM {temp_table_name}) TO '{}' (FORMAT PARQUET);",
+            delta_files.insert_path.to_string_lossy()
+        );
+
+        self.ducklake
+            .execute_batch(&export_insert_sql)
+            .context("Failed to export delta insert data")?;
+
+        self.ducklake.drop_temp_table(&temp_table_name)?;
+
+        Ok(())
+    }
+
+    pub fn apply_delta_to_table(&self, table_name: &str, delta_files: &DeltaFiles) -> Result<()> {
+        let table_exists_sql = format!(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{table_name}'"
+        );
+
+        let results = self.ducklake.query(&table_exists_sql)?;
+        let table_exists = if let Some(row) = results.first() {
+            if let Some(count_str) = row.first() {
+                count_str.parse::<i64>().unwrap_or(0) > 0
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !table_exists {
+            let create_from_delta_sql = format!(
+                "CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{}');",
+                delta_files.insert_path.to_string_lossy()
+            );
+
+            self.ducklake
+                .execute_batch(&create_from_delta_sql)
+                .context("Failed to create table from delta")?;
+        } else {
+            self.validate_delta_schema(table_name, &delta_files.insert_path)
+                .with_context(|| format!("Schema validation failed for table '{table_name}'"))?;
+
+            let insert_sql = format!(
+                "INSERT INTO {table_name} SELECT * FROM read_parquet('{}');",
+                delta_files.insert_path.to_string_lossy()
+            );
+
+            self.ducklake
+                .execute_batch(&insert_sql)
+                .context("Failed to insert delta data")?;
+        }
+
+        Ok(())
+    }
+
+    pub fn create_model_delta(&self, delta_files: &DeltaFiles, modified_sql: &str) -> Result<()> {
+        let temp_table_name = DuckLake::generate_temp_table_name("temp_model_delta");
+
+        let create_temp_sql = format!("CREATE TABLE {temp_table_name} AS ({modified_sql});");
+
+        self.ducklake
+            .execute_batch(&create_temp_sql)
+            .context("Failed to create temporary model delta table")?;
+
+        let export_insert_sql = format!(
+            "COPY (SELECT * FROM {}) TO '{}' (FORMAT PARQUET);",
+            temp_table_name,
+            delta_files.insert_path.to_string_lossy()
+        );
+
+        self.ducklake
+            .execute_batch(&export_insert_sql)
+            .context("Failed to export model delta insert data")?;
+
+        self.ducklake.drop_temp_table(&temp_table_name)?;
+
+        Ok(())
+    }
+
+    pub fn apply_model_delta_to_table(
+        &self,
+        model_name: &str,
+        delta_files: &DeltaFiles,
+    ) -> Result<()> {
+        let table_exists_sql = format!(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{model_name}'"
+        );
+
+        let results = self.ducklake.query(&table_exists_sql)?;
+        let table_exists = if let Some(row) = results.first() {
+            if let Some(count_str) = row.first() {
+                count_str.parse::<i64>().unwrap_or(0) > 0
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !table_exists {
+            let create_from_delta_sql = format!(
+                "CREATE TABLE {} AS SELECT * FROM read_parquet('{}');",
+                model_name,
+                delta_files.insert_path.to_string_lossy()
+            );
+
+            self.ducklake
+                .execute_batch(&create_from_delta_sql)
+                .context("Failed to create model table from delta")?;
+        } else {
+            let replace_sql = format!(
+                "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_parquet('{}');",
+                model_name,
+                delta_files.insert_path.to_string_lossy()
+            );
+
+            self.ducklake
+                .execute_batch(&replace_sql)
+                .context("Failed to replace model table with delta")?;
+        }
+
+        Ok(())
+    }
+
+    pub fn validate_source_files_schema(
+        &self,
+        table_name: &str,
+        file_paths: &[String],
+    ) -> Result<()> {
+        if !self.ducklake.table_exists(table_name)? {
+            return Ok(());
+        }
+
+        let table_columns = self.ducklake.table_schema(table_name)?;
+
+        for file_path in file_paths {
+            let source_schema_sql = format!("DESCRIBE SELECT * FROM read_csv_auto('{file_path}')");
+
+            let source_results = self.ducklake.query(&source_schema_sql)?;
+            let source_columns: Vec<(String, String)> = source_results
+                .into_iter()
+                .filter_map(|row| {
+                    if row.len() >= 2 {
+                        Some((row[0].clone(), row[1].clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if table_columns.len() != source_columns.len() {
+                return Err(anyhow::anyhow!(
+                    "Column count mismatch in file '{}': table has {} columns, file has {} columns",
+                    file_path,
+                    table_columns.len(),
+                    source_columns.len()
+                ));
+            }
+
+            for (i, ((table_col, table_type), (source_col, source_type))) in
+                table_columns.iter().zip(source_columns.iter()).enumerate()
+            {
+                if table_col != source_col {
+                    return Err(anyhow::anyhow!(
+                        "Column name mismatch in file '{}' at position {}: table has '{}', file has '{}'",
+                        file_path,
+                        i,
+                        table_col,
+                        source_col
+                    ));
+                }
+                if table_type != source_type {
+                    return Err(anyhow::anyhow!(
+                        "Column type mismatch in file '{}' for column '{}': table has '{}', file has '{}'",
+                        file_path,
+                        table_col,
+                        table_type,
+                        source_type
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn validate_delta_schema(&self, table_name: &str, delta_path: &Path) -> Result<()> {
+        let table_columns = self.ducklake.table_schema(table_name)?;
+
+        let delta_schema_sql = format!(
+            "DESCRIBE SELECT * FROM read_parquet('{}')",
+            delta_path.to_string_lossy()
+        );
+
+        let delta_results = self.ducklake.query(&delta_schema_sql)?;
+        let delta_columns: Vec<(String, String)> = delta_results
+            .into_iter()
+            .filter_map(|row| {
+                if row.len() >= 2 {
+                    Some((row[0].clone(), row[1].clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if table_columns.len() != delta_columns.len() {
+            return Err(anyhow::anyhow!(
+                "Column count mismatch: table has {} columns, delta has {} columns",
+                table_columns.len(),
+                delta_columns.len()
+            ));
+        }
+
+        for (i, ((table_col, table_type), (delta_col, delta_type))) in
+            table_columns.iter().zip(delta_columns.iter()).enumerate()
+        {
+            if table_col != delta_col {
+                return Err(anyhow::anyhow!(
+                    "Column name mismatch at position {}: table has '{}', delta has '{}'",
+                    i,
+                    table_col,
+                    delta_col
+                ));
+            }
+            if table_type != delta_type {
+                return Err(anyhow::anyhow!(
+                    "Column type mismatch for '{}': table has '{}', delta has '{}'",
+                    table_col,
+                    table_type,
+                    delta_type
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn process_delta_for_adapter(
+        &self,
+        adapter: &AdapterConfig,
+        table_name: &str,
+        file_paths: &[String],
+        delta_manager: &DeltaManager,
+        app_db: &DatabaseConnection,
+        action_id: i32,
+    ) -> Result<DeltaMetadata> {
+        self.validate_source_files_schema(table_name, file_paths)?;
+
+        let delta_files = delta_manager.create_delta_files(table_name)?;
+
+        self.create_table_delta(&delta_files, adapter, file_paths)
+            .await?;
+
+        let delta_metadata = delta_manager
+            .save_delta_metadata(app_db, action_id, &delta_files)
+            .await?;
+
+        self.apply_delta_to_table(table_name, &delta_files)?;
+
+        Ok(delta_metadata)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::adapter::{FileConfig, FormatConfig};
+    use crate::pipeline::ducklake::{CatalogConfig, StorageConfig};
     use sea_orm::ConnectionTrait;
     use tempfile::tempdir;
 
@@ -254,5 +609,76 @@ mod tests {
         manager.cleanup_delta_files(&saved_metadata).unwrap();
 
         assert!(!Path::new(&saved_metadata.insert_delta_path).exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_and_apply_delta_table() {
+        let test_dir = "/tmp/delta_processor_test";
+        let _ = std::fs::remove_dir_all(test_dir);
+        std::fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
+        let processor = DeltaProcessor::new(&ducklake);
+
+        let temp_dir = tempdir().unwrap();
+        let test_csv = temp_dir.path().join("test_data.csv");
+        std::fs::write(&test_csv, "id,name,age\n1,Alice,25\n2,Bob,30").unwrap();
+
+        let adapter = AdapterConfig {
+            connection: "test_table".to_string(),
+            description: None,
+            file: FileConfig {
+                path: test_csv.to_string_lossy().to_string(),
+                compression: None,
+                max_batch_size: None,
+            },
+            update_strategy: None,
+            format: FormatConfig {
+                ty: "csv".to_string(),
+                delimiter: None,
+                null_value: None,
+                has_header: Some(true),
+            },
+            columns: vec![],
+            limits: None,
+        };
+
+        let delta_files = crate::pipeline::delta::DeltaFiles::new(
+            temp_dir.path(),
+            "test_table",
+            "20241201_120000",
+        );
+
+        let file_paths = vec![test_csv.to_string_lossy().to_string()];
+
+        processor
+            .create_table_delta(&delta_files, &adapter, &file_paths)
+            .await
+            .unwrap();
+
+        assert!(delta_files.insert_path.exists());
+
+        processor
+            .apply_delta_to_table("test_table", &delta_files)
+            .unwrap();
+
+        let verify_sql = "SELECT * FROM test_table ORDER BY id";
+        let results = ducklake.query(verify_sql).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0],
+            vec!["1".to_string(), "Alice".to_string(), "25".to_string()]
+        );
+        assert_eq!(
+            results[1],
+            vec!["2".to_string(), "Bob".to_string(), "30".to_string()]
+        );
     }
 }
