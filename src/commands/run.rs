@@ -7,8 +7,8 @@ use crate::{
     },
     dependency::{Graph, latest_graph_id},
     pipeline::{
+        build::Pipeline,
         ducklake::{CatalogConfig, DuckLake, StorageConfig},
-        execution::Pipeline,
     },
 };
 use anyhow::Result;
@@ -119,7 +119,7 @@ pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
 mod tests {
     use super::*;
     use crate::dependency::graph::Node;
-    use crate::pipeline::execution::Action;
+    use crate::pipeline::build::Action;
     use std::fs;
     use tempfile;
 
@@ -364,7 +364,7 @@ mod tests {
         let initial_pipeline = Pipeline {
             actions: vec![Action {
                 table_name: "users".to_string(),
-                time_range: Some(crate::pipeline::execution::TimeRange {
+                time_range: Some(crate::pipeline::build::TimeRange {
                     since: None,
                     until: None,
                 }),

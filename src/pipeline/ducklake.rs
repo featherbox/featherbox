@@ -1,7 +1,5 @@
 use crate::config::{adapter::AdapterConfig, model::ModelConfig};
 use crate::pipeline::delta::{DeltaFiles, DeltaManager, DeltaMetadata};
-use crate::pipeline::execution::TimeRange;
-use crate::pipeline::file_pattern::FilePatternProcessor;
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use sea_orm::DatabaseConnection;
@@ -75,36 +73,6 @@ impl DuckLake {
         }
 
         Ok(())
-    }
-
-    pub fn files_for_processing(
-        &self,
-        adapter: &AdapterConfig,
-        range: Option<TimeRange>,
-    ) -> Result<Vec<String>> {
-        // None の場合はスキップ（空のリストを返す）
-        let Some(time_range) = range else {
-            return Ok(Vec::new());
-        };
-
-        let mut adapter_with_range = adapter.clone();
-
-        if let Some(ref mut strategy) = adapter_with_range.update_strategy {
-            let adapter_range = &mut strategy.range;
-            if let Some(since) = time_range.since {
-                adapter_range.since = Some(since.naive_utc());
-            }
-            if let Some(until) = time_range.until {
-                adapter_range.until = Some(until.naive_utc());
-            }
-        }
-
-        let file_paths = FilePatternProcessor::process_pattern(
-            &adapter_with_range.file.path,
-            &adapter_with_range,
-        )?;
-
-        Ok(file_paths)
     }
 
     pub async fn process_delta(

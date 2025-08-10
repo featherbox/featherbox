@@ -1,12 +1,13 @@
 use crate::config::adapter::{AdapterConfig, LimitsConfig, RangeConfig, UpdateStrategyConfig};
+use crate::pipeline::build::TimeRange;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use regex::Regex;
 use std::path::Path;
 
-pub struct FilePatternProcessor;
+pub struct FileProcessor;
 
-impl FilePatternProcessor {
+impl FileProcessor {
     pub fn process_pattern(pattern: &str, adapter: &AdapterConfig) -> Result<Vec<String>> {
         let expanded_paths = if Self::has_date_pattern(pattern) {
             let wildcard_pattern = Self::convert_date_pattern_to_wildcard(pattern);
@@ -26,6 +27,31 @@ impl FilePatternProcessor {
         }
 
         Ok(filtered_paths)
+    }
+
+    pub fn files_for_processing(
+        adapter: &AdapterConfig,
+        range: Option<TimeRange>,
+    ) -> Result<Vec<String>> {
+        let Some(time_range) = range else {
+            return Ok(Vec::new());
+        };
+
+        let mut adapter_with_range = adapter.clone();
+
+        if let Some(ref mut strategy) = adapter_with_range.update_strategy {
+            let adapter_range = &mut strategy.range;
+            if let Some(since) = time_range.since {
+                adapter_range.since = Some(since.naive_utc());
+            }
+            if let Some(until) = time_range.until {
+                adapter_range.until = Some(until.naive_utc());
+            }
+        }
+
+        let file_paths = Self::process_pattern(&adapter_with_range.file.path, &adapter_with_range)?;
+
+        Ok(file_paths)
     }
 
     fn has_date_pattern(pattern: &str) -> bool {
@@ -224,19 +250,15 @@ mod tests {
     #[test]
     fn test_convert_date_pattern_to_wildcard() {
         assert_eq!(
-            FilePatternProcessor::convert_date_pattern_to_wildcard(
-                "logs/{YYYY}-{MM}-{DD}T{HH}{mm}.json"
-            ),
+            FileProcessor::convert_date_pattern_to_wildcard("logs/{YYYY}-{MM}-{DD}T{HH}{mm}.json"),
             "logs/*-*-*T*.json"
         );
         assert_eq!(
-            FilePatternProcessor::convert_date_pattern_to_wildcard(
-                "data/{YYYY}/{MM}/{DD}/file.csv"
-            ),
+            FileProcessor::convert_date_pattern_to_wildcard("data/{YYYY}/{MM}/{DD}/file.csv"),
             "data/*/*/*/file.csv"
         );
         assert_eq!(
-            FilePatternProcessor::convert_date_pattern_to_wildcard("static.csv"),
+            FileProcessor::convert_date_pattern_to_wildcard("static.csv"),
             "static.csv"
         );
     }
@@ -244,14 +266,14 @@ mod tests {
     #[test]
     fn test_process_pattern_without_update_strategy() {
         let adapter = create_test_adapter("data/*.csv");
-        let result = FilePatternProcessor::process_pattern("data/*.csv", &adapter).unwrap();
+        let result = FileProcessor::process_pattern("data/*.csv", &adapter).unwrap();
         assert_eq!(result, vec![] as Vec<String>);
     }
 
     #[test]
     fn test_process_pattern_with_date_pattern() {
         let adapter = create_test_adapter("logs/{YYYY}-{MM}-{DD}.json");
-        let result = FilePatternProcessor::process_pattern("logs/{YYYY}-{MM}-{DD}.json", &adapter);
+        let result = FileProcessor::process_pattern("logs/{YYYY}-{MM}-{DD}.json", &adapter);
         assert!(result.is_ok());
         let paths = result.unwrap();
         assert_eq!(paths, Vec::<String>::new());
@@ -259,20 +281,19 @@ mod tests {
 
     #[test]
     fn test_has_date_pattern() {
-        assert!(FilePatternProcessor::has_date_pattern(
+        assert!(FileProcessor::has_date_pattern(
             "logs/{YYYY}-{MM}-{DD}.json"
         ));
-        assert!(FilePatternProcessor::has_date_pattern("{HH}{mm}.csv"));
-        assert!(!FilePatternProcessor::has_date_pattern("logs/*.json"));
-        assert!(!FilePatternProcessor::has_date_pattern("static.csv"));
+        assert!(FileProcessor::has_date_pattern("{HH}{mm}.csv"));
+        assert!(!FileProcessor::has_date_pattern("logs/*.json"));
+        assert!(!FileProcessor::has_date_pattern("static.csv"));
     }
 
     #[test]
     fn test_extract_timestamp_from_filename() {
         use chrono::{Datelike, Timelike};
 
-        let result =
-            FilePatternProcessor::extract_timestamp_from_filename("logs/2024-01-15T1030.json");
+        let result = FileProcessor::extract_timestamp_from_filename("logs/2024-01-15T1030.json");
         assert!(result.is_some());
         let timestamp = result.unwrap();
         assert_eq!(timestamp.year(), 2024);
@@ -294,7 +315,7 @@ mod tests {
             },
         });
 
-        let result = FilePatternProcessor::process_pattern("data/*.csv", &adapter).unwrap();
+        let result = FileProcessor::process_pattern("data/*.csv", &adapter).unwrap();
         assert_eq!(result, vec![] as Vec<String>);
     }
 
@@ -338,7 +359,7 @@ mod tests {
             range: range_config.clone(),
         });
 
-        let result_date_pattern = FilePatternProcessor::process_pattern(
+        let result_date_pattern = FileProcessor::process_pattern(
             &format!("{test_dir}/users_{{YYYY}}-{{MM}}-{{DD}}.csv"),
             &adapter_date_pattern,
         )
@@ -375,11 +396,9 @@ mod tests {
             range: range_config,
         });
 
-        let result_wildcard = FilePatternProcessor::process_pattern(
-            &format!("{test_dir}/users_*.csv"),
-            &adapter_wildcard,
-        )
-        .unwrap();
+        let result_wildcard =
+            FileProcessor::process_pattern(&format!("{test_dir}/users_*.csv"), &adapter_wildcard)
+                .unwrap();
 
         // Both methods should produce identical results
         assert_eq!(result_date_pattern.len(), result_wildcard.len());
