@@ -195,9 +195,10 @@ Contains SQL transformations with dependency resolution and caching settings (`m
 
 ## Code Style Guidelines
 
-- **No comments in code**: Code should be self-explanatory through clear function names and structure
+- **ABSOLUTELY NO COMMENTS IN CODE**: Code must be self-explanatory through clear function names and structure. Comments are strictly forbidden in all circumstances.
 - **Refactor for clarity**: If code is unclear, extract functions with descriptive names instead of adding comments
 - **Function extraction**: Break down complex logic into small, well-named functions
+- **Comment prohibition enforcement**: Any code containing comments will be rejected. Use descriptive variable names, function names, and clear code structure instead.
 - **YAML string indentation**: In tests and template strings, use consistent indentation that matches the surrounding code context. Multi-line YAML strings should be indented to align with the code structure for better readability
 - **Domain-driven organization**: Keep related functionality within the same domain directory; cross-domain communication should be explicit and minimal
 

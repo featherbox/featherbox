@@ -121,7 +121,6 @@ mod tests {
             },
         );
 
-        // First migration should create the initial graph
         let result1 = migrate_from_config(&config, &app_db).await?;
         let Some(first_graph_id) = result1 else {
             panic!("Expected a new graph ID")
@@ -140,11 +139,9 @@ mod tests {
             .await?;
         assert_eq!(first_edges.len(), 0);
 
-        // Second migration with no changes should return None
         let result2 = migrate_from_config(&config, &app_db).await?;
         assert!(result2.is_none());
 
-        // Add a new model and expect a new graph ID
         config.models.insert(
             "user_stats".to_string(),
             ModelConfig {
@@ -154,7 +151,6 @@ mod tests {
             },
         );
 
-        // This should create a new graph with the model
         let result3 = migrate_from_config(&config, &app_db).await?;
         let Some(third_graph_id) = result3 else {
             panic!("Expected a new graph ID")

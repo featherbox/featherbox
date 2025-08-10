@@ -498,7 +498,6 @@ impl DuckLake {
     ) -> Result<String> {
         use sqlparser::{dialect::DuckDbDialect, parser::Parser};
 
-        // First validate that the SQL is parseable
         let dialect = DuckDbDialect {};
         let parsed = Parser::parse_sql(&dialect, sql)
             .with_context(|| format!("Failed to parse SQL: {sql}"))?;
@@ -507,31 +506,25 @@ impl DuckLake {
             return Err(anyhow::anyhow!("Empty SQL statement"));
         }
 
-        // Use improved regex replacement that respects SQL context
         let mut modified_sql = sql.to_string();
 
         for (table_name, delta_metadata) in dependency_deltas {
             let delta_function_call =
                 format!("read_parquet('{}')", delta_metadata.insert_delta_path);
 
-            // Simple but effective patterns for table replacement
             let patterns = vec![
-                // FROM table_name (with optional whitespace and line breaks)
                 (
                     format!(r"(?i)\bFROM\s+{}\b", regex::escape(table_name)),
                     format!("FROM {delta_function_call}"),
                 ),
-                // JOIN table_name (with optional whitespace and line breaks)
                 (
                     format!(r"(?i)\bJOIN\s+{}\b", regex::escape(table_name)),
                     format!("JOIN {delta_function_call}"),
                 ),
-                // table_name AS (case insensitive)
                 (
                     format!(r"(?i)\b{}\s+AS\b", regex::escape(table_name)),
                     format!("{delta_function_call} AS"),
                 ),
-                // Comma-separated table list: , table_name
                 (
                     format!(r",\s*{}\b", regex::escape(table_name)),
                     format!(", {delta_function_call}"),
@@ -549,7 +542,6 @@ impl DuckLake {
             }
         }
 
-        // Validate that the modified SQL is still parseable
         let _validated = Parser::parse_sql(&dialect, &modified_sql)
             .with_context(|| format!("Modified SQL is not valid: {modified_sql}"))?;
 
@@ -1082,7 +1074,6 @@ mod tests {
             vec!["2".to_string(), "Bob".to_string(), "200".to_string()]
         );
 
-        // 新しいデータを追加してテスト
         std::fs::write(&test_csv, "id,name,value\n3,Charlie,300\n4,David,400").unwrap();
 
         let new_delta_files = crate::pipeline::delta::DeltaFiles::new(
@@ -1144,13 +1135,11 @@ mod tests {
             },
         );
 
-        // Test Case 1: Table name as column name should not be replaced
         let sql_with_column = "SELECT user.name, users.email FROM users WHERE user.active = true";
         let rewritten = ducklake
             .rewrite_sql_for_deltas(sql_with_column, &dependency_deltas)
             .unwrap();
 
-        // 'user.name' should not be replaced, but 'users' table should be
         assert!(
             rewritten.contains("user.name"),
             "Column 'user.name' was incorrectly replaced"
@@ -1160,7 +1149,6 @@ mod tests {
             "Table 'users' was not replaced with delta"
         );
 
-        // Test Case 2: Substring table names should not interfere
         let sql_substring = "SELECT * FROM super_users, users WHERE super_users.id = users.id";
         dependency_deltas.insert(
             "super_users".to_string(),
@@ -1175,7 +1163,6 @@ mod tests {
             .rewrite_sql_for_deltas(sql_substring, &dependency_deltas)
             .unwrap();
 
-        // Both tables should be replaced correctly
         assert!(
             rewritten_substring
                 .contains("read_parquet('/path/to/delta_super_users_insert.parquet')")
@@ -1184,7 +1171,6 @@ mod tests {
             rewritten_substring.contains("read_parquet('/path/to/delta_users_insert.parquet')")
         );
 
-        // Test Case 3: Complex SQL with newlines and multiple spaces
         let complex_sql = r#"
             SELECT 
                 COUNT(DISTINCT u.id) as total_users,
@@ -1212,21 +1198,17 @@ mod tests {
             .rewrite_sql_for_deltas(complex_sql, &dependency_deltas)
             .unwrap();
 
-        // Both tables should be replaced in complex SQL
         assert!(rewritten_complex.contains("read_parquet('/path/to/delta_users_insert.parquet')"));
         assert!(rewritten_complex.contains("read_parquet('/path/to/delta_posts_insert.parquet')"));
 
-        // Aliases and other parts should remain unchanged
         assert!(rewritten_complex.contains("u.id"));
         assert!(rewritten_complex.contains("p.user_id"));
         assert!(rewritten_complex.contains("u.active = true"));
 
-        // Test Case 4: Invalid SQL should fail gracefully
         let invalid_sql = "INVALID SQL SYNTAX HERE";
         let result = ducklake.rewrite_sql_for_deltas(invalid_sql, &dependency_deltas);
         assert!(result.is_err(), "Invalid SQL should return an error");
 
-        // Test Case 5: Empty SQL should fail
         let empty_sql = "";
         let empty_result = ducklake.rewrite_sql_for_deltas(empty_sql, &dependency_deltas);
         assert!(empty_result.is_err(), "Empty SQL should return an error");
@@ -1257,7 +1239,6 @@ mod tests {
             },
         );
 
-        // Create a test parquet file for syntax validation
         let test_csv = std::path::Path::new("/tmp/test_users_for_syntax.csv");
         std::fs::write(
             test_csv,
@@ -1265,7 +1246,6 @@ mod tests {
         )
         .unwrap();
 
-        // Convert CSV to Parquet for delta test
         let create_parquet_sql = format!(
             "COPY (SELECT * FROM read_csv('{}', header=true)) TO '{}'",
             test_csv.to_string_lossy(),
@@ -1273,11 +1253,9 @@ mod tests {
         );
 
         if ducklake.execute_batch(&create_parquet_sql).is_err() {
-            // If parquet creation fails, skip syntax validation (not the main focus)
             return;
         }
 
-        // Test various SQL patterns that should produce valid syntax after rewrite
         let test_cases = vec![
             ("Simple SELECT", "SELECT id, name FROM users"),
             ("SELECT with WHERE", "SELECT * FROM users WHERE id > 1"),
@@ -1297,7 +1275,6 @@ mod tests {
                 .rewrite_sql_for_deltas(original_sql, &dependency_deltas)
                 .unwrap_or_else(|e| panic!("Failed to rewrite SQL for '{description}': {e}"));
 
-            // Verify the rewritten SQL is syntactically valid by parsing it
             use sqlparser::{dialect::DuckDbDialect, parser::Parser};
             let dialect = DuckDbDialect {};
 
@@ -1311,27 +1288,23 @@ mod tests {
                 parse_result.err()
             );
 
-            // Ensure no double parentheses around read_parquet calls
             assert!(
                 !rewritten_sql.contains("((read_parquet"),
                 "Double parentheses found in rewritten SQL for '{description}': {rewritten_sql}"
             );
 
-            // Ensure read_parquet calls are present (this validates the replacement worked)
             assert!(
                 rewritten_sql.contains("read_parquet("),
                 "Missing read_parquet call in rewritten SQL for '{description}': {rewritten_sql}"
             );
         }
 
-        // Clean up
         let _ = std::fs::remove_file(test_csv);
         let _ = std::fs::remove_file(&dependency_deltas["users"].insert_delta_path);
     }
 
     #[tokio::test]
     async fn test_legacy_sql_rewrite_issues_prevention() {
-        // This test verifies that issues from the legacy implementation are prevented
         let test_dir = "/tmp/ducklake_test_legacy_issues";
         let _ = std::fs::remove_dir_all(test_dir);
         std::fs::create_dir_all(test_dir).unwrap();
@@ -1355,8 +1328,6 @@ mod tests {
             },
         );
 
-        // Issue 1: SQL with multiple spaces and newlines before table name
-        // Legacy string replacement " users" would fail with newlines
         let problematic_sql1 = "SELECT COUNT(*) FROM\n    users WHERE active = true";
         let rewritten1 = ducklake
             .rewrite_sql_for_deltas(problematic_sql1, &dependency_deltas)
@@ -1366,7 +1337,6 @@ mod tests {
             "Failed to replace table name with newlines: {rewritten1}"
         );
 
-        // Issue 2: SQL with tabs and multiple spaces
         let problematic_sql2 = "SELECT * FROM\t\t   users\nWHERE id > 0";
         let rewritten2 = ducklake
             .rewrite_sql_for_deltas(problematic_sql2, &dependency_deltas)
@@ -1376,7 +1346,6 @@ mod tests {
             "Failed to replace table name with tabs: {rewritten2}"
         );
 
-        // Issue 3: Table name at start of line
         let problematic_sql3 = "SELECT *\nFROM\nusers\nWHERE active = true";
         let rewritten3 = ducklake
             .rewrite_sql_for_deltas(problematic_sql3, &dependency_deltas)
@@ -1386,10 +1355,7 @@ mod tests {
             "Failed to replace table name at start of line: {rewritten3}"
         );
 
-        // Issue 4: Ensure no extra parentheses are added (this was a real bug)
-        // The legacy implementation would create invalid syntax like "FROM (read_parquet('path'))"
         for rewritten in [&rewritten1, &rewritten2, &rewritten3] {
-            // Check that we don't have invalid syntax with unnecessary parentheses
             assert!(
                 !rewritten.contains("FROM (read_parquet"),
                 "Invalid parentheses found in SQL: {rewritten}"
@@ -1400,7 +1366,6 @@ mod tests {
             );
         }
 
-        // Issue 5: Multiple table replacement test
         dependency_deltas.insert(
             "orders".to_string(),
             DeltaMetadata {
@@ -1415,7 +1380,6 @@ mod tests {
             .rewrite_sql_for_deltas(multi_table_sql, &dependency_deltas)
             .unwrap();
 
-        // Both "users" and "orders" should be replaced
         assert!(
             rewritten_multi.contains("read_parquet('/path/to/delta_users_insert.parquet')"),
             "Table 'users' should be replaced"

@@ -70,7 +70,6 @@ impl FileProcessor {
             .replace("{HH}", "*")
             .replace("{mm}", "*");
 
-        // Replace multiple asterisks with a single one
         let re = Regex::new(r"\*+").unwrap();
         re.replace_all(&result, "*").into_owned()
     }
@@ -324,12 +323,10 @@ mod tests {
         use chrono::NaiveDate;
         use std::fs;
 
-        // Create test files
         let test_dir = "/tmp/file_pattern_integration_test";
         let _ = fs::remove_dir_all(test_dir);
         fs::create_dir_all(test_dir).unwrap();
 
-        // Create files with different dates
         fs::write(format!("{test_dir}/users_2024-01-01.csv"), "test data").unwrap();
         fs::write(format!("{test_dir}/users_2024-01-15.csv"), "test data").unwrap();
         fs::write(format!("{test_dir}/users_2024-02-01.csv"), "test data").unwrap();
@@ -350,7 +347,6 @@ mod tests {
             ),
         };
 
-        // Test 1: Basic functionality with {YYYY}-{MM}-{DD} pattern
         let mut adapter_date_pattern =
             create_test_adapter(&format!("{test_dir}/users_{{YYYY}}-{{MM}}-{{DD}}.csv"));
         adapter_date_pattern.update_strategy = Some(UpdateStrategyConfig {
@@ -365,7 +361,6 @@ mod tests {
         )
         .unwrap();
 
-        // Should only include January files
         assert_eq!(result_date_pattern.len(), 2);
         assert!(
             result_date_pattern
@@ -388,7 +383,6 @@ mod tests {
                 .any(|path| path.contains("2024-03-01"))
         );
 
-        // Test 2: Verify equivalent behavior with wildcard pattern
         let mut adapter_wildcard = create_test_adapter(&format!("{test_dir}/users_*.csv"));
         adapter_wildcard.update_strategy = Some(UpdateStrategyConfig {
             detection: "filename".to_string(),
@@ -400,11 +394,9 @@ mod tests {
             FileProcessor::process_pattern(&format!("{test_dir}/users_*.csv"), &adapter_wildcard)
                 .unwrap();
 
-        // Both methods should produce identical results
         assert_eq!(result_date_pattern.len(), result_wildcard.len());
         assert_eq!(result_date_pattern.len(), 2);
 
-        // Verify both results contain the same files
         for file in &result_date_pattern {
             assert!(
                 result_wildcard.contains(file),
@@ -415,7 +407,6 @@ mod tests {
         println!("Date pattern result: {result_date_pattern:?}");
         println!("Wildcard result: {result_wildcard:?}");
 
-        // Cleanup
         let _ = fs::remove_dir_all(test_dir);
     }
 }

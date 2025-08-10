@@ -10,9 +10,6 @@ use crate::{
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
-// Re-export types from build module for backward compatibility
-// Note: These are already imported in the use statement above
-
 impl Pipeline {
     pub async fn execute(&self, config: &Config, ducklake: &DuckLake) -> Result<()> {
         for action in &self.actions {
