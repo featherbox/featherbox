@@ -9,7 +9,7 @@ use crate::{
 };
 use sea_orm::DatabaseConnection;
 
-pub async fn execute_migrate(project_path: &Path) -> Result<()> {
+pub async fn migrate(project_path: &Path) -> Result<()> {
     let project_root = ensure_project_directory(Some(project_path))?;
 
     let config = Config::load_from_directory(&project_root)?;
@@ -23,7 +23,7 @@ pub async fn execute_migrate(project_path: &Path) -> Result<()> {
 
     let app_db = connect_app_db(&config.project).await?;
 
-    if let Some(graph_id) = execute_migrate_from_config(&config, &app_db).await? {
+    if let Some(graph_id) = migrate_from_config(&config, &app_db).await? {
         println!("Graph migrated successfully! Graph ID: {graph_id}");
     } else {
         println!("No changes detected. Graph is up to date.");
@@ -32,7 +32,7 @@ pub async fn execute_migrate(project_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn execute_migrate_from_config(
+pub async fn migrate_from_config(
     config: &Config,
     app_db: &DatabaseConnection,
 ) -> Result<Option<i32>> {
@@ -86,6 +86,7 @@ mod tests {
             project: project_config.clone(),
             adapters: HashMap::new(),
             models: HashMap::new(),
+            project_root: temp_dir.path().to_path_buf(),
         };
 
         let db = connect_app_db(&project_config).await?;
@@ -121,7 +122,7 @@ mod tests {
         );
 
         // First migration should create the initial graph
-        let result1 = execute_migrate_from_config(&config, &app_db).await?;
+        let result1 = migrate_from_config(&config, &app_db).await?;
         let Some(first_graph_id) = result1 else {
             panic!("Expected a new graph ID")
         };
@@ -140,7 +141,7 @@ mod tests {
         assert_eq!(first_edges.len(), 0);
 
         // Second migration with no changes should return None
-        let result2 = execute_migrate_from_config(&config, &app_db).await?;
+        let result2 = migrate_from_config(&config, &app_db).await?;
         assert!(result2.is_none());
 
         // Add a new model and expect a new graph ID
@@ -154,7 +155,7 @@ mod tests {
         );
 
         // This should create a new graph with the model
-        let result3 = execute_migrate_from_config(&config, &app_db).await?;
+        let result3 = migrate_from_config(&config, &app_db).await?;
         let Some(third_graph_id) = result3 else {
             panic!("Expected a new graph ID")
         };

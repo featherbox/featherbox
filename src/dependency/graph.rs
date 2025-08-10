@@ -68,7 +68,7 @@ impl Graph {
     }
 }
 
-fn from_table(sql: &str) -> Vec<String> {
+pub fn from_table(sql: &str) -> Vec<String> {
     let dialect = DuckDbDialect;
     let ast = Parser::parse_sql(&dialect, sql).unwrap();
 
@@ -153,6 +153,7 @@ mod tests {
             },
             adapters,
             models,
+            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let graph = Graph::from_config(&config).unwrap();
@@ -199,6 +200,7 @@ mod tests {
             },
             adapters,
             models,
+            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let result = Graph::from_config(&config);

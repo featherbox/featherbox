@@ -1,3 +1,0 @@
-{"timestamp":"2024-03-05T09:15:00","path":"/api/health","method":"GET","status":200,"response_time":5,"user_agent":"HealthChecker/1.0"}
-{"timestamp":"2024-03-05T09:16:30","path":"/api/metrics","method":"GET","status":200,"response_time":35,"user_agent":"Prometheus/2.0"}
-{"timestamp":"2024-03-05T09:17:45","path":"/api/users","method":"DELETE","status":404,"response_time":15,"user_agent":"Chrome/122.0"}

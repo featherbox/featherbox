@@ -18,9 +18,9 @@ nix develop --command cargo test  # Run tests in Nix environment (if dependencie
 target/debug/fbox init <project>          # Initialize new project
 target/debug/fbox adapter new <name>      # Create adapter configuration
 target/debug/fbox model new <name>        # Create model configuration
-target/debug/fbox migrate up              # Run database migrations
-target/debug/fbox migrate status          # Check migration status
-target/debug/fbox run                     # Execute pipeline
+target/debug/fbox migrate                 # Run database migrations and save graph
+target/debug/fbox run                     # Execute pipeline with incremental imports
+target/debug/fbox query "<sql>"           # Execute SQL query for verification
 ```
 
 ## Architecture Overview
@@ -40,16 +40,16 @@ FeatherBox follows domain-driven design principles with clear separation of conc
    - `model.rs`: SQL transformation configuration structures
 
 3. **Pipeline Execution Domain (`src/pipeline/`)**: Data processing pipeline
-   - `execution.rs`: Pipeline orchestration with topological sorting
-   - `ducklake.rs`: DuckDB integration for ELT operations
+   - `execution.rs`: Pipeline orchestration with topological sorting and incremental imports
+   - `ducklake.rs`: DuckDB integration for ELT operations with time-based file filtering
 
 4. **Dependency Resolution Domain (`src/dependency/`)**: Graph analysis and change detection
    - `graph.rs`: Dependency analysis and DAG generation from SQL parsing
    - `impact_analysis.rs`: Change impact analysis for differential execution  
-   - `metadata.rs`: Change detection and execution history management
+   - `metadata.rs`: Change detection, execution history management, and incremental import tracking
 
 5. **Database Layer (`src/database/`)**: Persistence and migrations
-   - `connection.rs`: Database connection management
+   - `connection.rs`: Database connection management with automatic migrations
    - `entities/`: Sea-ORM entity definitions for metadata storage
    - `migration/`: Database schema migrations
 
@@ -74,7 +74,7 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 - `__fbox_nodes`: Node (table) information  
 - `__fbox_edges`: Edge (dependency) relationships
 - `__fbox_pipelines`: Pipeline execution records
-- `__fbox_pipeline_actions`: Action execution details
+- `__fbox_pipeline_actions`: Action execution details with time range tracking (`since`, `until`)
 
 ## Development Patterns
 
@@ -91,6 +91,7 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 ### Testing Strategy
 - Comprehensive unit tests for each module
 - Integration tests using `tempfile` for isolation
+- E2E tests in `tests/integration_test.rs` with fixtures-based setup
 - Test both success and error cases
 - Use `#[tokio::test]` for async test functions
 
@@ -101,8 +102,9 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 
 ### Migration System
 - Sea-ORM migrations in `src/database/migration/`
-- Separate `fbox migrate` command for schema management
-- `fbox run` fails if pending migrations exist
+- `fbox migrate` command for graph migration and schema management
+- `connect_app_db()` automatically runs pending database schema migrations
+- `fbox run` requires `fbox migrate` to be run first to establish graph
 - Embedded migrations for single-binary distribution
 
 ## Key Implementation Details
@@ -115,6 +117,16 @@ Implemented across the Dependency Resolution Domain:
 - `src/dependency/metadata.rs`: Compares current graph structure with previously executed graphs
 - `src/dependency/impact_analysis.rs`: Calculates downstream impact of changes  
 - Only executes affected parts of the pipeline when changes are detected
+
+### Incremental Data Import
+High-water mark pattern implementation for efficient data processing:
+- `Action` struct with `since`/`until` fields tracks execution time ranges
+- `ExecutedRange` struct provides clean abstraction for time range handling
+- `get_executed_ranges_for_graph()` retrieves previous execution history
+- `calculate_remaining_range()` determines new data to process
+- File filtering based on filename patterns and time ranges
+- Only processes new files since last successful execution
+- Supports period extension by updating adapter range configuration
 
 ### Async Architecture
 Uses Tokio runtime throughout with proper async/await patterns. Database operations and file I/O are async.
@@ -148,18 +160,38 @@ models/              # Transformation definitions
 ```
 
 ### Adapter Configuration
-Defines data sources with connection details, file formats, and schema information.
+Defines data sources with connection details, file formats, and schema information. Supports incremental import via `update_strategy` with time range configuration:
+
+```yaml
+update_strategy:
+  detection: filename  # Extract timestamp from filename patterns
+  range:
+    since: "2024-01-01"
+    until: "2024-01-31"
+```
 
 ### Model Configuration  
 Contains SQL transformations with dependency resolution and caching settings (`max_age`).
 
 ## Testing Guidelines
 
+### Unit Tests
 - Use `tempfile::tempdir()` for test isolation
-- Create complete project structures in tests
+- Create complete project structures in tests using direct data structure construction rather than YAML parsing
 - Test both CLI commands and library functions
 - Ensure proper cleanup of test resources
-- Run migrations in integration tests before testing pipeline execution
+- Database migrations are handled automatically by `connect_app_db()`
+- Verify graph structure in database after migrations using entity queries
+
+### E2E Integration Tests
+- Location: `tests/integration_test.rs` for comprehensive end-to-end workflow testing
+- Test fixtures: `tests/fixtures/` directory contains all test data and configurations
+  - `tests/fixtures/project.yml`: Complete project configuration with connections
+  - `tests/fixtures/test_data/`: Test data files (JSON format)
+  - `tests/fixtures/adapters/`: Adapter configuration files
+  - `tests/fixtures/models/`: Model configuration files
+- Workflow testing: Validates complete CLI workflow from `fbox init` through `fbox run`
+- External behavior verification: Tests focus on command success/failure and SQL query results only
 
 ## Code Style Guidelines
 
@@ -199,6 +231,7 @@ src/
 ### Module Naming Conventions
 - Domain directories use plural nouns (`commands/`, `config/`)
 - Domain coordination files use singular nouns (`commands.rs`, `config.rs`)
+- **IMPORTANT**: Uses Rust 2024 edition - NO `mod.rs` files, use coordination files instead
 - Avoid module inception (file names matching directory names)
 - Use descriptive names that indicate responsibility (`workspace.rs` vs `project.rs`)
 
@@ -208,3 +241,6 @@ src/
 - Configuration changes trigger full dependency graph recalculation
 - All user data operations go through DuckDB for performance
 - Metadata operations use SQLite via Sea-ORM for reliability
+- Incremental imports require adapters to have `update_strategy.range` configuration
+- Graph migration (`fbox migrate`) must be run before pipeline execution (`fbox run`)
+- Time range calculations support both date (`2024-01-01`) and datetime (`2024-01-01 12:00:00`) formats

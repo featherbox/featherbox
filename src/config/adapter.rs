@@ -20,15 +20,13 @@ pub struct FileConfig {
 pub struct UpdateStrategyConfig {
     pub detection: String,
     pub timestamp_from: Option<String>,
-    pub range: Option<RangeConfig>,
+    pub range: RangeConfig,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RangeConfig {
-    pub since: Option<String>,
-    pub until: Option<String>,
-    pub since_parsed: Option<chrono::NaiveDateTime>,
-    pub until_parsed: Option<chrono::NaiveDateTime>,
+    pub since: Option<chrono::NaiveDateTime>,
+    pub until: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,9 +104,12 @@ fn parse_update_strategy(yaml: &yaml_rust2::Yaml) -> Option<UpdateStrategyConfig
 
     let timestamp_from = yaml["timestamp_from"].as_str().map(|s| s.to_string());
     let range = if !yaml["range"].is_badvalue() {
-        Some(parse_range(&yaml["range"]))
+        parse_range(&yaml["range"])
     } else {
-        None
+        RangeConfig {
+            since: None,
+            until: None,
+        }
     };
 
     Some(UpdateStrategyConfig {
@@ -122,7 +123,7 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
     let since = yaml["since"].as_str().map(|s| s.to_string());
     let until = yaml["until"].as_str().map(|s| s.to_string());
 
-    let since_parsed = since.as_ref().and_then(|s| {
+    let since = since.as_ref().and_then(|s| {
         chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
             .or_else(|_| {
                 chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
@@ -131,7 +132,7 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
             .ok()
     });
 
-    let until_parsed = until.as_ref().and_then(|s| {
+    let until = until.as_ref().and_then(|s| {
         chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
             .or_else(|_| {
                 chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
@@ -140,12 +141,7 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
             .ok()
     });
 
-    RangeConfig {
-        since,
-        until,
-        since_parsed,
-        until_parsed,
-    }
+    RangeConfig { since, until }
 }
 
 fn parse_limits(yaml: &yaml_rust2::Yaml) -> LimitsConfig {
@@ -225,6 +221,7 @@ fn parse_columns(yaml: &yaml_rust2::Yaml) -> Vec<ColumnConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Datelike, Timelike};
     use yaml_rust2::YamlLoader;
 
     #[test]
@@ -273,10 +270,7 @@ mod tests {
         let update_strategy = config.update_strategy.as_ref().unwrap();
         assert_eq!(update_strategy.detection, "filename");
         assert_eq!(update_strategy.timestamp_from, Some("path".to_string()));
-        assert_eq!(
-            update_strategy.range.as_ref().unwrap().since,
-            Some("2023-01-01 00:00:00".to_string())
-        );
+        assert!(update_strategy.range.since.is_some());
 
         assert_eq!(config.format.ty, "json");
 
@@ -320,14 +314,26 @@ mod tests {
         let config = config.unwrap();
         assert_eq!(config.detection, "content");
         assert_eq!(config.timestamp_from, Some("timestamp_column".to_string()));
-        assert_eq!(
-            config.range.as_ref().unwrap().since,
-            Some("2024-01-01".to_string())
-        );
-        assert_eq!(
-            config.range.as_ref().unwrap().until,
-            Some("2024-12-31".to_string())
-        );
+        let range = &config.range;
+        assert!(range.since.is_some());
+        assert!(range.until.is_some());
+
+        let since = range.since.unwrap();
+        let until = range.until.unwrap();
+
+        assert_eq!(since.year(), 2024);
+        assert_eq!(since.month(), 1);
+        assert_eq!(since.day(), 1);
+        assert_eq!(since.hour(), 0);
+        assert_eq!(since.minute(), 0);
+        assert_eq!(since.second(), 0);
+
+        assert_eq!(until.year(), 2024);
+        assert_eq!(until.month(), 12);
+        assert_eq!(until.day(), 31);
+        assert_eq!(until.hour(), 23);
+        assert_eq!(until.minute(), 59);
+        assert_eq!(until.second(), 59);
     }
 
     #[test]

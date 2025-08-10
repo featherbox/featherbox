@@ -17,6 +17,7 @@ pub struct Config {
     pub project: ProjectConfig,
     pub adapters: HashMap<String, AdapterConfig>,
     pub models: HashMap<String, ModelConfig>,
+    pub project_root: std::path::PathBuf,
 }
 
 impl Config {
@@ -29,6 +30,7 @@ impl Config {
             project: project_config,
             adapters,
             models,
+            project_root: project_path.to_path_buf(),
         })
     }
 }

@@ -1,0 +1,15 @@
+storage:
+  type: local
+  path: ./storage
+
+database:
+  type: sqlite
+  path: ./database.db
+
+deployments:
+  timeout: 600
+
+connections:
+  test_data:
+    type: localfile
+    base_path: ./test_data

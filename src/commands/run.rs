@@ -1,18 +1,25 @@
-use anyhow::Result;
-use std::path::Path;
-
 use crate::{
     commands::workspace::ensure_project_directory,
     config::Config,
-    database::connect_app_db,
-    dependency::{Graph, get_latest_graph_id, save_pipeline_execution},
-    pipeline::{CatalogConfig, DuckLake, Pipeline, StorageConfig},
+    database::{
+        connect_app_db,
+        entities::{pipeline_actions, pipelines},
+    },
+    dependency::{Graph, latest_graph_id},
+    pipeline::{
+        ducklake::{CatalogConfig, DuckLake, StorageConfig},
+        execution::Pipeline,
+    },
 };
+use anyhow::Result;
+use sea_orm::DatabaseConnection;
+use sea_orm::{ActiveModelTrait, NotSet, Set};
+use std::path::Path;
 
 #[cfg(test)]
 use crate::dependency::{calculate_affected_nodes, detect_changes, save_execution_history};
 
-pub async fn execute_run(project_path: &Path) -> Result<()> {
+pub async fn run(project_path: &Path) -> Result<()> {
     let project_root = ensure_project_directory(Some(project_path))?;
 
     let config = Config::load_from_directory(&project_root)?;
@@ -26,7 +33,7 @@ pub async fn execute_run(project_path: &Path) -> Result<()> {
 
     let app_db = connect_app_db(&config.project).await?;
 
-    let graph_id = get_latest_graph_id(&app_db).await?;
+    let graph_id = latest_graph_id(&app_db).await?;
 
     let Some(graph_id) = graph_id else {
         println!("No graph found. Run 'fbox migrate' first to create the initial graph.");
@@ -39,14 +46,55 @@ pub async fn execute_run(project_path: &Path) -> Result<()> {
 
     let pipeline =
         Pipeline::from_graph_with_ranges(&current_graph, &config, &app_db, graph_id).await?;
-    if let Err(e) = pipeline.execute(&config, &ducklake).await {
+    save_pipeline(&app_db, graph_id, &pipeline).await?;
+
+    if let Err(e) = pipeline
+        .execute_with_delta(&config, &ducklake, &app_db)
+        .await
+    {
         eprintln!("Pipeline execution failed: {e}");
         return Err(e);
     }
 
-    save_pipeline_execution(&app_db, graph_id, &pipeline).await?;
-
     println!("Pipeline execution completed successfully!");
+
+    Ok(())
+}
+
+async fn save_pipeline(
+    app_db: &DatabaseConnection,
+    graph_id: i32,
+    pipeline: &Pipeline,
+) -> Result<()> {
+    let pipeline_model = pipelines::ActiveModel {
+        id: NotSet,
+        graph_id: Set(graph_id),
+        created_at: Set(chrono::Utc::now().naive_utc()),
+    };
+    let saved_pipeline = pipeline_model.insert(app_db).await?;
+    let pipeline_id = saved_pipeline.id;
+
+    let mut action_ids = Vec::new();
+    for (execution_order, action) in pipeline.actions.iter().enumerate() {
+        let action_model = pipeline_actions::ActiveModel {
+            id: NotSet,
+            pipeline_id: Set(pipeline_id),
+            table_name: Set(action.table_name.clone()),
+            execution_order: Set(execution_order as i32),
+            since: Set(action
+                .time_range
+                .as_ref()
+                .and_then(|tr| tr.since)
+                .map(|dt| dt.naive_utc())),
+            until: Set(action
+                .time_range
+                .as_ref()
+                .and_then(|tr| tr.until)
+                .map(|dt| dt.naive_utc())),
+        };
+        let saved_action = action_model.insert(app_db).await?;
+        action_ids.push(saved_action.id);
+    }
 
     Ok(())
 }
@@ -99,7 +147,7 @@ mod tests {
         );
         fs::write(project_path.join("project.yml"), project_yml)?;
 
-        let result = execute_run(project_path).await;
+        let result = run(project_path).await;
         assert!(result.is_ok());
 
         Ok(())
@@ -209,7 +257,7 @@ mod tests {
         let config = Config::load_from_directory(project_path)?;
         let _app_db = connect_app_db(&config.project).await?;
 
-        let result = execute_run(project_path).await;
+        let result = run(project_path).await;
         assert!(result.is_ok());
 
         fs::create_dir_all(project_path.join("data"))?;
@@ -231,10 +279,10 @@ mod tests {
         );
         fs::write(project_path.join("adapters/users.yml"), adapter_yml)?;
 
-        let result = execute_run(project_path).await;
+        let result = run(project_path).await;
         assert!(result.is_ok());
 
-        let result = execute_run(project_path).await;
+        let result = run(project_path).await;
         assert!(result.is_ok());
 
         Ok(())
@@ -245,7 +293,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let project_path = temp_dir.path();
 
-        let result = execute_run(project_path).await;
+        let result = run(project_path).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         println!("Error message: {error_msg}");
@@ -316,8 +364,10 @@ mod tests {
         let initial_pipeline = Pipeline {
             actions: vec![Action {
                 table_name: "users".to_string(),
-                since: None,
-                until: None,
+                time_range: Some(crate::pipeline::execution::TimeRange {
+                    since: None,
+                    until: None,
+                }),
             }],
         };
 

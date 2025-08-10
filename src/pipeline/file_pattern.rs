@@ -1,6 +1,7 @@
 use crate::config::adapter::{AdapterConfig, LimitsConfig, RangeConfig, UpdateStrategyConfig};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
+use regex::Regex;
 use std::path::Path;
 
 pub struct FilePatternProcessor;
@@ -15,11 +16,7 @@ impl FilePatternProcessor {
         };
 
         let filtered_paths = if let Some(strategy) = &adapter.update_strategy {
-            if let Some(range) = &strategy.range {
-                Self::filter_paths_by_time_range(expanded_paths, range, strategy)?
-            } else {
-                expanded_paths
-            }
+            Self::filter_paths_by_time_range(expanded_paths, &strategy.range, strategy)?
         } else {
             expanded_paths
         };
@@ -40,12 +37,16 @@ impl FilePatternProcessor {
     }
 
     fn convert_date_pattern_to_wildcard(pattern: &str) -> String {
-        pattern
+        let result = pattern
             .replace("{YYYY}", "*")
             .replace("{MM}", "*")
             .replace("{DD}", "*")
             .replace("{HH}", "*")
-            .replace("{mm}", "*")
+            .replace("{mm}", "*");
+
+        // Replace multiple asterisks with a single one
+        let re = Regex::new(r"\*+").unwrap();
+        re.replace_all(&result, "*").into_owned()
     }
 
     fn filter_paths_by_time_range(
@@ -65,10 +66,10 @@ impl FilePatternProcessor {
         range: &RangeConfig,
     ) -> Result<Vec<String>> {
         let since = range
-            .since_parsed
+            .since
             .unwrap_or_else(|| chrono::Utc::now().naive_utc());
         let until = range
-            .until_parsed
+            .until
             .unwrap_or_else(|| chrono::Utc::now().naive_utc());
 
         let mut filtered_paths = Vec::new();
@@ -84,10 +85,10 @@ impl FilePatternProcessor {
 
     fn filter_by_file_metadata(paths: Vec<String>, range: &RangeConfig) -> Result<Vec<String>> {
         let since = range
-            .since_parsed
+            .since
             .unwrap_or_else(|| chrono::Utc::now().naive_utc());
         let until = range
-            .until_parsed
+            .until
             .unwrap_or_else(|| chrono::Utc::now().naive_utc());
 
         let mut filtered_paths = Vec::new();
@@ -226,7 +227,7 @@ mod tests {
             FilePatternProcessor::convert_date_pattern_to_wildcard(
                 "logs/{YYYY}-{MM}-{DD}T{HH}{mm}.json"
             ),
-            "logs/*-*-*T**.json"
+            "logs/*-*-*T*.json"
         );
         assert_eq!(
             FilePatternProcessor::convert_date_pattern_to_wildcard(
@@ -287,10 +288,115 @@ mod tests {
         adapter.update_strategy = Some(UpdateStrategyConfig {
             detection: "content".to_string(),
             timestamp_from: None,
-            range: None,
+            range: RangeConfig {
+                since: None,
+                until: None,
+            },
         });
 
         let result = FilePatternProcessor::process_pattern("data/*.csv", &adapter).unwrap();
         assert_eq!(result, vec![] as Vec<String>);
+    }
+
+    #[test]
+    fn test_filename_detection_integration() {
+        use chrono::NaiveDate;
+        use std::fs;
+
+        // Create test files
+        let test_dir = "/tmp/file_pattern_integration_test";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir_all(test_dir).unwrap();
+
+        // Create files with different dates
+        fs::write(format!("{test_dir}/users_2024-01-01.csv"), "test data").unwrap();
+        fs::write(format!("{test_dir}/users_2024-01-15.csv"), "test data").unwrap();
+        fs::write(format!("{test_dir}/users_2024-02-01.csv"), "test data").unwrap();
+        fs::write(format!("{test_dir}/users_2024-03-01.csv"), "test data").unwrap();
+
+        let range_config = RangeConfig {
+            since: Some(
+                NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: Some(
+                NaiveDate::from_ymd_opt(2024, 1, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+            ),
+        };
+
+        // Test 1: Basic functionality with {YYYY}-{MM}-{DD} pattern
+        let mut adapter_date_pattern =
+            create_test_adapter(&format!("{test_dir}/users_{{YYYY}}-{{MM}}-{{DD}}.csv"));
+        adapter_date_pattern.update_strategy = Some(UpdateStrategyConfig {
+            detection: "filename".to_string(),
+            timestamp_from: None,
+            range: range_config.clone(),
+        });
+
+        let result_date_pattern = FilePatternProcessor::process_pattern(
+            &format!("{test_dir}/users_{{YYYY}}-{{MM}}-{{DD}}.csv"),
+            &adapter_date_pattern,
+        )
+        .unwrap();
+
+        // Should only include January files
+        assert_eq!(result_date_pattern.len(), 2);
+        assert!(
+            result_date_pattern
+                .iter()
+                .any(|path| path.contains("2024-01-01"))
+        );
+        assert!(
+            result_date_pattern
+                .iter()
+                .any(|path| path.contains("2024-01-15"))
+        );
+        assert!(
+            !result_date_pattern
+                .iter()
+                .any(|path| path.contains("2024-02-01"))
+        );
+        assert!(
+            !result_date_pattern
+                .iter()
+                .any(|path| path.contains("2024-03-01"))
+        );
+
+        // Test 2: Verify equivalent behavior with wildcard pattern
+        let mut adapter_wildcard = create_test_adapter(&format!("{test_dir}/users_*.csv"));
+        adapter_wildcard.update_strategy = Some(UpdateStrategyConfig {
+            detection: "filename".to_string(),
+            timestamp_from: None,
+            range: range_config,
+        });
+
+        let result_wildcard = FilePatternProcessor::process_pattern(
+            &format!("{test_dir}/users_*.csv"),
+            &adapter_wildcard,
+        )
+        .unwrap();
+
+        // Both methods should produce identical results
+        assert_eq!(result_date_pattern.len(), result_wildcard.len());
+        assert_eq!(result_date_pattern.len(), 2);
+
+        // Verify both results contain the same files
+        for file in &result_date_pattern {
+            assert!(
+                result_wildcard.contains(file),
+                "Wildcard result missing file: {file}"
+            );
+        }
+
+        println!("Date pattern result: {result_date_pattern:?}");
+        println!("Wildcard result: {result_wildcard:?}");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(test_dir);
     }
 }

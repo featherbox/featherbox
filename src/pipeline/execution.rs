@@ -1,20 +1,26 @@
 use crate::{
     config::{Config, adapter::RangeConfig},
-    dependency::graph::{Edge, Graph, Node},
-    pipeline::ducklake::DuckLake,
+    dependency::{
+        graph::{Edge, Graph, Node},
+        metadata::get_executed_ranges_for_graph,
+    },
+    pipeline::{
+        delta::{DeltaManager, DeltaMetadata},
+        ducklake::DuckLake,
+    },
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
+use sea_orm::DatabaseConnection;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
     pub table_name: String,
-    pub since: Option<chrono::DateTime<chrono::Utc>>,
-    pub until: Option<chrono::DateTime<chrono::Utc>>,
+    pub time_range: Option<TimeRange>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExecutedRange {
+pub struct TimeRange {
     pub since: Option<chrono::DateTime<chrono::Utc>>,
     pub until: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -31,8 +37,10 @@ impl Pipeline {
             .into_iter()
             .map(|node_name| Action {
                 table_name: node_name,
-                since: None,
-                until: None,
+                time_range: Some(TimeRange {
+                    since: None,
+                    until: None,
+                }),
             })
             .collect();
 
@@ -45,37 +53,37 @@ impl Pipeline {
         db: &sea_orm::DatabaseConnection,
         graph_id: i32,
     ) -> Result<Self> {
-        use crate::dependency::metadata::get_executed_ranges_for_graph;
-
         let sorted_nodes = topological_sort(graph);
         let mut actions = Vec::new();
 
         for node_name in sorted_nodes {
-            let (since, until) = if let Some(adapter) = config.adapters.get(&node_name) {
-                if let Some(strategy) = &adapter.update_strategy {
-                    if let Some(range) = &strategy.range {
-                        let executed_ranges =
-                            get_executed_ranges_for_graph(db, graph_id, &node_name).await?;
-                        let remaining_range = calculate_remaining_range(range, &executed_ranges);
-                        (remaining_range.since, remaining_range.until)
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
+            let remaining_range = Self::remaining_range(config, &node_name, db, graph_id).await?;
 
             actions.push(Action {
                 table_name: node_name,
-                since,
-                until,
+                time_range: remaining_range,
             });
         }
 
         Ok(Pipeline { actions })
+    }
+
+    async fn remaining_range(
+        config: &Config,
+        table_name: &str,
+        db: &DatabaseConnection,
+        graph_id: i32,
+    ) -> Result<Option<TimeRange>> {
+        let Some(adapter) = config.adapters.get(table_name) else {
+            return Ok(None);
+        };
+
+        let Some(strategy) = &adapter.update_strategy else {
+            return Ok(None);
+        };
+
+        let executed_ranges = get_executed_ranges_for_graph(db, graph_id, table_name).await?;
+        Ok(calculate_remaining_range(&strategy.range, &executed_ranges))
     }
 
     pub fn create_partial_pipeline(graph: &Graph, affected_nodes: &[String]) -> Self {
@@ -85,27 +93,28 @@ impl Pipeline {
 
     pub async fn execute(&self, config: &Config, ducklake: &DuckLake) -> Result<()> {
         for action in &self.actions {
-            println!("Executing action for table: {}", action.table_name);
-
             if let Some(adapter) = config.adapters.get(&action.table_name) {
-                println!("  Loading adapter: {}", action.table_name);
-                if action.since.is_some() || action.until.is_some() {
-                    println!("    Range: {:?} to {:?}", action.since, action.until);
-                }
-                ducklake
-                    .extract_and_load_with_range(
+                let file_paths =
+                    crate::pipeline::file_pattern::FilePatternProcessor::process_pattern(
+                        &adapter.file.path,
                         adapter,
+                    )?;
+
+                if !file_paths.is_empty() {
+                    let sql = ducklake.build_create_and_load_sql_multiple(
                         &action.table_name,
-                        action.since,
-                        action.until,
-                    )
-                    .await?;
-            } else if let Some(model) = config.models.get(&action.table_name) {
-                println!("  Executing model: {}", action.table_name);
-                if let Err(e) = ducklake.transform(model, &action.table_name).await {
-                    eprintln!("    Transform failed: {e}");
-                    return Err(e);
+                        adapter,
+                        &file_paths,
+                    )?;
+                    ducklake.execute_batch(&sql).with_context(|| {
+                        format!(
+                            "Failed to execute adapter SQL for table '{}'",
+                            action.table_name
+                        )
+                    })?;
                 }
+            } else if let Some(model) = config.models.get(&action.table_name) {
+                ducklake.transform(model, &action.table_name).await?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Table '{}' not found in adapters or models",
@@ -115,6 +124,126 @@ impl Pipeline {
         }
 
         Ok(())
+    }
+
+    pub async fn execute_with_delta(
+        &self,
+        config: &Config,
+        ducklake: &DuckLake,
+        app_db: &sea_orm::DatabaseConnection,
+    ) -> Result<()> {
+        let delta_manager = DeltaManager::new(&config.project_root)?;
+
+        let action_ids = self.get_latest_pipeline_action_ids(app_db).await?;
+
+        for (idx, action) in self.actions.iter().enumerate() {
+            let action_id = action_ids[idx];
+
+            if let Some(adapter) = config.adapters.get(&action.table_name) {
+                let file_paths =
+                    ducklake.files_for_processing(adapter, action.time_range.clone())?;
+
+                if !file_paths.is_empty() {
+                    ducklake
+                        .process_delta(
+                            adapter,
+                            &action.table_name,
+                            &file_paths,
+                            &delta_manager,
+                            app_db,
+                            action_id,
+                        )
+                        .await?;
+                }
+            } else if let Some(model) = config.models.get(&action.table_name) {
+                let dependency_deltas = self
+                    .collect_dependency_deltas(&action.table_name, &delta_manager, app_db, config)
+                    .await?;
+
+                ducklake
+                    .transform_with_delta(
+                        model,
+                        &action.table_name,
+                        &delta_manager,
+                        app_db,
+                        action_id,
+                        &dependency_deltas,
+                    )
+                    .await?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Table '{}' not found in adapters or models",
+                    action.table_name
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn collect_dependency_deltas(
+        &self,
+        model_table_name: &str,
+        delta_manager: &DeltaManager,
+        app_db: &sea_orm::DatabaseConnection,
+        config: &Config,
+    ) -> Result<HashMap<String, DeltaMetadata>> {
+        use crate::dependency::graph::from_table;
+
+        let model = config
+            .models
+            .get(model_table_name)
+            .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_table_name))?;
+
+        let dependencies = from_table(&model.sql);
+        let mut dependency_deltas = HashMap::new();
+
+        for dep_table in dependencies {
+            if config.adapters.contains_key(&dep_table) {
+                if let Some(delta_metadata) = delta_manager
+                    .latest_delta_metadata(app_db, &dep_table)
+                    .await?
+                {
+                    dependency_deltas.insert(dep_table, delta_metadata);
+                }
+            }
+        }
+
+        Ok(dependency_deltas)
+    }
+
+    async fn get_latest_pipeline_action_ids(
+        &self,
+        app_db: &sea_orm::DatabaseConnection,
+    ) -> Result<Vec<i32>> {
+        use crate::database::entities::{pipeline_actions, pipelines};
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+
+        let latest_pipeline = pipelines::Entity::find()
+            .order_by_desc(pipelines::Column::CreatedAt)
+            .one(app_db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No pipeline found in database"))?;
+
+        let mut action_ids = Vec::new();
+
+        for action in &self.actions {
+            let pipeline_action = pipeline_actions::Entity::find()
+                .filter(pipeline_actions::Column::PipelineId.eq(latest_pipeline.id))
+                .filter(pipeline_actions::Column::TableName.eq(&action.table_name))
+                .one(app_db)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Action for table '{}' not found in latest pipeline",
+                        action.table_name
+                    )
+                })?;
+
+            action_ids.push(pipeline_action.id);
+        }
+
+        Ok(action_ids)
     }
 }
 
@@ -188,20 +317,20 @@ fn create_subgraph(graph: &Graph, affected_nodes: &[String]) -> Graph {
 
 fn calculate_remaining_range(
     config_range: &RangeConfig,
-    executed_ranges: &[ExecutedRange],
-) -> ExecutedRange {
+    executed_ranges: &[TimeRange],
+) -> Option<TimeRange> {
     let config_since = config_range
-        .since_parsed
+        .since
         .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
     let config_until = config_range
-        .until_parsed
+        .until
         .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
 
     if executed_ranges.is_empty() {
-        return ExecutedRange {
+        return Some(TimeRange {
             since: config_since,
             until: config_until,
-        };
+        });
     }
 
     let mut latest_until: Option<chrono::DateTime<chrono::Utc>> = None;
@@ -217,39 +346,36 @@ fn calculate_remaining_range(
     match (config_since, config_until, latest_until) {
         (Some(config_since), Some(config_until), Some(latest_until)) => {
             if latest_until >= config_until {
-                ExecutedRange {
-                    since: None,
-                    until: None,
-                }
+                None // すべて処理済み
             } else if latest_until >= config_since {
-                ExecutedRange {
-                    since: Some(latest_until + chrono::Duration::seconds(1)),
+                Some(TimeRange {
+                    since: Some(latest_until),
                     until: Some(config_until),
-                }
+                })
             } else {
-                ExecutedRange {
+                Some(TimeRange {
                     since: Some(config_since),
                     until: Some(config_until),
-                }
+                })
             }
         }
         (Some(config_since), None, Some(latest_until)) => {
             if latest_until >= config_since {
-                ExecutedRange {
-                    since: Some(latest_until + chrono::Duration::seconds(1)),
+                Some(TimeRange {
+                    since: Some(latest_until),
                     until: None,
-                }
+                })
             } else {
-                ExecutedRange {
+                Some(TimeRange {
                     since: Some(config_since),
                     until: None,
-                }
+                })
             }
         }
-        _ => ExecutedRange {
+        _ => Some(TimeRange {
             since: config_since,
             until: config_until,
-        },
+        }),
     }
 }
 
@@ -262,7 +388,7 @@ mod tests {
             model::ModelConfig,
         },
         dependency::graph::{Edge, Node},
-        pipeline::ducklake::{CatalogConfig, DuckLake, StorageConfig},
+        pipeline::ducklake::{CatalogConfig, DuckLake},
     };
     use std::collections::HashMap;
 
@@ -412,7 +538,7 @@ mod tests {
         let catalog_config = CatalogConfig::Sqlite {
             path: format!("{test_dir}/test.sqlite"),
         };
-        let storage_config = StorageConfig::LocalFile {
+        let storage_config = crate::pipeline::ducklake::StorageConfig::LocalFile {
             path: format!("{test_dir}/storage"),
         };
         let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
@@ -499,6 +625,7 @@ mod tests {
             },
             adapters,
             models,
+            project_root: std::path::PathBuf::from(test_dir),
         };
 
         let graph = Graph {
@@ -657,5 +784,278 @@ mod tests {
         assert_eq!(subgraph.edges.len(), 1);
         assert_eq!(subgraph.edges[0].from, "b");
         assert_eq!(subgraph.edges[0].to, "c");
+    }
+
+    #[test]
+    fn test_calculate_remaining_range_empty_executed() {
+        let config_range = RangeConfig {
+            since: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+            ),
+        };
+        let executed_ranges = vec![];
+
+        let result = calculate_remaining_range(&config_range, &executed_ranges);
+
+        let result = result.unwrap();
+        assert!(result.since.is_some());
+        assert!(result.until.is_some());
+        assert_eq!(
+            result.since.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        );
+        assert_eq!(
+            result.until.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_calculate_remaining_range_partial_executed() {
+        let config_range = RangeConfig {
+            since: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+            ),
+        };
+        let executed_ranges = vec![TimeRange {
+            since: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+            until: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 6, 30)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+        }];
+
+        let result = calculate_remaining_range(&config_range, &executed_ranges);
+
+        let result = result.unwrap();
+        assert!(result.since.is_some());
+        assert!(result.until.is_some());
+        assert_eq!(
+            result.since.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 6, 30).unwrap()
+        );
+        assert_eq!(
+            result.until.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_calculate_remaining_range_fully_executed() {
+        let config_range = RangeConfig {
+            since: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+            ),
+        };
+        let executed_ranges = vec![TimeRange {
+            since: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+            until: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+        }];
+
+        let result = calculate_remaining_range(&config_range, &executed_ranges);
+
+        assert!(result.is_none()); // すべて処理済み
+    }
+
+    #[test]
+    fn test_calculate_remaining_range_multiple_executed_ranges() {
+        let config_range = RangeConfig {
+            since: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+            ),
+        };
+        let executed_ranges = vec![
+            TimeRange {
+                since: Some(chrono::DateTime::from_naive_utc_and_offset(
+                    chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap(),
+                    chrono::Utc,
+                )),
+                until: Some(chrono::DateTime::from_naive_utc_and_offset(
+                    chrono::NaiveDate::from_ymd_opt(2024, 3, 31)
+                        .unwrap()
+                        .and_hms_opt(23, 59, 59)
+                        .unwrap(),
+                    chrono::Utc,
+                )),
+            },
+            TimeRange {
+                since: Some(chrono::DateTime::from_naive_utc_and_offset(
+                    chrono::NaiveDate::from_ymd_opt(2024, 4, 1)
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap(),
+                    chrono::Utc,
+                )),
+                until: Some(chrono::DateTime::from_naive_utc_and_offset(
+                    chrono::NaiveDate::from_ymd_opt(2024, 8, 31)
+                        .unwrap()
+                        .and_hms_opt(23, 59, 59)
+                        .unwrap(),
+                    chrono::Utc,
+                )),
+            },
+        ];
+
+        let result = calculate_remaining_range(&config_range, &executed_ranges);
+
+        let result = result.unwrap();
+        assert!(result.since.is_some());
+        assert!(result.until.is_some());
+        // Should return from the latest executed until date
+        assert_eq!(
+            result.since.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 8, 31).unwrap()
+        );
+        assert_eq!(
+            result.until.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_calculate_remaining_range_open_ended() {
+        let config_range = RangeConfig {
+            since: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: None,
+        };
+        let executed_ranges = vec![TimeRange {
+            since: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+            until: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 6, 30)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+        }];
+
+        let result = calculate_remaining_range(&config_range, &executed_ranges);
+
+        let result = result.unwrap();
+        assert!(result.since.is_some());
+        assert!(result.until.is_none());
+        assert_eq!(
+            result.since.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 6, 30).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_calculate_remaining_range_executed_before_config_start() {
+        let config_range = RangeConfig {
+            since: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 6, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            ),
+            until: Some(
+                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+            ),
+        };
+        let executed_ranges = vec![TimeRange {
+            since: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+            until: Some(chrono::DateTime::from_naive_utc_and_offset(
+                chrono::NaiveDate::from_ymd_opt(2024, 3, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+                chrono::Utc,
+            )),
+        }];
+
+        let result = calculate_remaining_range(&config_range, &executed_ranges);
+
+        let result = result.unwrap();
+        assert!(result.since.is_some());
+        assert!(result.until.is_some());
+        assert_eq!(
+            result.since.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 6, 1).unwrap()
+        );
+        assert_eq!(
+            result.until.unwrap().date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
+        );
     }
 }
