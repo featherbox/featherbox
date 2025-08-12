@@ -1,7 +1,7 @@
 connection: test_data
 description: 'Time series sensor data with date patterns'
 file:
-  path: test_data/time_series/{YYYY}-{MM}-{DD}T{HH}{mm}.json
+  path: time_series/{YYYY}-{MM}-{DD}T{HH}{mm}.json
 update_strategy:
   detection: filename
   timestamp_from: path

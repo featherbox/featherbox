@@ -1,12 +1,14 @@
 use crate::config::adapter::AdapterConfig;
+use crate::config::project::ConnectionConfig;
 use crate::pipeline::{
     build::TimeRange,
     delta::{DeltaManager, DeltaMetadata, DeltaProcessor},
     ducklake::DuckLake,
-    file_processor::FileProcessor,
+    file_processor::{FileProcessor, FileSystem},
 };
 use anyhow::{Context, Result};
 use sea_orm::DatabaseConnection;
+use std::collections::HashMap;
 
 pub struct Importer<'a> {
     ducklake: &'a DuckLake,
@@ -26,6 +28,7 @@ impl<'a> Importer<'a> {
         &self,
         adapter: &AdapterConfig,
         file_paths: &[String],
+        connections: Option<&HashMap<String, ConnectionConfig>>,
     ) -> Result<String> {
         if file_paths.is_empty() {
             return Err(anyhow::anyhow!("No files to load"));
@@ -33,14 +36,11 @@ impl<'a> Importer<'a> {
 
         if file_paths.len() == 1 {
             let file_path = &file_paths[0];
-            return self.build_import_query_single(adapter, file_path);
+            return self.build_import_query_single(adapter, file_path, connections);
         }
 
-        let file_paths_str = file_paths
-            .iter()
-            .map(|p| format!("'{p}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let file_paths_str =
+            self.build_file_paths_string(file_paths, &adapter.connection, connections)?;
 
         match adapter.format.ty.as_str() {
             "csv" => {
@@ -65,40 +65,151 @@ impl<'a> Importer<'a> {
         &self,
         adapter: &AdapterConfig,
         file_path: &str,
+        connections: Option<&HashMap<String, ConnectionConfig>>,
     ) -> Result<String> {
+        let resolved_path = self.resolve_file_path(file_path, &adapter.connection, connections)?;
+
         match adapter.format.ty.as_str() {
             "csv" => {
                 let has_header = adapter.format.has_header.unwrap_or(true);
                 let query =
-                    format!("SELECT * FROM read_csv_auto('{file_path}', header={has_header})");
+                    format!("SELECT * FROM read_csv_auto('{resolved_path}', header={has_header})");
                 Ok(query)
             }
             "parquet" => {
-                let query = format!("SELECT * FROM read_parquet('{file_path}')");
+                let query = format!("SELECT * FROM read_parquet('{resolved_path}')");
                 Ok(query)
             }
             "json" => {
-                let query = format!("SELECT * FROM read_json_auto('{file_path}')");
+                let query = format!("SELECT * FROM read_json_auto('{resolved_path}')");
                 Ok(query)
             }
             _ => Err(anyhow::anyhow!("Unsupported format: {}", adapter.format.ty)),
         }
     }
 
-    pub fn import_adapter(&self, adapter: &AdapterConfig, table_name: &str) -> Result<()> {
-        let file_paths = FileProcessor::process_pattern(&adapter.file.path, adapter)?;
+    fn build_file_paths_string(
+        &self,
+        file_paths: &[String],
+        connection_name: &str,
+        connections: Option<&HashMap<String, ConnectionConfig>>,
+    ) -> Result<String> {
+        let resolved_paths: Result<Vec<String>> = file_paths
+            .iter()
+            .map(|p| self.resolve_file_path(p, connection_name, connections))
+            .collect();
 
-        if !file_paths.is_empty() {
-            let query = self.build_import_query_multiple(adapter, &file_paths)?;
-            self.ducklake
-                .create_table_from_query(table_name, &query)
-                .with_context(|| format!("Failed to import data for table '{table_name}'"))?;
+        let resolved_paths = resolved_paths?;
+        let file_paths_str = resolved_paths
+            .iter()
+            .map(|p| format!("'{p}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Ok(file_paths_str)
+    }
+
+    fn resolve_file_path(
+        &self,
+        file_path: &str,
+        connection_name: &str,
+        connections: Option<&HashMap<String, ConnectionConfig>>,
+    ) -> Result<String> {
+        let Some(connections) = connections else {
+            return Ok(file_path.to_string());
+        };
+
+        let Some(connection) = connections.get(connection_name) else {
+            return Ok(file_path.to_string());
+        };
+
+        match connection {
+            ConnectionConfig::LocalFile { base_path } => {
+                if file_path.starts_with('/') {
+                    Ok(file_path.to_string())
+                } else {
+                    Ok(format!("{base_path}/{file_path}"))
+                }
+            }
+            ConnectionConfig::S3 { bucket, .. } => {
+                if file_path.starts_with("s3://") {
+                    Ok(file_path.to_string())
+                } else {
+                    Ok(format!("s3://{bucket}/{file_path}"))
+                }
+            }
         }
+    }
 
+    fn create_empty_table_if_needed(
+        &self,
+        adapter: &AdapterConfig,
+        table_name: &str,
+    ) -> Result<()> {
+        if !adapter.columns.is_empty() {
+            let columns: Vec<(String, String)> = adapter
+                .columns
+                .iter()
+                .map(|col| (col.name.clone(), col.ty.clone()))
+                .collect();
+
+            tracing::info!(
+                "Creating empty table '{}' with {} columns",
+                table_name,
+                columns.len()
+            );
+            self.ducklake.create_table(table_name, &columns)?;
+        } else {
+            tracing::warn!(
+                "Cannot create empty table '{}' - no column definitions found",
+                table_name
+            );
+        }
         Ok(())
     }
 
-    pub async fn import_adapter_with_delta(
+    pub async fn import_adapter_with_filesystem(
+        &self,
+        adapter: &AdapterConfig,
+        table_name: &str,
+        filesystem: &FileSystem,
+    ) -> Result<()> {
+        tracing::info!(
+            "Starting import for table '{}' with pattern: {}",
+            table_name,
+            adapter.file.path
+        );
+        let file_paths =
+            FileProcessor::process_pattern_with_filesystem(&adapter.file.path, adapter, filesystem)
+                .await?;
+
+        tracing::info!(
+            "Found {} files for table '{}': {:?}",
+            file_paths.len(),
+            table_name,
+            file_paths
+        );
+
+        if file_paths.is_empty() {
+            tracing::info!(
+                "No files found for table '{}', creating empty table if needed",
+                table_name
+            );
+            return self.create_empty_table_if_needed(adapter, table_name);
+        }
+
+        let import_query = self.build_import_query_multiple(adapter, &file_paths, None)?;
+
+        tracing::info!("Executing import query: {}", import_query);
+        self.ducklake
+            .create_table_from_query(table_name, &import_query)
+            .with_context(|| format!("Failed to import data into table '{table_name}'"))?;
+
+        tracing::info!("Successfully imported data into table '{table_name}'");
+        Ok(())
+    }
+
+    pub async fn import_adapter_with_delta_and_filesystem(
         &self,
         adapter: &AdapterConfig,
         table_name: &str,
@@ -106,10 +217,19 @@ impl<'a> Importer<'a> {
         delta_manager: &DeltaManager,
         app_db: &DatabaseConnection,
         action_id: i32,
+        filesystem: &FileSystem,
     ) -> Result<Option<DeltaMetadata>> {
-        let file_paths = FileProcessor::files_for_processing(adapter, time_range)?;
+        let file_paths =
+            FileProcessor::files_for_processing_with_filesystem(adapter, time_range, filesystem)
+                .await?;
+        println!(
+            "Found {} files for delta processing: {:?}",
+            file_paths.len(),
+            file_paths
+        );
 
         if file_paths.is_empty() {
+            tracing::info!("No files to process for table '{}'", table_name);
             return Ok(None);
         }
 
@@ -142,6 +262,7 @@ impl<'a> Importer<'a> {
 mod tests {
     use super::*;
     use crate::config::adapter::{FileConfig, FormatConfig};
+    use crate::config::project::S3AuthMethod;
     use crate::pipeline::ducklake::{CatalogConfig, StorageConfig};
     use tempfile::tempdir;
 
@@ -184,7 +305,11 @@ mod tests {
             limits: None,
         };
 
-        processor.import_adapter(&adapter, "test_table").unwrap();
+        let filesystem = FileSystem::new_local(None);
+        processor
+            .import_adapter_with_filesystem(&adapter, "test_table", &filesystem)
+            .await
+            .unwrap();
 
         let verify_sql = "SELECT * FROM test_table ORDER BY id";
         let results = ducklake.query(verify_sql).unwrap();
@@ -243,5 +368,247 @@ mod tests {
             invalid_result.is_err(),
             "Schema validation should fail for mismatched columns"
         );
+    }
+
+    #[tokio::test]
+    async fn test_import_adapter_with_s3_connection() {
+        let test_dir = "/tmp/import_processor_s3_test";
+        let _ = std::fs::remove_dir_all(test_dir);
+        std::fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let mut connections = HashMap::new();
+        connections.insert(
+            "s3_connection".to_string(),
+            ConnectionConfig::S3 {
+                bucket: "test-bucket".to_string(),
+                region: "us-east-1".to_string(),
+                endpoint_url: None,
+                auth_method: S3AuthMethod::Explicit,
+                access_key_id: "test_key".to_string(),
+                secret_access_key: "test_secret".to_string(),
+                session_token: None,
+            },
+        );
+
+        let ducklake =
+            DuckLake::new_with_connections(catalog_config, storage_config, connections.clone())
+                .await
+                .unwrap();
+        let processor = Importer::new(&ducklake);
+
+        let adapter = AdapterConfig {
+            connection: "s3_connection".to_string(),
+            description: None,
+            file: FileConfig {
+                path: "data/test.csv".to_string(),
+                compression: None,
+                max_batch_size: None,
+            },
+            update_strategy: None,
+            format: FormatConfig {
+                ty: "csv".to_string(),
+                delimiter: None,
+                null_value: None,
+                has_header: Some(true),
+            },
+            columns: vec![],
+            limits: None,
+        };
+
+        let result =
+            processor.build_import_query_single(&adapter, "data/test.csv", Some(&connections));
+        assert!(result.is_ok());
+        let query = result.unwrap();
+        assert!(query.contains("s3://test-bucket/data/test.csv"));
+        assert!(query.contains("read_csv_auto"));
+    }
+
+    #[tokio::test]
+    async fn test_import_adapter_with_local_connection() {
+        let test_dir = "/tmp/import_processor_local_test";
+        let _ = std::fs::remove_dir_all(test_dir);
+        std::fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let mut connections = HashMap::new();
+        connections.insert(
+            "local_connection".to_string(),
+            ConnectionConfig::LocalFile {
+                base_path: "/data/local".to_string(),
+            },
+        );
+
+        let ducklake =
+            DuckLake::new_with_connections(catalog_config, storage_config, connections.clone())
+                .await
+                .unwrap();
+        let processor = Importer::new(&ducklake);
+
+        let adapter = AdapterConfig {
+            connection: "local_connection".to_string(),
+            description: None,
+            file: FileConfig {
+                path: "test.csv".to_string(),
+                compression: None,
+                max_batch_size: None,
+            },
+            update_strategy: None,
+            format: FormatConfig {
+                ty: "csv".to_string(),
+                delimiter: None,
+                null_value: None,
+                has_header: Some(true),
+            },
+            columns: vec![],
+            limits: None,
+        };
+
+        let result = processor.build_import_query_single(&adapter, "test.csv", Some(&connections));
+        assert!(result.is_ok());
+        let query = result.unwrap();
+        assert!(query.contains("/data/local/test.csv"));
+        assert!(query.contains("read_csv_auto"));
+    }
+
+    #[tokio::test]
+    async fn test_process_pattern_with_s3_connection() {
+        let test_dir = "/tmp/import_processor_pattern_s3_test";
+        let _ = std::fs::remove_dir_all(test_dir);
+        std::fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let mut connections = HashMap::new();
+        connections.insert(
+            "s3_connection".to_string(),
+            ConnectionConfig::S3 {
+                bucket: "test-bucket".to_string(),
+                region: "us-east-1".to_string(),
+                endpoint_url: None,
+                auth_method: S3AuthMethod::Explicit,
+                access_key_id: "test_key".to_string(),
+                secret_access_key: "test_secret".to_string(),
+                session_token: None,
+            },
+        );
+
+        let ducklake =
+            DuckLake::new_with_connections(catalog_config, storage_config, connections.clone())
+                .await
+                .unwrap();
+        let processor = Importer::new(&ducklake);
+
+        let adapter = AdapterConfig {
+            connection: "s3_connection".to_string(),
+            description: None,
+            file: FileConfig {
+                path: "data/{YYYY}-{MM}-{DD}/events.json".to_string(),
+                compression: None,
+                max_batch_size: None,
+            },
+            update_strategy: None,
+            format: FormatConfig {
+                ty: "json".to_string(),
+                delimiter: None,
+                null_value: None,
+                has_header: None,
+            },
+            columns: vec![],
+            limits: None,
+        };
+
+        let result = processor.build_import_query_single(
+            &adapter,
+            "data/2024-01-01/events.json",
+            Some(&connections),
+        );
+        assert!(result.is_ok());
+        let query = result.unwrap();
+        assert!(query.contains("s3://test-bucket/data/2024-01-01/events.json"));
+        assert!(query.contains("read_json_auto"));
+    }
+
+    #[tokio::test]
+    async fn test_build_import_query_multiple_s3() {
+        let test_dir = "/tmp/import_processor_multiple_s3_test";
+        let _ = std::fs::remove_dir_all(test_dir);
+        std::fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let mut connections = HashMap::new();
+        connections.insert(
+            "s3_connection".to_string(),
+            ConnectionConfig::S3 {
+                bucket: "test-bucket".to_string(),
+                region: "us-east-1".to_string(),
+                endpoint_url: None,
+                auth_method: S3AuthMethod::Explicit,
+                access_key_id: "test_key".to_string(),
+                secret_access_key: "test_secret".to_string(),
+                session_token: None,
+            },
+        );
+
+        let ducklake =
+            DuckLake::new_with_connections(catalog_config, storage_config, connections.clone())
+                .await
+                .unwrap();
+        let processor = Importer::new(&ducklake);
+
+        let adapter = AdapterConfig {
+            connection: "s3_connection".to_string(),
+            description: None,
+            file: FileConfig {
+                path: "data/events.parquet".to_string(),
+                compression: None,
+                max_batch_size: None,
+            },
+            update_strategy: None,
+            format: FormatConfig {
+                ty: "parquet".to_string(),
+                delimiter: None,
+                null_value: None,
+                has_header: None,
+            },
+            columns: vec![],
+            limits: None,
+        };
+
+        let file_paths = vec![
+            "data/events-2024-01-01.parquet".to_string(),
+            "data/events-2024-01-02.parquet".to_string(),
+        ];
+
+        let result =
+            processor.build_import_query_multiple(&adapter, &file_paths, Some(&connections));
+        assert!(result.is_ok());
+        let query = result.unwrap();
+        assert!(query.contains("'s3://test-bucket/data/events-2024-01-01.parquet'"));
+        assert!(query.contains("'s3://test-bucket/data/events-2024-01-02.parquet'"));
+        assert!(query.contains("read_parquet"));
     }
 }

@@ -106,6 +106,8 @@ fn test_complete_e2e_workflow() -> Result<()> {
         if let Ok(tables) = table_check {
             println!("Available tables: {tables}");
         }
+    } else {
+        println!("Run succeeded: {output}");
     }
     assert!(success, "fbox run failed: {output}");
 
@@ -136,9 +138,15 @@ fn test_complete_e2e_workflow() -> Result<()> {
         &project_dir,
         "SELECT sensor_id, reading_count FROM sensor_summary ORDER BY sensor_id",
     )?;
+    println!("Summary output: {summary_output}");
+
+    let time_series_output =
+        verify_data_with_query(&project_dir, "SELECT * FROM time_series_sensors LIMIT 10")?;
+    println!("Time series data: {time_series_output}");
+
     assert!(
         summary_output.contains("sensor_01"),
-        "sensor_01 not found in summary"
+        "sensor_01 not found in summary. Got: {summary_output}"
     );
     assert!(
         summary_output.contains("sensor_02"),

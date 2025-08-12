@@ -112,7 +112,16 @@ pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
         },
     };
 
-    DuckLake::new(catalog_config, storage_config).await
+    if config.project.connections.is_empty() {
+        DuckLake::new(catalog_config, storage_config).await
+    } else {
+        DuckLake::new_with_connections(
+            catalog_config,
+            storage_config,
+            config.project.connections.clone(),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -514,6 +523,107 @@ mod tests {
                 .iter()
                 .any(|a| a.table_name == "combined_stats")
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_connect_ducklake_with_s3_connections() -> Result<()> {
+        use std::env;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir()?;
+        let project_path = temp_dir.path();
+
+        fs::create_dir_all(project_path.join("adapters"))?;
+        fs::create_dir_all(project_path.join("models"))?;
+
+        unsafe {
+            env::set_var("TEST_DUCKLAKE_S3_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_DUCKLAKE_S3_SECRET_KEY", "test_secret_key");
+        }
+
+        let project_yml = format!(
+            r#"
+            storage:
+              type: local
+              path: {}/storage
+            database:
+              type: sqlite
+              path: {}/database.db
+            deployments:
+              timeout: 600
+            connections:
+              s3_data:
+                type: s3
+                bucket: test-bucket
+                region: us-west-2
+                access_key_id: ${{TEST_DUCKLAKE_S3_ACCESS_KEY}}
+                secret_access_key: ${{TEST_DUCKLAKE_S3_SECRET_KEY}}"#,
+            project_path.display(),
+            project_path.display()
+        );
+        fs::write(project_path.join("project.yml"), project_yml)?;
+
+        let config = Config::load_from_directory(project_path)?;
+        let ducklake = connect_ducklake(&config).await?;
+
+        let result = ducklake.query("SELECT current_setting('s3_region')");
+        assert!(result.is_ok(), "Failed to query s3_region setting");
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0][0], "us-west-2");
+
+        unsafe {
+            env::remove_var("TEST_DUCKLAKE_S3_ACCESS_KEY");
+            env::remove_var("TEST_DUCKLAKE_S3_SECRET_KEY");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_connect_ducklake_without_connections() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        fs::create_dir_all(project_path.join("adapters"))?;
+        fs::create_dir_all(project_path.join("models"))?;
+
+        let project_yml = format!(
+            r#"
+            storage:
+              type: local
+              path: {}/storage
+            database:
+              type: sqlite
+              path: {}/database.db
+            deployments:
+              timeout: 600
+            connections: {{}}"#,
+            project_path.display(),
+            project_path.display()
+        );
+        fs::write(project_path.join("project.yml"), project_yml)?;
+
+        let config = Config::load_from_directory(project_path)?;
+        let ducklake = connect_ducklake(&config).await?;
+
+        let result = ducklake.query("SELECT 1 as test_query");
+        assert!(result.is_ok(), "Basic query should work");
+
+        let result = ducklake.query("SELECT current_setting('s3_region')");
+        if let Ok(results) = result {
+            if !results.is_empty() && !results[0][0].is_empty() && results[0][0] != "NULL" {
+                println!("S3 region returned default value: {:?}", results[0][0]);
+                assert_eq!(
+                    results[0][0], "us-east-1",
+                    "Without S3 connections, should return DuckDB default region"
+                );
+            }
+        } else {
+            println!("S3 region query failed as expected");
+        }
 
         Ok(())
     }

@@ -1,20 +1,97 @@
-use crate::config::adapter::{AdapterConfig, LimitsConfig, RangeConfig, UpdateStrategyConfig};
-use crate::pipeline::build::TimeRange;
+use crate::{
+    config::{
+        adapter::{AdapterConfig, LimitsConfig, RangeConfig, UpdateStrategyConfig},
+        project::ConnectionConfig,
+    },
+    pipeline::build::TimeRange,
+    s3_client,
+};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use regex::Regex;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
+
+pub enum FileSystem {
+    Local { base_path: Option<String> },
+    S3 { client: s3_client::S3Client },
+}
+
+impl FileSystem {
+    pub fn new_local(base_path: Option<String>) -> Self {
+        Self::Local { base_path }
+    }
+
+    pub async fn new_s3(connection: &ConnectionConfig) -> Result<Self> {
+        let client = s3_client::S3Client::new(connection).await?;
+        Ok(Self::S3 { client })
+    }
+
+    pub async fn from_connection(connection: &ConnectionConfig) -> Result<Self> {
+        match connection {
+            ConnectionConfig::LocalFile { base_path } => {
+                Ok(Self::new_local(Some(base_path.clone())))
+            }
+            ConnectionConfig::S3 { .. } => Self::new_s3(connection).await,
+        }
+    }
+
+    pub async fn list_files(&self, pattern: &str) -> Result<Vec<String>> {
+        match self {
+            Self::Local { base_path } => {
+                let resolved_pattern = if let Some(base) = base_path {
+                    if pattern.starts_with('/') {
+                        pattern.to_string()
+                    } else {
+                        format!("{base}/{pattern}")
+                    }
+                } else {
+                    pattern.to_string()
+                };
+
+                let mut existing_paths = Vec::new();
+                if resolved_pattern.contains('*') || resolved_pattern.contains('?') {
+                    let glob_matches: Vec<_> = glob::glob(&resolved_pattern)
+                        .context("Failed to execute glob pattern")?
+                        .filter_map(Result::ok)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    existing_paths.extend(glob_matches);
+                } else if Path::new(&resolved_pattern).exists() {
+                    existing_paths.push(resolved_pattern);
+                }
+
+                Ok(existing_paths)
+            }
+            Self::S3 { client } => client.list_objects_matching_pattern(pattern).await,
+        }
+    }
+}
 
 pub struct FileProcessor;
 
 impl FileProcessor {
-    pub fn process_pattern(pattern: &str, adapter: &AdapterConfig) -> Result<Vec<String>> {
-        let expanded_paths = if Self::has_date_pattern(pattern) {
+    pub async fn process_pattern_with_filesystem(
+        pattern: &str,
+        adapter: &AdapterConfig,
+        filesystem: &FileSystem,
+    ) -> Result<Vec<String>> {
+        tracing::info!(
+            "Processing file pattern: {} with connection: {}",
+            pattern,
+            adapter.connection
+        );
+
+        let pattern_to_expand = if Self::has_date_pattern(pattern) {
             let wildcard_pattern = Self::convert_date_pattern_to_wildcard(pattern);
-            Self::filter_existing_files(vec![wildcard_pattern])?
+            tracing::info!("Pattern with date, using wildcard: {}", wildcard_pattern);
+            wildcard_pattern
         } else {
-            Self::filter_existing_files(vec![pattern.to_string()])?
+            tracing::info!("Pattern without date, using original: {}", pattern);
+            pattern.to_string()
         };
+
+        let expanded_paths = filesystem.list_files(&pattern_to_expand).await?;
+        tracing::info!("Expanded paths: {:?}", expanded_paths);
 
         let filtered_paths = if let Some(strategy) = &adapter.update_strategy {
             Self::filter_paths_by_time_range(expanded_paths, &strategy.range, strategy)?
@@ -26,12 +103,18 @@ impl FileProcessor {
             Self::validate_limits(&filtered_paths, limits)?;
         }
 
+        tracing::info!(
+            "Final filtered paths count: {}, paths: {:?}",
+            filtered_paths.len(),
+            filtered_paths
+        );
         Ok(filtered_paths)
     }
 
-    pub fn files_for_processing(
+    pub async fn files_for_processing_with_filesystem(
         adapter: &AdapterConfig,
         range: Option<TimeRange>,
+        filesystem: &FileSystem,
     ) -> Result<Vec<String>> {
         let Some(time_range) = range else {
             return Ok(Vec::new());
@@ -49,9 +132,32 @@ impl FileProcessor {
             }
         }
 
-        let file_paths = Self::process_pattern(&adapter_with_range.file.path, &adapter_with_range)?;
+        let file_paths = Self::process_pattern_with_filesystem(
+            &adapter_with_range.file.path,
+            &adapter_with_range,
+            filesystem,
+        )
+        .await?;
 
         Ok(file_paths)
+    }
+
+    pub async fn files_for_processing_with_connections(
+        adapter: &AdapterConfig,
+        range: Option<TimeRange>,
+        connections: Option<&HashMap<String, ConnectionConfig>>,
+    ) -> Result<Vec<String>> {
+        let filesystem = if let Some(connections) = connections {
+            if let Some(connection) = connections.get(&adapter.connection) {
+                FileSystem::from_connection(connection).await?
+            } else {
+                FileSystem::new_local(None)
+            }
+        } else {
+            FileSystem::new_local(None)
+        };
+
+        Self::files_for_processing_with_filesystem(adapter, range, &filesystem).await
     }
 
     fn has_date_pattern(pattern: &str) -> bool {
@@ -162,25 +268,6 @@ impl FileProcessor {
         None
     }
 
-    fn filter_existing_files(paths: Vec<String>) -> Result<Vec<String>> {
-        let mut existing_paths = Vec::new();
-
-        for path in paths {
-            if path.contains('*') || path.contains('?') {
-                let glob_matches: Vec<_> = glob::glob(&path)
-                    .context("Failed to execute glob pattern")?
-                    .filter_map(Result::ok)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect();
-                existing_paths.extend(glob_matches);
-            } else if Path::new(&path).exists() {
-                existing_paths.push(path);
-            }
-        }
-
-        Ok(existing_paths)
-    }
-
     fn validate_limits(paths: &[String], limits: &LimitsConfig) -> Result<()> {
         if let Some(max_files) = limits.max_files {
             if paths.len() > max_files as usize {
@@ -262,17 +349,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_pattern_without_update_strategy() {
+    #[tokio::test]
+    async fn test_process_pattern_without_update_strategy() {
         let adapter = create_test_adapter("data/*.csv");
-        let result = FileProcessor::process_pattern("data/*.csv", &adapter).unwrap();
+        let filesystem = FileSystem::new_local(None);
+        let result =
+            FileProcessor::process_pattern_with_filesystem("data/*.csv", &adapter, &filesystem)
+                .await
+                .unwrap();
         assert_eq!(result, vec![] as Vec<String>);
     }
 
-    #[test]
-    fn test_process_pattern_with_date_pattern() {
+    #[tokio::test]
+    async fn test_process_pattern_with_date_pattern() {
         let adapter = create_test_adapter("logs/{YYYY}-{MM}-{DD}.json");
-        let result = FileProcessor::process_pattern("logs/{YYYY}-{MM}-{DD}.json", &adapter);
+        let filesystem = FileSystem::new_local(None);
+        let result = FileProcessor::process_pattern_with_filesystem(
+            "logs/{YYYY}-{MM}-{DD}.json",
+            &adapter,
+            &filesystem,
+        )
+        .await;
         assert!(result.is_ok());
         let paths = result.unwrap();
         assert_eq!(paths, Vec::<String>::new());
@@ -302,8 +399,8 @@ mod tests {
         assert_eq!(timestamp.minute(), 30);
     }
 
-    #[test]
-    fn test_process_pattern_with_non_filename_detection() {
+    #[tokio::test]
+    async fn test_process_pattern_with_non_filename_detection() {
         let mut adapter = create_test_adapter("data/*.csv");
         adapter.update_strategy = Some(UpdateStrategyConfig {
             detection: "content".to_string(),
@@ -314,12 +411,16 @@ mod tests {
             },
         });
 
-        let result = FileProcessor::process_pattern("data/*.csv", &adapter).unwrap();
+        let filesystem = FileSystem::new_local(None);
+        let result =
+            FileProcessor::process_pattern_with_filesystem("data/*.csv", &adapter, &filesystem)
+                .await
+                .unwrap();
         assert_eq!(result, vec![] as Vec<String>);
     }
 
-    #[test]
-    fn test_filename_detection_integration() {
+    #[tokio::test]
+    async fn test_filename_detection_integration() {
         use chrono::NaiveDate;
         use std::fs;
 
@@ -355,10 +456,13 @@ mod tests {
             range: range_config.clone(),
         });
 
-        let result_date_pattern = FileProcessor::process_pattern(
+        let filesystem = FileSystem::new_local(None);
+        let result_date_pattern = FileProcessor::process_pattern_with_filesystem(
             &format!("{test_dir}/users_{{YYYY}}-{{MM}}-{{DD}}.csv"),
             &adapter_date_pattern,
+            &filesystem,
         )
+        .await
         .unwrap();
 
         assert_eq!(result_date_pattern.len(), 2);
@@ -390,9 +494,13 @@ mod tests {
             range: range_config,
         });
 
-        let result_wildcard =
-            FileProcessor::process_pattern(&format!("{test_dir}/users_*.csv"), &adapter_wildcard)
-                .unwrap();
+        let result_wildcard = FileProcessor::process_pattern_with_filesystem(
+            &format!("{test_dir}/users_*.csv"),
+            &adapter_wildcard,
+            &filesystem,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result_date_pattern.len(), result_wildcard.len());
         assert_eq!(result_date_pattern.len(), 2);

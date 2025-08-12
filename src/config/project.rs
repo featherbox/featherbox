@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
@@ -35,9 +36,46 @@ pub struct DeploymentsConfig {
     pub timeout: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum S3AuthMethod {
+    CredentialChain,
+    #[default]
+    Explicit,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionConfig {
-    LocalFile { base_path: String },
+    LocalFile {
+        base_path: String,
+    },
+    S3 {
+        bucket: String,
+        region: String,
+        endpoint_url: Option<String>,
+        auth_method: S3AuthMethod,
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+    },
+}
+
+fn expand_env_vars(value: &str) -> Result<String, String> {
+    let mut result = value.to_string();
+
+    while let Some(start) = result.find("${") {
+        let end = result[start..]
+            .find('}')
+            .ok_or_else(|| format!("Unclosed environment variable reference in: {value}"))?;
+        let end = start + end;
+
+        let var_name = &result[start + 2..end];
+        let env_value = env::var(var_name)
+            .map_err(|_| format!("Environment variable not found: {var_name}"))?;
+
+        result.replace_range(start..end + 1, &env_value);
+    }
+
+    Ok(result)
 }
 
 pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
@@ -121,6 +159,57 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                     .expect("Base path is required")
                     .to_string();
                 ConnectionConfig::LocalFile { base_path }
+            }
+            "s3" => {
+                let bucket = value["bucket"]
+                    .as_str()
+                    .expect("S3 bucket is required")
+                    .to_string();
+
+                let region = value["region"].as_str().unwrap_or("us-east-1").to_string();
+
+                let endpoint_url = value["endpoint_url"].as_str().map(|s| s.to_string());
+
+                let auth_method = match value["auth_method"].as_str() {
+                    Some("credential_chain") => S3AuthMethod::CredentialChain,
+                    Some("explicit") => S3AuthMethod::Explicit,
+                    Some(unknown) => panic!("Unknown S3 auth_method: {unknown}"),
+                    None => S3AuthMethod::default(),
+                };
+
+                let (access_key_id, secret_access_key) = match auth_method {
+                    S3AuthMethod::CredentialChain => (String::new(), String::new()),
+                    S3AuthMethod::Explicit => {
+                        let access_key_id_str = value["access_key_id"]
+                            .as_str()
+                            .expect("S3 access_key_id is required for explicit auth method");
+                        let access_key_id = expand_env_vars(access_key_id_str)
+                            .unwrap_or_else(|e| panic!("Failed to expand access_key_id: {e}"));
+
+                        let secret_access_key_str = value["secret_access_key"]
+                            .as_str()
+                            .expect("S3 secret_access_key is required for explicit auth method");
+                        let secret_access_key = expand_env_vars(secret_access_key_str)
+                            .unwrap_or_else(|e| panic!("Failed to expand secret_access_key: {e}"));
+
+                        (access_key_id, secret_access_key)
+                    }
+                };
+
+                let session_token = value["session_token"].as_str().map(|token_str| {
+                    expand_env_vars(token_str)
+                        .unwrap_or_else(|e| panic!("Failed to expand session_token: {e}"))
+                });
+
+                ConnectionConfig::S3 {
+                    bucket,
+                    region,
+                    endpoint_url,
+                    auth_method,
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                }
             }
             _ => panic!("Unsupported connection type"),
         };
@@ -305,12 +394,14 @@ mod tests {
             ConnectionConfig::LocalFile { base_path } => {
                 assert_eq!(base_path, "/var/logs");
             }
+            _ => panic!("Expected LocalFile connection config"),
         }
 
         match connections.get("data_files").unwrap() {
             ConnectionConfig::LocalFile { base_path } => {
                 assert_eq!(base_path, "/data/files");
             }
+            _ => panic!("Expected LocalFile connection config"),
         }
     }
 
@@ -354,12 +445,403 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_env_vars() {
+        unsafe {
+            env::set_var("TEST_VAR", "test_value");
+            env::set_var("ANOTHER_VAR", "another_value");
+        }
+
+        let result = expand_env_vars("${TEST_VAR}").unwrap();
+        assert_eq!(result, "test_value");
+
+        let result = expand_env_vars("prefix_${TEST_VAR}_suffix").unwrap();
+        assert_eq!(result, "prefix_test_value_suffix");
+
+        let result = expand_env_vars("${TEST_VAR}_${ANOTHER_VAR}").unwrap();
+        assert_eq!(result, "test_value_another_value");
+
+        let result = expand_env_vars("no_vars").unwrap();
+        assert_eq!(result, "no_vars");
+
+        unsafe {
+            env::remove_var("TEST_VAR");
+            env::remove_var("ANOTHER_VAR");
+        }
+    }
+
+    #[test]
+    fn test_expand_env_vars_missing_variable() {
+        let result = expand_env_vars("${NONEXISTENT_VAR}");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Environment variable not found: NONEXISTENT_VAR")
+        );
+    }
+
+    #[test]
+    fn test_expand_env_vars_unclosed_reference() {
+        let result = expand_env_vars("${UNCLOSED_VAR");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Unclosed environment variable reference")
+        );
+    }
+
+    #[test]
+    fn test_parse_connections_s3_basic() {
+        unsafe {
+            env::set_var("TEST_S3_BASIC_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_S3_BASIC_SECRET_KEY", "test_secret_key");
+        }
+
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-data-bucket
+              region: us-west-2
+              access_key_id: ${TEST_S3_BASIC_ACCESS_KEY}
+              secret_access_key: ${TEST_S3_BASIC_SECRET_KEY}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 1);
+
+        match connections.get("my_s3_data").unwrap() {
+            ConnectionConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                assert_eq!(bucket, "my-data-bucket");
+                assert_eq!(region, "us-west-2");
+                assert_eq!(endpoint_url, &None);
+                assert_eq!(auth_method, &S3AuthMethod::Explicit);
+                assert_eq!(access_key_id, "test_access_key");
+                assert_eq!(secret_access_key, "test_secret_key");
+                assert_eq!(session_token, &None);
+            }
+            _ => panic!("Expected S3 connection config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_S3_BASIC_ACCESS_KEY");
+            env::remove_var("TEST_S3_BASIC_SECRET_KEY");
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_s3_with_all_fields() {
+        unsafe {
+            env::set_var("TEST_S3_ALL_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_S3_ALL_SECRET_KEY", "test_secret_key");
+            env::set_var("TEST_S3_ALL_SESSION_TOKEN", "test_session_token");
+        }
+
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-data-bucket
+              region: eu-west-1
+              endpoint_url: https://s3.eu-west-1.amazonaws.com
+              access_key_id: ${TEST_S3_ALL_ACCESS_KEY}
+              secret_access_key: ${TEST_S3_ALL_SECRET_KEY}
+              session_token: ${TEST_S3_ALL_SESSION_TOKEN}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        match connections.get("my_s3_data").unwrap() {
+            ConnectionConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                assert_eq!(bucket, "my-data-bucket");
+                assert_eq!(region, "eu-west-1");
+                assert_eq!(
+                    endpoint_url,
+                    &Some("https://s3.eu-west-1.amazonaws.com".to_string())
+                );
+                assert_eq!(auth_method, &S3AuthMethod::Explicit);
+                assert_eq!(access_key_id, "test_access_key");
+                assert_eq!(secret_access_key, "test_secret_key");
+                assert_eq!(session_token, &Some("test_session_token".to_string()));
+            }
+            _ => panic!("Expected S3 connection config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_S3_ALL_ACCESS_KEY");
+            env::remove_var("TEST_S3_ALL_SECRET_KEY");
+            env::remove_var("TEST_S3_ALL_SESSION_TOKEN");
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_s3_default_region() {
+        unsafe {
+            env::set_var("TEST_S3_DEFAULT_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_S3_DEFAULT_SECRET_KEY", "test_secret_key");
+        }
+
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-data-bucket
+              access_key_id: ${TEST_S3_DEFAULT_ACCESS_KEY}
+              secret_access_key: ${TEST_S3_DEFAULT_SECRET_KEY}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        match connections.get("my_s3_data").unwrap() {
+            ConnectionConfig::S3 {
+                region,
+                auth_method,
+                ..
+            } => {
+                assert_eq!(region, "us-east-1");
+                assert_eq!(auth_method, &S3AuthMethod::Explicit);
+            }
+            _ => panic!("Expected S3 connection config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_S3_DEFAULT_ACCESS_KEY");
+            env::remove_var("TEST_S3_DEFAULT_SECRET_KEY");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "S3 bucket is required")]
+    fn test_parse_connections_s3_missing_bucket() {
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              region: us-east-1
+              access_key_id: test_key
+              secret_access_key: test_secret
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_connections(yaml);
+    }
+
+    #[test]
+    #[should_panic(expected = "S3 access_key_id is required")]
+    fn test_parse_connections_s3_missing_access_key() {
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-bucket
+              secret_access_key: test_secret
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_connections(yaml);
+    }
+
+    #[test]
+    #[should_panic(expected = "S3 secret_access_key is required")]
+    fn test_parse_connections_s3_missing_secret_key() {
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-bucket
+              access_key_id: test_key
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_connections(yaml);
+    }
+
+    #[test]
+    #[should_panic(expected = "Environment variable not found: NONEXISTENT_KEY")]
+    fn test_parse_connections_s3_missing_env_var() {
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-bucket
+              access_key_id: ${NONEXISTENT_KEY}
+              secret_access_key: test_secret
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_connections(yaml);
+    }
+
+    #[test]
+    fn test_parse_connections_mixed_types() {
+        unsafe {
+            env::set_var("TEST_S3_MIXED_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_S3_MIXED_SECRET_KEY", "test_secret_key");
+        }
+
+        let yaml_str = r#"
+            local_files:
+              type: localfile
+              base_path: /data/local
+            s3_data:
+              type: s3
+              bucket: my-bucket
+              access_key_id: ${TEST_S3_MIXED_ACCESS_KEY}
+              secret_access_key: ${TEST_S3_MIXED_SECRET_KEY}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 2);
+
+        match connections.get("local_files").unwrap() {
+            ConnectionConfig::LocalFile { base_path } => {
+                assert_eq!(base_path, "/data/local");
+            }
+            _ => panic!("Expected LocalFile connection config"),
+        }
+
+        match connections.get("s3_data").unwrap() {
+            ConnectionConfig::S3 {
+                bucket,
+                auth_method,
+                ..
+            } => {
+                assert_eq!(bucket, "my-bucket");
+                assert_eq!(auth_method, &S3AuthMethod::Explicit);
+            }
+            _ => panic!("Expected S3 connection config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_S3_MIXED_ACCESS_KEY");
+            env::remove_var("TEST_S3_MIXED_SECRET_KEY");
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "Unsupported connection type")]
     fn test_parse_connections_unsupported_type() {
         let yaml_str = r#"
             app_logs:
+              type: ftp
+              host: example.com
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_connections(yaml);
+    }
+
+    #[test]
+    fn test_parse_connections_s3_credential_chain() {
+        let yaml_str = r#"
+            my_s3_data:
               type: s3
-              bucket: my-bucket
+              bucket: my-data-bucket
+              region: us-west-2
+              auth_method: credential_chain
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 1);
+
+        match connections.get("my_s3_data").unwrap() {
+            ConnectionConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                assert_eq!(bucket, "my-data-bucket");
+                assert_eq!(region, "us-west-2");
+                assert_eq!(endpoint_url, &None);
+                assert_eq!(auth_method, &S3AuthMethod::CredentialChain);
+                assert_eq!(access_key_id, "");
+                assert_eq!(secret_access_key, "");
+                assert_eq!(session_token, &None);
+            }
+            _ => panic!("Expected S3 connection config"),
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_s3_credential_chain_with_endpoint() {
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-data-bucket
+              region: eu-central-1
+              endpoint_url: https://s3.eu-central-1.amazonaws.com
+              auth_method: credential_chain
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        match connections.get("my_s3_data").unwrap() {
+            ConnectionConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                assert_eq!(bucket, "my-data-bucket");
+                assert_eq!(region, "eu-central-1");
+                assert_eq!(
+                    endpoint_url,
+                    &Some("https://s3.eu-central-1.amazonaws.com".to_string())
+                );
+                assert_eq!(auth_method, &S3AuthMethod::CredentialChain);
+                assert_eq!(access_key_id, "");
+                assert_eq!(secret_access_key, "");
+                assert_eq!(session_token, &None);
+            }
+            _ => panic!("Expected S3 connection config"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown S3 auth_method: invalid")]
+    fn test_parse_connections_s3_invalid_auth_method() {
+        let yaml_str = r#"
+            my_s3_data:
+              type: s3
+              bucket: my-data-bucket
+              auth_method: invalid
         "#;
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
@@ -401,6 +883,7 @@ mod tests {
             ConnectionConfig::LocalFile { base_path } => {
                 assert_eq!(base_path, "/var/logs");
             }
+            _ => panic!("Expected LocalFile connection config"),
         }
     }
 }

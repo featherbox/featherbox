@@ -6,6 +6,7 @@ pub mod config;
 pub mod database;
 pub mod dependency;
 pub mod pipeline;
+pub mod s3_client;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -48,6 +49,10 @@ enum ModelAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+
     let cli = Cli::parse();
     let current_dir = std::env::current_dir()?;
 
