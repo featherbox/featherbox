@@ -82,10 +82,6 @@ impl Pipeline {
         Ok(Pipeline { actions })
     }
 
-    pub fn create_partial_pipeline(graph: &Graph, affected_nodes: &[String]) -> Self {
-        let subgraph = create_subgraph(graph, affected_nodes);
-        Self::from_graph(&subgraph)
-    }
 }
 
 pub fn topological_sort(graph: &Graph) -> Vec<String> {

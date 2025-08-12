@@ -19,29 +19,6 @@ impl Pipeline {
         }
     }
 
-    pub async fn execute(&self, config: &Config, ducklake: &DuckLake) -> Result<()> {
-        let import_processor = Importer::new(ducklake);
-        let transform_processor = Transformer::new(ducklake);
-
-        for action in &self.actions {
-            if let Some(adapter) = config.adapters.get(&action.table_name) {
-                let filesystem =
-                    Self::create_filesystem_for_adapter(config, &adapter.connection).await?;
-                import_processor
-                    .import_adapter_with_filesystem(adapter, &action.table_name, &filesystem)
-                    .await?;
-            } else if let Some(model) = config.models.get(&action.table_name) {
-                transform_processor.transform_model(model, &action.table_name)?;
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Table '{}' not found in adapters or models",
-                    action.table_name
-                ));
-            }
-        }
-
-        Ok(())
-    }
 
     pub async fn execute_with_delta(
         &self,
@@ -168,3 +145,4 @@ impl Pipeline {
         Ok(action_ids)
     }
 }
+

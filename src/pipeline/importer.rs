@@ -6,12 +6,11 @@ use crate::pipeline::{
     ducklake::DuckLake,
     file_processor::{FileProcessor, FileSystem},
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 
 pub struct Importer<'a> {
-    ducklake: &'a DuckLake,
     delta_processor: DeltaProcessor<'a>,
 }
 
@@ -19,7 +18,6 @@ impl<'a> Importer<'a> {
     pub fn new(ducklake: &'a DuckLake) -> Self {
         let delta_processor = DeltaProcessor::new(ducklake);
         Self {
-            ducklake,
             delta_processor,
         }
     }
@@ -141,73 +139,7 @@ impl<'a> Importer<'a> {
         }
     }
 
-    fn create_empty_table_if_needed(
-        &self,
-        adapter: &AdapterConfig,
-        table_name: &str,
-    ) -> Result<()> {
-        if !adapter.columns.is_empty() {
-            let columns: Vec<(String, String)> = adapter
-                .columns
-                .iter()
-                .map(|col| (col.name.clone(), col.ty.clone()))
-                .collect();
 
-            tracing::info!(
-                "Creating empty table '{}' with {} columns",
-                table_name,
-                columns.len()
-            );
-            self.ducklake.create_table(table_name, &columns)?;
-        } else {
-            tracing::warn!(
-                "Cannot create empty table '{}' - no column definitions found",
-                table_name
-            );
-        }
-        Ok(())
-    }
-
-    pub async fn import_adapter_with_filesystem(
-        &self,
-        adapter: &AdapterConfig,
-        table_name: &str,
-        filesystem: &FileSystem,
-    ) -> Result<()> {
-        tracing::info!(
-            "Starting import for table '{}' with pattern: {}",
-            table_name,
-            adapter.file.path
-        );
-        let file_paths =
-            FileProcessor::process_pattern_with_filesystem(&adapter.file.path, adapter, filesystem)
-                .await?;
-
-        tracing::info!(
-            "Found {} files for table '{}': {:?}",
-            file_paths.len(),
-            table_name,
-            file_paths
-        );
-
-        if file_paths.is_empty() {
-            tracing::info!(
-                "No files found for table '{}', creating empty table if needed",
-                table_name
-            );
-            return self.create_empty_table_if_needed(adapter, table_name);
-        }
-
-        let import_query = self.build_import_query_multiple(adapter, &file_paths, None)?;
-
-        tracing::info!("Executing import query: {}", import_query);
-        self.ducklake
-            .create_table_from_query(table_name, &import_query)
-            .with_context(|| format!("Failed to import data into table '{table_name}'"))?;
-
-        tracing::info!("Successfully imported data into table '{table_name}'");
-        Ok(())
-    }
 
     pub async fn import_adapter_with_delta_and_filesystem(
         &self,
@@ -266,63 +198,6 @@ mod tests {
     use crate::pipeline::ducklake::{CatalogConfig, StorageConfig};
     use tempfile::tempdir;
 
-    #[tokio::test]
-    async fn test_import_adapter() {
-        let test_dir = "/tmp/import_processor_test";
-        let _ = std::fs::remove_dir_all(test_dir);
-        std::fs::create_dir_all(test_dir).unwrap();
-
-        let catalog_config = CatalogConfig::Sqlite {
-            path: format!("{test_dir}/test_catalog.sqlite"),
-        };
-        let storage_config = StorageConfig::LocalFile {
-            path: format!("{test_dir}/test_storage"),
-        };
-
-        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
-        let processor = Importer::new(&ducklake);
-
-        let temp_dir = tempdir().unwrap();
-        let test_csv = temp_dir.path().join("test_data.csv");
-        std::fs::write(&test_csv, "id,name,age\n1,Alice,25\n2,Bob,30").unwrap();
-
-        let adapter = AdapterConfig {
-            connection: "test_table".to_string(),
-            description: None,
-            file: FileConfig {
-                path: test_csv.to_string_lossy().to_string(),
-                compression: None,
-                max_batch_size: None,
-            },
-            update_strategy: None,
-            format: FormatConfig {
-                ty: "csv".to_string(),
-                delimiter: None,
-                null_value: None,
-                has_header: Some(true),
-            },
-            columns: vec![],
-            limits: None,
-        };
-
-        let filesystem = FileSystem::new_local(None);
-        processor
-            .import_adapter_with_filesystem(&adapter, "test_table", &filesystem)
-            .await
-            .unwrap();
-
-        let verify_sql = "SELECT * FROM test_table ORDER BY id";
-        let results = ducklake.query(verify_sql).unwrap();
-        assert_eq!(results.len(), 2);
-        assert_eq!(
-            results[0],
-            vec!["1".to_string(), "Alice".to_string(), "25".to_string()]
-        );
-        assert_eq!(
-            results[1],
-            vec!["2".to_string(), "Bob".to_string(), "30".to_string()]
-        );
-    }
 
     #[tokio::test]
     async fn test_validate_source_files_schema() {

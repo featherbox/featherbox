@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use regex::Regex;
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 pub enum FileSystem {
     Local { base_path: Option<String> },
@@ -142,23 +142,6 @@ impl FileProcessor {
         Ok(file_paths)
     }
 
-    pub async fn files_for_processing_with_connections(
-        adapter: &AdapterConfig,
-        range: Option<TimeRange>,
-        connections: Option<&HashMap<String, ConnectionConfig>>,
-    ) -> Result<Vec<String>> {
-        let filesystem = if let Some(connections) = connections {
-            if let Some(connection) = connections.get(&adapter.connection) {
-                FileSystem::from_connection(connection).await?
-            } else {
-                FileSystem::new_local(None)
-            }
-        } else {
-            FileSystem::new_local(None)
-        };
-
-        Self::files_for_processing_with_filesystem(adapter, range, &filesystem).await
-    }
 
     fn has_date_pattern(pattern: &str) -> bool {
         pattern.contains("{YYYY}")
