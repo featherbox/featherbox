@@ -7,7 +7,23 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum CatalogConfig {
-    Sqlite { path: String },
+    Sqlite {
+        path: String,
+    },
+    Mysql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
+    Postgresql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +208,46 @@ impl DuckLake {
                 );
                 self.execute_batch(&attach_sql)
                     .context("Failed to attach DuckLake catalog")?;
+            }
+            CatalogConfig::Mysql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                let data_path = match &self.storage_config {
+                    StorageConfig::LocalFile { path } => path,
+                };
+
+                self.execute_batch("INSTALL mysql; LOAD mysql;")
+                    .context("Failed to install and load MySQL extension")?;
+
+                let attach_sql = format!(
+                    "ATTACH 'ducklake:mysql:db={database} host={host} port={port} user={username} password={password}' AS db (DATA_PATH '{data_path}', METADATA_SCHEMA '{database}_metadata'); USE db;"
+                );
+                self.execute_batch(&attach_sql)
+                    .context("Failed to attach DuckLake MySQL catalog")?;
+            }
+            CatalogConfig::Postgresql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                let data_path = match &self.storage_config {
+                    StorageConfig::LocalFile { path } => path,
+                };
+
+                self.execute_batch("INSTALL postgres; LOAD postgres;")
+                    .context("Failed to install and load PostgreSQL extension")?;
+
+                let attach_sql = format!(
+                    "ATTACH 'ducklake:postgres:dbname={database} host={host} port={port} user={username} password={password}' AS db (DATA_PATH '{data_path}', METADATA_SCHEMA '{database}_metadata'); USE db;"
+                );
+                self.execute_batch(&attach_sql)
+                    .context("Failed to attach DuckLake PostgreSQL catalog")?;
             }
         }
 
@@ -733,5 +789,139 @@ mod tests {
     struct S3TestData {
         bucket_name: String,
         s3_client: crate::s3_client::S3Client,
+    }
+
+    #[tokio::test]
+    async fn test_mysql_catalog_connection() -> anyhow::Result<()> {
+        use std::process::Command;
+        use uuid::Uuid;
+
+        let db_name = format!("ducklake_test_{}", Uuid::new_v4().simple());
+
+        let create_db_result = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "mysql",
+                "mysql",
+                "-u",
+                "featherbox",
+                "-ptestpass",
+                "-e",
+            ])
+            .arg(format!("CREATE DATABASE IF NOT EXISTS {db_name};"))
+            .output();
+
+        if create_db_result.is_err() {
+            println!("Skipping MySQL test - database container not available");
+            return Ok(());
+        }
+
+        let catalog_config = CatalogConfig::Mysql {
+            host: "localhost".to_string(),
+            port: 3306,
+            database: db_name.clone(),
+            username: "featherbox".to_string(),
+            password: "testpass".to_string(),
+        };
+
+        let storage_config = StorageConfig::LocalFile {
+            path: "./test_data".to_string(),
+        };
+
+        let result = DuckLake::new(catalog_config, storage_config).await;
+
+        let _cleanup_result = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "mysql",
+                "mysql",
+                "-u",
+                "featherbox",
+                "-ptestpass",
+                "-e",
+            ])
+            .arg(format!("DROP DATABASE IF EXISTS {db_name};"))
+            .output();
+
+        match result {
+            Ok(_) => {
+                println!("MySQL catalog connection successful");
+                Ok(())
+            }
+            Err(e) => {
+                println!("MySQL catalog connection failed: {e}");
+                Err(e)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_postgresql_catalog_connection() -> anyhow::Result<()> {
+        use std::process::Command;
+        use uuid::Uuid;
+
+        let db_name = format!("ducklake_test_{}", Uuid::new_v4().simple());
+
+        let create_db_result = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "postgres",
+                "psql",
+                "-U",
+                "featherbox",
+                "-d",
+                "featherbox_test",
+                "-c",
+            ])
+            .arg(format!("CREATE DATABASE {db_name};"))
+            .output();
+
+        if create_db_result.is_err() {
+            println!("Skipping PostgreSQL test - database container not available");
+            return Ok(());
+        }
+
+        let catalog_config = CatalogConfig::Postgresql {
+            host: "localhost".to_string(),
+            port: 5432,
+            database: db_name.clone(),
+            username: "featherbox".to_string(),
+            password: "testpass".to_string(),
+        };
+
+        let storage_config = StorageConfig::LocalFile {
+            path: "./test_data".to_string(),
+        };
+
+        let result = DuckLake::new(catalog_config, storage_config).await;
+
+        let _cleanup_result = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "postgres",
+                "psql",
+                "-U",
+                "featherbox",
+                "-d",
+                "featherbox_test",
+                "-c",
+            ])
+            .arg(format!("DROP DATABASE IF EXISTS {db_name};"))
+            .output();
+
+        match result {
+            Ok(_) => {
+                println!("PostgreSQL catalog connection successful");
+                Ok(())
+            }
+            Err(e) => {
+                println!("PostgreSQL catalog connection failed: {e}");
+                Err(e)
+            }
+        }
     }
 }

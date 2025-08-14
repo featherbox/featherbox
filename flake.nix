@@ -92,6 +92,10 @@
               export LD_LIBRARY_PATH="${duckdb-131}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
               export PKG_CONFIG_PATH="${duckdb-131}/lib/pkgconfig:$PKG_CONFIG_PATH"
               export AWS_PROFILE=my
+              export TEST_MYSQL_USER=featherbox
+              export TEST_MYSQL_PASSWORD=testpass
+              export TEST_POSTGRES_USER=featherbox
+              export TEST_POSTGRES_PASSWORD=testpass
             '';
           };
         }

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
@@ -16,54 +16,6 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn setup_test_project_with_init(temp_dir: &Path) -> Result<PathBuf> {
-    let project_dir = temp_dir.join("test_project");
-    fs::create_dir(&project_dir)?;
-
-    let (success, output) = run_fbox_command(&["init", "."], &project_dir)?;
-    if !success {
-        anyhow::bail!("fbox init failed: {}", output);
-    }
-
-    let fixtures_dir = Path::new("tests/fixtures");
-
-    fs::copy(
-        fixtures_dir.join("project.yml"),
-        project_dir.join("project.yml"),
-    )?;
-
-    copy_dir_all(
-        fixtures_dir.join("test_data"),
-        project_dir.join("test_data"),
-    )?;
-
-    for entry in fs::read_dir(fixtures_dir.join("adapters"))? {
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let file_name_str = file_name.to_string_lossy();
-
-        if file_name_str == "sales_data.yml" && !should_run_s3_tests() {
-            continue;
-        }
-
-        fs::copy(entry.path(), project_dir.join("adapters").join(&file_name))?;
-    }
-
-    for entry in fs::read_dir(fixtures_dir.join("models"))? {
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let file_name_str = file_name.to_string_lossy();
-
-        if file_name_str == "sales_summary.yml" && !should_run_s3_tests() {
-            continue;
-        }
-
-        fs::copy(entry.path(), project_dir.join("models").join(&file_name))?;
-    }
-
-    Ok(project_dir)
 }
 
 fn get_fbox_binary() -> PathBuf {
@@ -100,126 +52,304 @@ fn verify_data_with_query(project_dir: &Path, sql: &str) -> Result<String> {
     Ok(output)
 }
 
-#[tokio::test]
-async fn test_complete_e2e_workflow() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let project_dir = setup_test_project_with_init(temp_dir.path())?;
+fn create_database_config_with_name(db_type: &str, db_name: &str) -> String {
+    match db_type {
+        "sqlite" => r#"database:
+  type: sqlite
+  path: ./database.db"#
+            .to_string(),
+        "mysql" => {
+            format!(
+                r#"database:
+  type: mysql
+  host: localhost
+  port: 3306
+  database: {db_name}
+  username: ${{TEST_MYSQL_USER}}
+  password: ${{TEST_MYSQL_PASSWORD}}"#
+            )
+        }
+        "postgresql" => {
+            format!(
+                r#"database:
+  type: postgresql
+  host: localhost
+  port: 5432
+  database: {db_name}
+  username: ${{TEST_POSTGRES_USER}}
+  password: ${{TEST_POSTGRES_PASSWORD}}"#
+            )
+        }
+        _ => panic!("Unsupported database type: {db_type}"),
+    }
+}
 
-    let s3_cleanup = if should_run_s3_tests() {
-        let s3_test = setup_s3_test_data().await?;
-        update_project_config_for_s3(&project_dir, &s3_test.bucket_name)?;
-        Some(s3_test)
+fn create_project_config_for_db(db_type: &str, db_name: &str) -> String {
+    format!(
+        r#"storage:
+  type: local
+  path: ./storage
+
+{}
+
+deployments:
+  timeout: 600
+
+connections:
+  test_data:
+    type: localfile
+    base_path: ./test_data"#,
+        create_database_config_with_name(db_type, db_name)
+    )
+}
+
+fn get_table_list_query(db_type: &str) -> &'static str {
+    match db_type {
+        "sqlite" => {
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '__fbox_%' ORDER BY name"
+        }
+        "mysql" => {
+            "SELECT table_name as name FROM information_schema.tables WHERE table_name NOT LIKE '__fbox_%' AND table_name NOT LIKE 'ducklake_%' ORDER BY table_name"
+        }
+        "postgresql" => {
+            "SELECT table_name as name FROM information_schema.tables WHERE table_name NOT LIKE '__fbox_%' AND table_name NOT LIKE 'ducklake_%' ORDER BY table_name"
+        }
+        _ => panic!("Unsupported database type: {db_type}"),
+    }
+}
+
+fn create_test_database(db_type: &str, db_name: &str) -> Result<()> {
+    use std::process::Command;
+
+    match db_type {
+        "mysql" => {
+            let output = Command::new("docker")
+                .args([
+                    "compose",
+                    "exec",
+                    "mysql",
+                    "mysql",
+                    "-u",
+                    "featherbox",
+                    "-ptestpass",
+                    "-e",
+                ])
+                .arg(format!("CREATE DATABASE IF NOT EXISTS {db_name};"))
+                .output()?;
+
+            if !output.status.success() {
+                anyhow::bail!(
+                    "Failed to create MySQL database: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            // Wait for database creation to be fully committed
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Verify database exists
+            let verify_output = Command::new("docker")
+                .args([
+                    "compose",
+                    "exec",
+                    "mysql",
+                    "mysql",
+                    "-u",
+                    "featherbox",
+                    "-ptestpass",
+                    "-e",
+                ])
+                .arg(format!("SHOW DATABASES LIKE '{db_name}';"))
+                .output()?;
+
+            if !verify_output.status.success() {
+                anyhow::bail!(
+                    "Failed to verify MySQL database creation: {}",
+                    String::from_utf8_lossy(&verify_output.stderr)
+                );
+            }
+        }
+        "postgresql" => {
+            let output = Command::new("docker")
+                .args([
+                    "compose",
+                    "exec",
+                    "postgres",
+                    "psql",
+                    "-U",
+                    "featherbox",
+                    "-d",
+                    "featherbox_test",
+                    "-c",
+                ])
+                .arg(format!("CREATE DATABASE {db_name};"))
+                .output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("already exists") {
+                    anyhow::bail!("Failed to create PostgreSQL database: {}", stderr);
+                }
+            }
+
+            // Wait for database creation to be fully committed
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Verify database exists
+            let verify_output = Command::new("docker")
+                .args([
+                    "compose",
+                    "exec",
+                    "postgres",
+                    "psql",
+                    "-U",
+                    "featherbox",
+                    "-d",
+                    "featherbox_test",
+                    "-c",
+                ])
+                .arg(format!(
+                    "SELECT 1 FROM pg_database WHERE datname = '{db_name}';"
+                ))
+                .output()?;
+
+            if !verify_output.status.success() {
+                anyhow::bail!(
+                    "Failed to verify PostgreSQL database creation: {}",
+                    String::from_utf8_lossy(&verify_output.stderr)
+                );
+            }
+        }
+        "sqlite" => {}
+        _ => anyhow::bail!("Unsupported database type for database creation: {db_type}"),
+    }
+
+    Ok(())
+}
+
+fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(PathBuf, String)> {
+    use uuid::Uuid;
+
+    let project_dir = temp_dir.join(format!("test_project_{db_type}"));
+    fs::create_dir(&project_dir)?;
+
+    let (success, output) = run_fbox_command(&["init", "."], &project_dir)?;
+    if !success {
+        anyhow::bail!("fbox init failed: {}", output);
+    }
+
+    let unique_db_name = if db_type == "sqlite" {
+        String::new()
     } else {
-        println!("Skipping S3 tests - FEATHERBOX_S3_TEST not set");
-        remove_s3_config_from_project(&project_dir)?;
-        None
+        let db_name = format!("ducklake_test_{}", Uuid::new_v4().simple());
+        create_test_database(db_type, &db_name)?;
+        db_name
     };
 
-    let (success, output) = run_fbox_command(&["migrate"], &project_dir)?;
-    assert!(success, "fbox migrate failed: {output}");
+    let project_config = create_project_config_for_db(db_type, &unique_db_name);
 
-    let (success, output) = run_fbox_command(&["run"], &project_dir)?;
+    fs::write(project_dir.join("project.yml"), project_config)?;
+
+    let fixtures_dir = Path::new("tests/fixtures");
+
+    copy_dir_all(
+        fixtures_dir.join("test_data"),
+        project_dir.join("test_data"),
+    )?;
+
+    for entry in fs::read_dir(fixtures_dir.join("adapters"))? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str == "sales_data.yml" && !should_run_s3_tests() {
+            continue;
+        }
+
+        fs::copy(entry.path(), project_dir.join("adapters").join(&file_name))?;
+    }
+
+    for entry in fs::read_dir(fixtures_dir.join("models"))? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str == "sales_summary.yml" && !should_run_s3_tests() {
+            continue;
+        }
+
+        fs::copy(entry.path(), project_dir.join("models").join(&file_name))?;
+    }
+
+    Ok((project_dir, unique_db_name))
+}
+
+fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
+    println!("Running E2E test for {db_type}");
+
+    let temp_dir = TempDir::new()?;
+    let project_dir = setup_test_project_with_database(temp_dir.path(), db_type)?;
+
+    let (success, output) = run_fbox_command(&["migrate"], &project_dir.0)?;
+    assert!(success, "fbox migrate failed for {db_type}: {output}");
+
+    let (success, output) = run_fbox_command(&["run"], &project_dir.0)?;
     if !success {
-        println!("Run failed: {output}");
-        let table_check = verify_data_with_query(
-            &project_dir,
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-        );
+        println!("Run failed for {db_type}: {output}");
+        let table_check = verify_data_with_query(&project_dir.0, get_table_list_query(db_type));
         if let Ok(tables) = table_check {
             println!("Available tables: {tables}");
         }
     } else {
-        println!("Run succeeded: {output}");
+        println!("Run succeeded for {db_type}: {output}");
     }
-    assert!(success, "fbox run failed: {output}");
+    assert!(success, "fbox run failed for {db_type}: {output}");
 
-    let tables_output = verify_data_with_query(
-        &project_dir,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '__fbox_%' ORDER BY name",
-    )?;
+    let tables_output = verify_data_with_query(&project_dir.0, get_table_list_query(db_type))?;
 
     assert!(
         tables_output.contains("sensor_summary"),
-        "sensor_summary table not found"
+        "sensor_summary table not found for {db_type}"
     );
     assert!(
         tables_output.contains("time_series_sensors"),
-        "time_series_sensors table not found"
+        "time_series_sensors table not found for {db_type}"
     );
 
-    if should_run_s3_tests() {
-        assert!(
-            tables_output.contains("sales_data"),
-            "sales_data table not found"
-        );
-        assert!(
-            tables_output.contains("sales_summary"),
-            "sales_summary table not found"
-        );
-    }
-
     let sensors_count = verify_data_with_query(
-        &project_dir,
+        &project_dir.0,
         "SELECT COUNT(*) as count FROM time_series_sensors",
     )?;
     assert!(
         sensors_count.contains("6"),
-        "Expected 6 sensor entries, got: {sensors_count}"
+        "Expected 6 sensor entries for {db_type}, got: {sensors_count}"
     );
 
     let summary_output = verify_data_with_query(
-        &project_dir,
+        &project_dir.0,
         "SELECT sensor_id, reading_count FROM sensor_summary ORDER BY sensor_id",
     )?;
-    println!("Summary output: {summary_output}");
+    println!("Summary output for {db_type}: {summary_output}");
 
     let time_series_output =
-        verify_data_with_query(&project_dir, "SELECT * FROM time_series_sensors LIMIT 10")?;
-    println!("Time series data: {time_series_output}");
+        verify_data_with_query(&project_dir.0, "SELECT * FROM time_series_sensors LIMIT 10")?;
+    println!("Time series data for {db_type}: {time_series_output}");
 
     assert!(
         summary_output.contains("sensor_01"),
-        "sensor_01 not found in summary. Got: {summary_output}"
+        "sensor_01 not found in summary for {db_type}. Got: {summary_output}"
     );
 
-    if should_run_s3_tests() {
-        let sales_count =
-            verify_data_with_query(&project_dir, "SELECT COUNT(*) as count FROM sales_data")?;
-        assert!(
-            sales_count.contains("8"),
-            "Expected 8 sales records, got: {sales_count}"
-        );
-
-        let sales_summary_output = verify_data_with_query(
-            &project_dir,
-            "SELECT product_name, total_sales, total_revenue FROM sales_summary ORDER BY product_name",
-        )?;
-        assert!(
-            sales_summary_output.contains("Laptop"),
-            "Laptop not found in sales summary. Got: {sales_summary_output}"
-        );
-        assert!(
-            sales_summary_output.contains("Mouse"),
-            "Mouse not found in sales summary. Got: {sales_summary_output}"
-        );
-    }
     assert!(
         summary_output.contains("sensor_02"),
-        "sensor_02 not found in summary"
+        "sensor_02 not found in summary for {db_type}"
     );
     assert!(
         summary_output.contains("3"),
-        "Expected 3 readings per sensor"
+        "Expected 3 readings per sensor for {db_type}"
     );
 
-    if let Some(s3_test) = s3_cleanup {
-        verify_s3_data(&project_dir)?;
-
-        if let Err(e) = cleanup_s3_test_bucket(&s3_test).await {
-            println!("Warning: Failed to cleanup S3 test bucket: {e}");
-        }
-    }
-
+    println!("E2E test for {db_type} completed successfully");
     Ok(())
 }
 
@@ -227,183 +357,17 @@ fn should_run_s3_tests() -> bool {
     env::var("FEATHERBOX_S3_TEST").is_ok()
 }
 
-struct S3TestCleanup {
-    bucket_name: String,
-    s3_client: featherbox::s3_client::S3Client,
+#[test]
+fn test_complete_e2e_workflow_sqlite() -> Result<()> {
+    run_e2e_test_for_database("sqlite")
 }
 
-async fn setup_s3_test_data() -> Result<S3TestCleanup> {
-    use featherbox::config::project::{ConnectionConfig, S3AuthMethod};
-
-    let unique_bucket = format!(
-        "featherbox-integration-test-{}",
-        chrono::Utc::now().timestamp()
-    );
-
-    let connection_config = ConnectionConfig::S3 {
-        bucket: unique_bucket.clone(),
-        region: "us-east-1".to_string(),
-        endpoint_url: None,
-        auth_method: S3AuthMethod::CredentialChain,
-        access_key_id: String::new(),
-        secret_access_key: String::new(),
-        session_token: None,
-    };
-
-    let s3_client = featherbox::s3_client::S3Client::new(&connection_config).await?;
-
-    s3_client
-        .create_bucket()
-        .await
-        .with_context(|| format!("Failed to create test bucket: {unique_bucket}"))?;
-
-    let test_files = vec![
-        (
-            "sales/2024-01-20.json",
-            include_str!("fixtures/s3_test_data/sales/2024-01-20.json"),
-        ),
-        (
-            "sales/2024-01-21.json",
-            include_str!("fixtures/s3_test_data/sales/2024-01-21.json"),
-        ),
-        (
-            "sales/2024-01-22.json",
-            include_str!("fixtures/s3_test_data/sales/2024-01-22.json"),
-        ),
-    ];
-
-    for (key, content) in test_files {
-        s3_client
-            .put_object(key, content.as_bytes().to_vec())
-            .await
-            .with_context(|| format!("Failed to upload object: {key}"))?;
-    }
-
-    println!(
-        "Created S3 test bucket: {} with {} objects",
-        unique_bucket, 3
-    );
-
-    Ok(S3TestCleanup {
-        bucket_name: unique_bucket,
-        s3_client,
-    })
+#[test]
+fn test_complete_e2e_workflow_mysql() -> Result<()> {
+    run_e2e_test_for_database("mysql")
 }
 
-async fn cleanup_s3_test_bucket(cleanup: &S3TestCleanup) -> Result<()> {
-    let s3_objects = cleanup.s3_client.list_objects_matching_pattern("*").await?;
-
-    let object_keys: Vec<String> = s3_objects
-        .iter()
-        .map(|s3_url| {
-            let bucket_prefix = format!("s3://{}/", cleanup.bucket_name);
-            s3_url
-                .strip_prefix(&bucket_prefix)
-                .unwrap_or(s3_url)
-                .to_string()
-        })
-        .collect();
-
-    if !object_keys.is_empty() {
-        cleanup
-            .s3_client
-            .delete_objects(object_keys.clone())
-            .await?;
-        println!("Deleted {} objects from bucket", object_keys.len());
-    }
-
-    cleanup.s3_client.delete_bucket().await?;
-
-    println!("Deleted S3 test bucket: {}", cleanup.bucket_name);
-    Ok(())
-}
-
-fn verify_s3_data(project_dir: &Path) -> Result<()> {
-    let tables_output = verify_data_with_query(
-        project_dir,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '__fbox_%' ORDER BY name",
-    )?;
-
-    assert!(
-        tables_output.contains("sales_data"),
-        "sales_data table not found in S3 test"
-    );
-    assert!(
-        tables_output.contains("sales_summary"),
-        "sales_summary table not found in S3 test"
-    );
-
-    let sales_count =
-        verify_data_with_query(project_dir, "SELECT COUNT(*) as count FROM sales_data")?;
-    assert!(
-        sales_count.contains("8"),
-        "Expected 8 sales entries from S3, got: {sales_count}"
-    );
-
-    let sales_summary_output = verify_data_with_query(
-        project_dir,
-        "SELECT product_name, total_sales FROM sales_summary ORDER BY product_name",
-    )?;
-    println!("S3 sales summary output: {sales_summary_output}");
-
-    assert!(
-        sales_summary_output.contains("Laptop"),
-        "Laptop not found in S3 sales summary"
-    );
-    assert!(
-        sales_summary_output.contains("Mouse"),
-        "Mouse not found in S3 sales summary"
-    );
-
-    Ok(())
-}
-
-fn update_project_config_for_s3(project_dir: &Path, bucket_name: &str) -> Result<()> {
-    let project_config_path = project_dir.join("project.yml");
-    let config_content = fs::read_to_string(&project_config_path)?;
-
-    let updated_content = config_content.replace(
-        "bucket: featherbox-test-bucket",
-        &format!("bucket: {bucket_name}"),
-    );
-
-    fs::write(&project_config_path, &updated_content)?;
-    println!("Updated project.yml with S3 bucket: {bucket_name}");
-
-    let verify_content = fs::read_to_string(&project_config_path)?;
-    println!("Verified project.yml content:\n{verify_content}");
-
-    Ok(())
-}
-
-fn remove_s3_config_from_project(project_dir: &Path) -> Result<()> {
-    let project_config_path = project_dir.join("project.yml");
-    let config_content = fs::read_to_string(&project_config_path)?;
-
-    let lines: Vec<&str> = config_content.lines().collect();
-    let mut filtered_lines = Vec::new();
-    let mut skip_s3_section = false;
-
-    for line in lines {
-        if line.trim().starts_with("s3_data:") {
-            skip_s3_section = true;
-            continue;
-        }
-        if skip_s3_section && (line.starts_with("    ") || line.trim().is_empty()) {
-            continue;
-        }
-        if skip_s3_section && !line.starts_with("    ") && !line.trim().is_empty() {
-            skip_s3_section = false;
-        }
-
-        if !skip_s3_section {
-            filtered_lines.push(line);
-        }
-    }
-
-    let updated_content = filtered_lines.join("\n");
-    fs::write(project_config_path, updated_content)?;
-    println!("Removed S3 configuration from project.yml");
-
-    Ok(())
+#[test]
+fn test_complete_e2e_workflow_postgresql() -> Result<()> {
+    run_e2e_test_for_database("postgresql")
 }

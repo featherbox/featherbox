@@ -49,7 +49,7 @@ impl MigrationTrait for Migration {
                     )
                     .foreign_key(
                         ForeignKey::create()
-                            .name("graph_id")
+                            .name("fk_pipelines_graph_id")
                             .from(FboxPipelines::Table, FboxPipelines::GraphId)
                             .to(FboxGraphs::Table, FboxGraphs::Id),
                     )
@@ -73,7 +73,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(FboxNodes::Name).string().not_null())
                     .foreign_key(
                         ForeignKey::create()
-                            .name("graph_id")
+                            .name("fk_nodes_graph_id")
                             .from(FboxNodes::Table, FboxNodes::GraphId)
                             .to(FboxGraphs::Table, FboxGraphs::Id),
                     )
@@ -98,7 +98,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(FboxEdges::ToNode).string().not_null())
                     .foreign_key(
                         ForeignKey::create()
-                            .name("graph_id")
+                            .name("fk_edges_graph_id")
                             .from(FboxEdges::Table, FboxEdges::GraphId)
                             .to(FboxGraphs::Table, FboxGraphs::Id),
                     )
@@ -135,7 +135,7 @@ impl MigrationTrait for Migration {
                     )
                     .foreign_key(
                         ForeignKey::create()
-                            .name("pipeline_id")
+                            .name("fk_actions_pipeline_id")
                             .from(FboxPipelineActions::Table, FboxPipelineActions::PipelineId)
                             .to(FboxPipelines::Table, FboxPipelines::Id),
                     )

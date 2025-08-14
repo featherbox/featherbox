@@ -22,7 +22,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Deltas::InsertDeltaPath).string().not_null())
                     .col(ColumnDef::new(Deltas::UpdateDeltaPath).string().not_null())
                     .col(ColumnDef::new(Deltas::DeleteDeltaPath).string().not_null())
-                    .col(ColumnDef::new(Deltas::CreatedAt).timestamp().not_null())
+                    .col(ColumnDef::new(Deltas::CreatedAt).date_time().not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_deltas_action_id")

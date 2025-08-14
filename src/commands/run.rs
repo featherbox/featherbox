@@ -99,7 +99,75 @@ async fn save_pipeline(
 pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
     let catalog_config = match &config.project.database.ty {
         crate::config::project::DatabaseType::Sqlite => CatalogConfig::Sqlite {
-            path: config.project.database.path.clone(),
+            path: config
+                .project
+                .database
+                .path
+                .as_ref()
+                .expect("SQLite database path is required")
+                .clone(),
+        },
+        crate::config::project::DatabaseType::Mysql => CatalogConfig::Mysql {
+            host: config
+                .project
+                .database
+                .host
+                .as_ref()
+                .expect("MySQL host is required")
+                .clone(),
+            port: config.project.database.port.unwrap_or(3306),
+            database: config
+                .project
+                .database
+                .database
+                .as_ref()
+                .expect("MySQL database name is required")
+                .clone(),
+            username: config
+                .project
+                .database
+                .username
+                .as_ref()
+                .expect("MySQL username is required")
+                .clone(),
+            password: config
+                .project
+                .database
+                .password
+                .as_ref()
+                .expect("MySQL password is required")
+                .clone(),
+        },
+        crate::config::project::DatabaseType::Postgresql => CatalogConfig::Postgresql {
+            host: config
+                .project
+                .database
+                .host
+                .as_ref()
+                .expect("PostgreSQL host is required")
+                .clone(),
+            port: config.project.database.port.unwrap_or(5432),
+            database: config
+                .project
+                .database
+                .database
+                .as_ref()
+                .expect("PostgreSQL database name is required")
+                .clone(),
+            username: config
+                .project
+                .database
+                .username
+                .as_ref()
+                .expect("PostgreSQL username is required")
+                .clone(),
+            password: config
+                .project
+                .database
+                .password
+                .as_ref()
+                .expect("PostgreSQL password is required")
+                .clone(),
         },
     };
 

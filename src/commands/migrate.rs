@@ -76,7 +76,12 @@ mod tests {
             },
             database: DatabaseConfig {
                 ty: DatabaseType::Sqlite,
-                path: db_path.to_string_lossy().to_string(),
+                path: Some(db_path.to_string_lossy().to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
             },
             deployments: DeploymentsConfig { timeout: 600 },
             connections: HashMap::new(),

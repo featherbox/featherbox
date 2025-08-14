@@ -2,7 +2,7 @@ use crate::config::adapter::AdapterConfig;
 use crate::database::entities::{deltas, pipeline_actions};
 use crate::pipeline::ducklake::DuckLake;
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub struct DeltaMetadata {
     pub action_id: i32,
     pub insert_delta_path: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Clone)]
@@ -49,7 +49,7 @@ impl DeltaManager {
         insert_path: &Path,
     ) -> Result<DeltaMetadata> {
         let insert_path_str = insert_path.to_string_lossy().to_string();
-        let now = Utc::now();
+        let now = Utc::now().naive_utc();
 
         let active_model = deltas::ActiveModel {
             action_id: Set(action_id),

@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -10,7 +9,7 @@ pub struct Model {
     pub insert_delta_path: String,
     pub update_delta_path: String,
     pub delete_delta_path: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: DateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

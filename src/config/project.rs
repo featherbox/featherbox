@@ -23,12 +23,19 @@ pub enum StorageType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
     pub ty: DatabaseType,
-    pub path: String,
+    pub path: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub database: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseType {
     Sqlite,
+    Mysql,
+    Postgresql,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,14 +123,63 @@ fn parse_database(database: &yaml_rust2::Yaml) -> DatabaseConfig {
         .to_string();
     let ty = match ty.as_str() {
         "sqlite" => DatabaseType::Sqlite,
+        "mysql" => DatabaseType::Mysql,
+        "postgresql" => DatabaseType::Postgresql,
         _ => panic!("Unsupported database type: {ty}"),
     };
 
-    let path = database["path"]
-        .as_str()
-        .expect("Database path is required")
-        .to_string();
-    DatabaseConfig { ty, path }
+    match ty {
+        DatabaseType::Sqlite => {
+            let path = database["path"]
+                .as_str()
+                .expect("SQLite database path is required")
+                .to_string();
+            DatabaseConfig {
+                ty,
+                path: Some(path),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+            }
+        }
+        DatabaseType::Mysql | DatabaseType::Postgresql => {
+            let host = database["host"]
+                .as_str()
+                .expect("Database host is required")
+                .to_string();
+
+            let port = database["port"].as_i64().map(|p| p as u16);
+
+            let database_name = database["database"]
+                .as_str()
+                .expect("Database name is required")
+                .to_string();
+
+            let username_str = database["username"]
+                .as_str()
+                .expect("Database username is required");
+            let username = expand_env_vars(username_str)
+                .unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
+
+            let password_str = database["password"]
+                .as_str()
+                .expect("Database password is required");
+            let password = expand_env_vars(password_str)
+                .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
+
+            DatabaseConfig {
+                ty,
+                path: None,
+                host: Some(host),
+                port,
+                database: Some(database_name),
+                username: Some(username),
+                password: Some(password),
+            }
+        }
+    }
 }
 
 fn parse_deployments(deployments: &yaml_rust2::Yaml) -> DeploymentsConfig {
@@ -294,7 +350,15 @@ mod tests {
 
         let config = parse_database(yaml);
         assert_eq!(config.ty, DatabaseType::Sqlite);
-        assert_eq!(config.path, "/home/user/featherbox/database.db");
+        assert_eq!(
+            config.path,
+            Some("/home/user/featherbox/database.db".to_string())
+        );
+        assert_eq!(config.host, None);
+        assert_eq!(config.port, None);
+        assert_eq!(config.database, None);
+        assert_eq!(config.username, None);
+        assert_eq!(config.password, None);
     }
 
     #[test]
@@ -310,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Database path is required")]
+    #[should_panic(expected = "SQLite database path is required")]
     fn test_parse_database_missing_path() {
         let yaml_str = r#"
             type: sqlite
@@ -322,16 +386,69 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unsupported database type: mysql")]
-    fn test_parse_database_unsupported_type() {
+    fn test_parse_database_mysql() {
+        unsafe {
+            env::set_var("TEST_MYSQL_USER", "test_user");
+            env::set_var("TEST_MYSQL_PASSWORD", "test_password");
+        }
+
         let yaml_str = r#"
             type: mysql
-            path: /some/path
+            host: localhost
+            port: 3306
+            database: featherbox
+            username: ${TEST_MYSQL_USER}
+            password: ${TEST_MYSQL_PASSWORD}
         "#;
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
-        parse_database(yaml);
+        let config = parse_database(yaml);
+        assert_eq!(config.ty, DatabaseType::Mysql);
+        assert_eq!(config.path, None);
+        assert_eq!(config.host, Some("localhost".to_string()));
+        assert_eq!(config.port, Some(3306));
+        assert_eq!(config.database, Some("featherbox".to_string()));
+        assert_eq!(config.username, Some("test_user".to_string()));
+        assert_eq!(config.password, Some("test_password".to_string()));
+
+        unsafe {
+            env::remove_var("TEST_MYSQL_USER");
+            env::remove_var("TEST_MYSQL_PASSWORD");
+        }
+    }
+
+    #[test]
+    fn test_parse_database_postgresql() {
+        unsafe {
+            env::set_var("TEST_POSTGRES_USER", "postgres_user");
+            env::set_var("TEST_POSTGRES_PASSWORD", "postgres_pass");
+        }
+
+        let yaml_str = r#"
+            type: postgresql
+            host: db.example.com
+            port: 5432
+            database: mydb
+            username: ${TEST_POSTGRES_USER}
+            password: ${TEST_POSTGRES_PASSWORD}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_database(yaml);
+        assert_eq!(config.ty, DatabaseType::Postgresql);
+        assert_eq!(config.path, None);
+        assert_eq!(config.host, Some("db.example.com".to_string()));
+        assert_eq!(config.port, Some(5432));
+        assert_eq!(config.database, Some("mydb".to_string()));
+        assert_eq!(config.username, Some("postgres_user".to_string()));
+        assert_eq!(config.password, Some("postgres_pass".to_string()));
+
+        unsafe {
+            env::remove_var("TEST_POSTGRES_USER");
+            env::remove_var("TEST_POSTGRES_PASSWORD");
+        }
     }
 
     #[test]
@@ -870,7 +987,10 @@ mod tests {
         assert_eq!(config.storage.path, "/home/user/featherbox/storage");
 
         assert_eq!(config.database.ty, DatabaseType::Sqlite);
-        assert_eq!(config.database.path, "/home/user/featherbox/database.db");
+        assert_eq!(
+            config.database.path,
+            Some("/home/user/featherbox/database.db".to_string())
+        );
 
         assert_eq!(config.deployments.timeout, 600);
 
