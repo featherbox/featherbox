@@ -48,10 +48,7 @@ pub async fn run(project_path: &Path) -> Result<()> {
         Pipeline::from_graph_with_ranges(&current_graph, &config, &app_db, graph_id).await?;
     save_pipeline(&app_db, graph_id, &pipeline).await?;
 
-    if let Err(e) = pipeline
-        .execute_with_delta(&config, &ducklake, &app_db)
-        .await
-    {
+    if let Err(e) = pipeline.execute(&config, &ducklake, &app_db).await {
         eprintln!("Pipeline execution failed: {e}");
         return Err(e);
     }
@@ -161,7 +158,6 @@ mod tests {
 
         Ok(())
     }
-
 
     #[tokio::test]
     async fn test_execute_run_with_changes() -> Result<()> {
@@ -333,7 +329,6 @@ mod tests {
 
         Ok(())
     }
-
 
     #[tokio::test]
     async fn test_connect_ducklake_with_s3_connections() -> Result<()> {

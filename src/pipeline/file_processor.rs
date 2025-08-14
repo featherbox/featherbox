@@ -75,23 +75,13 @@ impl FileProcessor {
         adapter: &AdapterConfig,
         filesystem: &FileSystem,
     ) -> Result<Vec<String>> {
-        tracing::info!(
-            "Processing file pattern: {} with connection: {}",
-            pattern,
-            adapter.connection
-        );
-
         let pattern_to_expand = if Self::has_date_pattern(pattern) {
-            let wildcard_pattern = Self::convert_date_pattern_to_wildcard(pattern);
-            tracing::info!("Pattern with date, using wildcard: {}", wildcard_pattern);
-            wildcard_pattern
+            Self::convert_date_pattern_to_wildcard(pattern)
         } else {
-            tracing::info!("Pattern without date, using original: {}", pattern);
             pattern.to_string()
         };
 
         let expanded_paths = filesystem.list_files(&pattern_to_expand).await?;
-        tracing::info!("Expanded paths: {:?}", expanded_paths);
 
         let filtered_paths = if let Some(strategy) = &adapter.update_strategy {
             Self::filter_paths_by_time_range(expanded_paths, &strategy.range, strategy)?
@@ -103,11 +93,6 @@ impl FileProcessor {
             Self::validate_limits(&filtered_paths, limits)?;
         }
 
-        tracing::info!(
-            "Final filtered paths count: {}, paths: {:?}",
-            filtered_paths.len(),
-            filtered_paths
-        );
         Ok(filtered_paths)
     }
 
@@ -141,7 +126,6 @@ impl FileProcessor {
 
         Ok(file_paths)
     }
-
 
     fn has_date_pattern(pattern: &str) -> bool {
         pattern.contains("{YYYY}")
@@ -494,9 +478,6 @@ mod tests {
                 "Wildcard result missing file: {file}"
             );
         }
-
-        println!("Date pattern result: {result_date_pattern:?}");
-        println!("Wildcard result: {result_wildcard:?}");
 
         let _ = fs::remove_dir_all(test_dir);
     }

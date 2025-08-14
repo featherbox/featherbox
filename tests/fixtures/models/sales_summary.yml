@@ -1,0 +1,9 @@
+description: 'Sales summary aggregated by product'
+sql: |
+  SELECT 
+    product_name,
+    COUNT(*) as total_sales,
+    SUM(amount) as total_revenue
+  FROM sales_data 
+  GROUP BY product_name
+  ORDER BY total_revenue DESC

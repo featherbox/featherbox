@@ -147,7 +147,16 @@ fn parse_deployments(deployments: &yaml_rust2::Yaml) -> DeploymentsConfig {
 
 fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, ConnectionConfig> {
     let mut conn_map = HashMap::new();
-    for (key, value) in connections.as_hash().expect("Connections must be a hash") {
+
+    if connections.is_null() || connections.is_badvalue() {
+        return conn_map;
+    }
+
+    let Some(connections_hash) = connections.as_hash() else {
+        return conn_map;
+    };
+
+    for (key, value) in connections_hash {
         let key = key
             .as_str()
             .expect("Connection name must be a string")
@@ -403,19 +412,6 @@ mod tests {
             }
             _ => panic!("Expected LocalFile connection config"),
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "Connections must be a hash")]
-    fn test_parse_connections_not_hash() {
-        let yaml_str = r#"
-            - connection1
-            - connection2
-        "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
-
-        parse_connections(yaml);
     }
 
     #[test]

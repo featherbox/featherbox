@@ -81,7 +81,6 @@ impl Pipeline {
 
         Ok(Pipeline { actions })
     }
-
 }
 
 pub fn topological_sort(graph: &Graph) -> Vec<String> {

@@ -13,3 +13,8 @@ connections:
   test_data:
     type: localfile
     base_path: ./test_data
+  s3_data:
+    type: s3
+    bucket: featherbox-test-bucket
+    region: us-east-1
+    auth_method: credential_chain

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct DeltaMetadata {
@@ -13,29 +14,14 @@ pub struct DeltaMetadata {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
-pub struct DeltaFiles {
-    pub insert_path: PathBuf,
-}
-
-impl DeltaFiles {
-    pub fn new(deltas_dir: &Path, table_name: &str, timestamp: &str) -> Self {
-        let insert_path = deltas_dir.join(format!("delta_{table_name}_{timestamp}_insert.parquet"));
-
-        Self { insert_path }
-    }
-
-    pub fn get_insert_path_as_string(&self) -> String {
-        self.insert_path.to_string_lossy().to_string()
-    }
-}
-
+#[derive(Clone)]
 pub struct DeltaManager {
     deltas_dir: PathBuf,
+    ducklake: Arc<DuckLake>,
 }
 
 impl DeltaManager {
-    pub fn new(project_root: &Path) -> Result<Self> {
+    pub fn new(project_root: &Path, ducklake: Arc<DuckLake>) -> Result<Self> {
         let deltas_dir = project_root.join("deltas");
         std::fs::create_dir_all(&deltas_dir).with_context(|| {
             format!(
@@ -44,28 +30,30 @@ impl DeltaManager {
             )
         })?;
 
-        Ok(Self { deltas_dir })
+        Ok(Self {
+            deltas_dir,
+            ducklake,
+        })
     }
 
-    pub fn create_delta_files(&self, table_name: &str) -> Result<DeltaFiles> {
+    pub fn create_delta_path(&self, table_name: &str) -> PathBuf {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-        let files = DeltaFiles::new(&self.deltas_dir, table_name, &timestamp);
-
-        Ok(files)
+        self.deltas_dir
+            .join(format!("delta_{table_name}_{timestamp}_insert.parquet"))
     }
 
-    pub async fn save_delta_metadata(
+    async fn save_delta_metadata(
         &self,
         db: &DatabaseConnection,
         action_id: i32,
-        delta_files: &DeltaFiles,
+        insert_path: &Path,
     ) -> Result<DeltaMetadata> {
-        let insert_path = delta_files.get_insert_path_as_string();
+        let insert_path_str = insert_path.to_string_lossy().to_string();
         let now = Utc::now();
 
         let active_model = deltas::ActiveModel {
             action_id: Set(action_id),
-            insert_delta_path: Set(insert_path.clone()),
+            insert_delta_path: Set(insert_path_str.clone()),
             update_delta_path: Set("".to_string()),
             delete_delta_path: Set("".to_string()),
             created_at: Set(now),
@@ -75,11 +63,11 @@ impl DeltaManager {
         active_model
             .insert(db)
             .await
-            .with_context(|| format!("Failed to save delta metadata for action_id: {action_id}, insert_path: {insert_path}"))?;
+            .with_context(|| format!("Failed to save delta metadata for action_id: {action_id}, insert_path: {insert_path_str}"))?;
 
         Ok(DeltaMetadata {
             action_id,
-            insert_delta_path: insert_path,
+            insert_delta_path: insert_path_str,
             created_at: now,
         })
     }
@@ -127,18 +115,52 @@ impl DeltaManager {
 
         Ok(())
     }
-}
 
-pub struct DeltaProcessor<'a> {
-    ducklake: &'a DuckLake,
-}
+    pub async fn process_delta_for_adapter(
+        &self,
+        adapter: &AdapterConfig,
+        table_name: &str,
+        file_paths: &[String],
+        app_db: &DatabaseConnection,
+        action_id: i32,
+    ) -> Result<DeltaMetadata> {
+        self.validate_source_files_schema(table_name, file_paths)?;
 
-impl<'a> DeltaProcessor<'a> {
-    pub fn new(ducklake: &'a DuckLake) -> Self {
-        Self { ducklake }
+        let delta_path = self.create_delta_path(table_name);
+
+        self.create_table_delta(&delta_path, adapter, file_paths)
+            .await?;
+
+        let delta_metadata = self
+            .save_delta_metadata(app_db, action_id, &delta_path)
+            .await?;
+
+        self.apply_delta_to_table(table_name, &delta_path)?;
+
+        Ok(delta_metadata)
     }
 
-    pub fn build_import_query_multiple(
+    pub async fn process_delta_for_model(
+        &self,
+        model_name: &str,
+        modified_sql: &str,
+        app_db: &DatabaseConnection,
+        action_id: i32,
+    ) -> Result<DeltaMetadata> {
+        let delta_path = self.create_delta_path(model_name);
+
+        self.create_model_delta(&delta_path, modified_sql)?;
+
+        let delta_metadata = self
+            .save_delta_metadata(app_db, action_id, &delta_path)
+            .await?;
+
+        self.apply_model_delta_to_table(model_name, &delta_path)?;
+
+        Ok(delta_metadata)
+    }
+
+    fn build_import_query_multiple(
         &self,
         adapter: &AdapterConfig,
         file_paths: &[String],
@@ -177,7 +199,7 @@ impl<'a> DeltaProcessor<'a> {
         }
     }
 
-    pub fn build_import_query_single(
+    fn build_import_query_single(
         &self,
         adapter: &AdapterConfig,
         file_path: &str,
@@ -201,9 +223,9 @@ impl<'a> DeltaProcessor<'a> {
         }
     }
 
-    pub async fn create_table_delta(
+    async fn create_table_delta(
         &self,
-        delta_files: &DeltaFiles,
+        delta_path: &Path,
         adapter: &AdapterConfig,
         file_paths: &[String],
     ) -> Result<()> {
@@ -217,7 +239,7 @@ impl<'a> DeltaProcessor<'a> {
 
         let export_insert_sql = format!(
             "COPY (SELECT * FROM {temp_table_name}) TO '{}' (FORMAT PARQUET);",
-            delta_files.insert_path.to_string_lossy()
+            delta_path.to_string_lossy()
         );
 
         self.ducklake
@@ -229,7 +251,7 @@ impl<'a> DeltaProcessor<'a> {
         Ok(())
     }
 
-    pub fn apply_delta_to_table(&self, table_name: &str, delta_files: &DeltaFiles) -> Result<()> {
+    fn apply_delta_to_table(&self, table_name: &str, delta_path: &Path) -> Result<()> {
         let table_exists_sql = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{table_name}'"
         );
@@ -248,19 +270,19 @@ impl<'a> DeltaProcessor<'a> {
         if !table_exists {
             let create_from_delta_sql = format!(
                 "CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{}');",
-                delta_files.insert_path.to_string_lossy()
+                delta_path.to_string_lossy()
             );
 
             self.ducklake
                 .execute_batch(&create_from_delta_sql)
                 .context("Failed to create table from delta")?;
         } else {
-            self.validate_delta_schema(table_name, &delta_files.insert_path)
+            self.validate_delta_schema(table_name, delta_path)
                 .with_context(|| format!("Schema validation failed for table '{table_name}'"))?;
 
             let insert_sql = format!(
                 "INSERT INTO {table_name} SELECT * FROM read_parquet('{}');",
-                delta_files.insert_path.to_string_lossy()
+                delta_path.to_string_lossy()
             );
 
             self.ducklake
@@ -271,7 +293,7 @@ impl<'a> DeltaProcessor<'a> {
         Ok(())
     }
 
-    pub fn create_model_delta(&self, delta_files: &DeltaFiles, modified_sql: &str) -> Result<()> {
+    fn create_model_delta(&self, delta_path: &Path, modified_sql: &str) -> Result<()> {
         let temp_table_name = DuckLake::generate_temp_table_name("temp_model_delta");
 
         let create_temp_sql = format!("CREATE TABLE {temp_table_name} AS ({modified_sql});");
@@ -283,7 +305,7 @@ impl<'a> DeltaProcessor<'a> {
         let export_insert_sql = format!(
             "COPY (SELECT * FROM {}) TO '{}' (FORMAT PARQUET);",
             temp_table_name,
-            delta_files.insert_path.to_string_lossy()
+            delta_path.to_string_lossy()
         );
 
         self.ducklake
@@ -295,11 +317,7 @@ impl<'a> DeltaProcessor<'a> {
         Ok(())
     }
 
-    pub fn apply_model_delta_to_table(
-        &self,
-        model_name: &str,
-        delta_files: &DeltaFiles,
-    ) -> Result<()> {
+    fn apply_model_delta_to_table(&self, model_name: &str, delta_path: &Path) -> Result<()> {
         let table_exists_sql = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{model_name}'"
         );
@@ -319,7 +337,7 @@ impl<'a> DeltaProcessor<'a> {
             let create_from_delta_sql = format!(
                 "CREATE TABLE {} AS SELECT * FROM read_parquet('{}');",
                 model_name,
-                delta_files.insert_path.to_string_lossy()
+                delta_path.to_string_lossy()
             );
 
             self.ducklake
@@ -329,7 +347,7 @@ impl<'a> DeltaProcessor<'a> {
             let replace_sql = format!(
                 "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_parquet('{}');",
                 model_name,
-                delta_files.insert_path.to_string_lossy()
+                delta_path.to_string_lossy()
             );
 
             self.ducklake
@@ -340,11 +358,7 @@ impl<'a> DeltaProcessor<'a> {
         Ok(())
     }
 
-    pub fn validate_source_files_schema(
-        &self,
-        table_name: &str,
-        file_paths: &[String],
-    ) -> Result<()> {
+    fn validate_source_files_schema(&self, table_name: &str, file_paths: &[String]) -> Result<()> {
         if !self.ducklake.table_exists(table_name)? {
             return Ok(());
         }
@@ -402,7 +416,7 @@ impl<'a> DeltaProcessor<'a> {
         Ok(())
     }
 
-    pub fn validate_delta_schema(&self, table_name: &str, delta_path: &Path) -> Result<()> {
+    fn validate_delta_schema(&self, table_name: &str, delta_path: &Path) -> Result<()> {
         let table_columns = self.ducklake.table_schema(table_name)?;
 
         let delta_schema_sql = format!(
@@ -453,31 +467,6 @@ impl<'a> DeltaProcessor<'a> {
 
         Ok(())
     }
-
-    pub async fn process_delta_for_adapter(
-        &self,
-        adapter: &AdapterConfig,
-        table_name: &str,
-        file_paths: &[String],
-        delta_manager: &DeltaManager,
-        app_db: &DatabaseConnection,
-        action_id: i32,
-    ) -> Result<DeltaMetadata> {
-        self.validate_source_files_schema(table_name, file_paths)?;
-
-        let delta_files = delta_manager.create_delta_files(table_name)?;
-
-        self.create_table_delta(&delta_files, adapter, file_paths)
-            .await?;
-
-        let delta_metadata = delta_manager
-            .save_delta_metadata(app_db, action_id, &delta_files)
-            .await?;
-
-        self.apply_delta_to_table(table_name, &delta_files)?;
-
-        Ok(delta_metadata)
-    }
 }
 
 #[cfg(test)]
@@ -488,54 +477,52 @@ mod tests {
     use sea_orm::ConnectionTrait;
     use tempfile::tempdir;
 
-    #[test]
-    fn test_delta_files_creation() {
+    #[tokio::test]
+    async fn test_delta_path_creation() {
         let temp_dir = tempdir().unwrap();
-        let delta_files = DeltaFiles::new(temp_dir.path(), "users", "20241201_120000");
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{}/test_catalog.sqlite", temp_dir.path().display()),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{}/test_storage", temp_dir.path().display()),
+        };
+        let ducklake = Arc::new(DuckLake::new(catalog_config, storage_config).await.unwrap());
+        let manager = DeltaManager::new(temp_dir.path(), ducklake).unwrap();
 
-        assert!(
-            delta_files
-                .insert_path
-                .to_string_lossy()
-                .contains("delta_users_20241201_120000_insert.parquet")
-        );
+        let delta_path = manager.create_delta_path("users");
+
+        assert!(delta_path.to_string_lossy().contains("delta_users_"));
+        assert!(delta_path.to_string_lossy().contains("_insert.parquet"));
     }
 
-    #[test]
-    fn test_delta_manager_creation() {
+    #[tokio::test]
+    async fn test_delta_manager_creation() {
         let temp_dir = tempdir().unwrap();
-        let manager = DeltaManager::new(temp_dir.path()).unwrap();
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{}/test_catalog.sqlite", temp_dir.path().display()),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{}/test_storage", temp_dir.path().display()),
+        };
+        let ducklake = Arc::new(DuckLake::new(catalog_config, storage_config).await.unwrap());
+        let manager = DeltaManager::new(temp_dir.path(), ducklake).unwrap();
 
         let deltas_dir = temp_dir.path().join("deltas");
         assert!(deltas_dir.exists());
         assert_eq!(manager.deltas_dir, deltas_dir);
     }
 
-    #[test]
-    fn test_create_delta_files() {
-        let temp_dir = tempdir().unwrap();
-        let manager = DeltaManager::new(temp_dir.path()).unwrap();
-
-        let delta_files = manager.create_delta_files("test_table").unwrap();
-
-        assert!(
-            delta_files
-                .insert_path
-                .to_string_lossy()
-                .contains("delta_test_table_")
-        );
-        assert!(
-            delta_files
-                .insert_path
-                .to_string_lossy()
-                .contains("_insert.parquet")
-        );
-    }
-
     #[tokio::test]
     async fn test_delta_metadata() {
         let temp_dir = tempdir().unwrap();
-        let manager = DeltaManager::new(temp_dir.path()).unwrap();
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{}/test_catalog.sqlite", temp_dir.path().display()),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{}/test_storage", temp_dir.path().display()),
+        };
+        let ducklake = Arc::new(DuckLake::new(catalog_config, storage_config).await.unwrap());
+        let manager = DeltaManager::new(temp_dir.path(), ducklake).unwrap();
 
         let db_url = format!(
             "sqlite://{}?mode=rwc",
@@ -583,10 +570,10 @@ mod tests {
         .await
         .unwrap();
 
-        let delta_files = manager.create_delta_files("test_table").unwrap();
+        let delta_path = manager.create_delta_path("test_table");
 
         let saved_metadata = manager
-            .save_delta_metadata(&db, 1, &delta_files)
+            .save_delta_metadata(&db, 1, &delta_path)
             .await
             .unwrap();
 
@@ -624,11 +611,11 @@ mod tests {
             path: format!("{test_dir}/test_storage"),
         };
 
-        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
-        let processor = DeltaProcessor::new(&ducklake);
+        let ducklake = Arc::new(DuckLake::new(catalog_config, storage_config).await.unwrap());
+        let data_temp_dir = tempdir().unwrap();
+        let manager = DeltaManager::new(data_temp_dir.path(), ducklake.clone()).unwrap();
 
-        let temp_dir = tempdir().unwrap();
-        let test_csv = temp_dir.path().join("test_data.csv");
+        let test_csv = data_temp_dir.path().join("test_data.csv");
         std::fs::write(&test_csv, "id,name,age\n1,Alice,25\n2,Bob,30").unwrap();
 
         let adapter = AdapterConfig {
@@ -650,23 +637,19 @@ mod tests {
             limits: None,
         };
 
-        let delta_files = crate::pipeline::delta::DeltaFiles::new(
-            temp_dir.path(),
-            "test_table",
-            "20241201_120000",
-        );
+        let delta_path = manager.create_delta_path("test_table");
 
         let file_paths = vec![test_csv.to_string_lossy().to_string()];
 
-        processor
-            .create_table_delta(&delta_files, &adapter, &file_paths)
+        manager
+            .create_table_delta(&delta_path, &adapter, &file_paths)
             .await
             .unwrap();
 
-        assert!(delta_files.insert_path.exists());
+        assert!(delta_path.exists());
 
-        processor
-            .apply_delta_to_table("test_table", &delta_files)
+        manager
+            .apply_delta_to_table("test_table", &delta_path)
             .unwrap();
 
         let verify_sql = "SELECT * FROM test_table ORDER BY id";

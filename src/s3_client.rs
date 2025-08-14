@@ -71,6 +71,69 @@ impl S3Client {
         Ok(matching_objects)
     }
 
+    pub async fn create_bucket(&self) -> Result<()> {
+        self.client
+            .create_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .context("Failed to create bucket")?;
+        Ok(())
+    }
+
+    pub async fn put_object(&self, key: &str, body: Vec<u8>) -> Result<()> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(body.into())
+            .send()
+            .await
+            .with_context(|| format!("Failed to upload object: {key}"))?;
+        Ok(())
+    }
+
+    pub async fn delete_objects(&self, keys: Vec<String>) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        let delete_objects: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                aws_sdk_s3::types::ObjectIdentifier::builder()
+                    .key(key)
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+
+        self.client
+            .delete_objects()
+            .bucket(&self.bucket)
+            .delete(
+                aws_sdk_s3::types::Delete::builder()
+                    .set_objects(Some(delete_objects))
+                    .build()
+                    .unwrap(),
+            )
+            .send()
+            .await
+            .context("Failed to delete objects")?;
+
+        Ok(())
+    }
+
+    pub async fn delete_bucket(&self) -> Result<()> {
+        self.client
+            .delete_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .context("Failed to delete bucket")?;
+        Ok(())
+    }
+
     async fn list_all_objects_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         let mut all_keys = Vec::new();
         let mut continuation_token = None;

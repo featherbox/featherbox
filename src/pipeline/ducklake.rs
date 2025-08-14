@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum CatalogConfig {
@@ -14,10 +15,11 @@ pub enum StorageConfig {
     LocalFile { path: String },
 }
 
+#[derive(Clone)]
 pub struct DuckLake {
     catalog_config: CatalogConfig,
     storage_config: StorageConfig,
-    connection: Connection,
+    connection: Arc<Mutex<Connection>>,
 }
 
 impl DuckLake {
@@ -28,7 +30,7 @@ impl DuckLake {
         let instance = Self {
             catalog_config,
             storage_config,
-            connection,
+            connection: Arc::new(Mutex::new(connection)),
         };
 
         instance.initialize().await?;
@@ -46,7 +48,7 @@ impl DuckLake {
         let instance = Self {
             catalog_config,
             storage_config,
-            connection,
+            connection: Arc::new(Mutex::new(connection)),
         };
 
         instance.initialize_with_connections(&connections).await?;
@@ -132,6 +134,7 @@ impl DuckLake {
                     "CREATE OR REPLACE SECRET s3_secret (".to_string(),
                     "    TYPE S3,".to_string(),
                     format!("    REGION '{}'", region),
+                    ",    PROVIDER credential_chain".to_string(),
                 ];
 
                 if let Some(endpoint) = endpoint_url {
@@ -202,22 +205,16 @@ impl DuckLake {
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
-        tracing::info!("DuckDB executing batch SQL: {}", sql);
-        let result = self
-            .connection
+        let connection = self.connection.lock().unwrap();
+
+        connection
             .execute_batch(sql)
-            .context("Failed to execute batch SQL");
-        match &result {
-            Ok(_) => tracing::info!("DuckDB batch SQL executed successfully"),
-            Err(e) => tracing::error!("DuckDB batch SQL execution failed: {}", e),
-        }
-        result?;
-        Ok(())
+            .context("Failed to execute batch SQL")
     }
 
     pub fn query(&self, sql: &str) -> Result<Vec<Vec<String>>> {
-        tracing::info!("DuckDB executing query: {}", sql);
-        let mut stmt = self.connection.prepare(sql)?;
+        let connection = self.connection.lock().unwrap();
+        let mut stmt = connection.prepare(sql)?;
         let mut rows = stmt.query([])?;
         let column_count = rows.as_ref().unwrap().column_count();
 
@@ -262,7 +259,6 @@ impl DuckLake {
             results.push(row_data);
         }
 
-        tracing::info!("DuckDB query returned {} rows", results.len());
         Ok(results)
     }
 
@@ -287,7 +283,6 @@ impl DuckLake {
         let columns_sql = column_definitions.join(", ");
         let sql = format!("CREATE OR REPLACE TABLE {table_name} ({columns_sql});");
 
-        tracing::info!("Creating empty table with SQL: {}", sql);
         self.execute_batch(&sql)
             .with_context(|| format!("Failed to create empty table '{table_name}'"))
     }
@@ -546,17 +541,14 @@ mod tests {
         let result = ducklake.query("SELECT 1 as test_query");
         assert!(result.is_ok(), "Basic query should work");
 
-        let result = ducklake.query("SELECT current_setting('s3_region')");
-        if let Ok(results) = result {
-            if !results.is_empty() && !results[0][0].is_empty() && results[0][0] != "NULL" {
-                println!("S3 region returned default value: {:?}", results[0][0]);
-                assert_eq!(
-                    results[0][0], "us-east-1",
-                    "Without S3 connections, should return DuckDB default region"
-                );
-            }
-        } else {
-            println!("S3 region query failed as expected");
+        let results = ducklake
+            .query("SELECT current_setting('s3_region')")
+            .unwrap();
+        if !results.is_empty() && !results[0][0].is_empty() && results[0][0] != "NULL" {
+            assert_eq!(
+                results[0][0], "us-east-1",
+                "Without S3 connections, should return DuckDB default region"
+            );
         }
     }
 
@@ -589,28 +581,15 @@ mod tests {
             },
         );
 
-        let ducklake =
-            DuckLake::new_with_connections(catalog_config, storage_config, connections).await;
+        let ducklake = DuckLake::new_with_connections(catalog_config, storage_config, connections)
+            .await
+            .unwrap();
 
-        match ducklake {
-            Ok(ducklake) => {
-                let result = ducklake.query("SELECT 1 as test_query");
-                assert!(
-                    result.is_ok(),
-                    "Basic query should work with credential chain"
-                );
-            }
-            Err(e) => {
-                println!("Expected error due to missing AWS credentials or extension: {e}");
-                assert!(
-                    e.to_string().contains("aws")
-                        || e.to_string().contains("extension")
-                        || e.to_string().contains("install")
-                        || e.to_string().contains("load"),
-                    "Error should be related to AWS extension loading: {e}"
-                );
-            }
-        }
+        let result = ducklake.query("SELECT 1 as test_query");
+        assert!(
+            result.is_ok(),
+            "Basic query should work with credential chain"
+        );
     }
 
     #[tokio::test]
@@ -642,21 +621,117 @@ mod tests {
             },
         );
 
-        let ducklake =
-            DuckLake::new_with_connections(catalog_config, storage_config, connections).await;
+        let ducklake = DuckLake::new_with_connections(catalog_config, storage_config, connections)
+            .await
+            .unwrap();
 
-        match ducklake {
-            Ok(ducklake) => {
-                let result = ducklake.query("SELECT 1 as test_query");
-                assert!(result.is_ok(), "Basic query should work");
+        let result = ducklake.query("SELECT 1 as test_query");
+        assert!(result.is_ok(), "Basic query should work");
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_s3_access_direct() {
+        if std::env::var("FEATHERBOX_S3_TEST").is_err() {
+            println!("Skipping S3 direct access test - FEATHERBOX_S3_TEST not set");
+            return;
+        }
+
+        use std::fs;
+        let test_dir = "/tmp/duckdb_s3_direct_test";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: format!("{test_dir}/test_storage"),
+        };
+
+        let mut connections = HashMap::new();
+        connections.insert(
+            "s3_test".to_string(),
+            ConnectionConfig::S3 {
+                bucket: "featherbox-test-bucket".to_string(),
+                region: "us-east-1".to_string(),
+                endpoint_url: None,
+                auth_method: S3AuthMethod::CredentialChain,
+                access_key_id: String::new(),
+                secret_access_key: String::new(),
+                session_token: None,
+            },
+        );
+
+        let ducklake = DuckLake::new_with_connections(catalog_config, storage_config, connections)
+            .await
+            .unwrap();
+
+        let s3_test = setup_s3_test_for_duckdb().await.unwrap();
+        let s3_url = format!("s3://{}/test-data.json", s3_test.bucket_name);
+        let test_query = format!("SELECT * FROM read_json_auto('{s3_url}')");
+
+        let result = ducklake.query(&test_query);
+
+        match result {
+            Ok(data) => {
+                assert!(!data.is_empty(), "Should have retrieved data from S3");
             }
             Err(e) => {
-                println!("Expected error due to missing AWS extension: {e}");
-                assert!(
-                    e.to_string().contains("aws") || e.to_string().contains("extension"),
-                    "Error should be related to AWS extension: {e}"
-                );
+                panic!("DuckDB S3 access should work: {e:#?}");
             }
         }
+
+        cleanup_s3_test_for_duckdb(&s3_test).await.ok();
+    }
+
+    async fn setup_s3_test_for_duckdb() -> Result<S3TestData> {
+        use crate::config::project::{ConnectionConfig, S3AuthMethod};
+
+        let unique_bucket = format!("featherbox-duckdb-test-{}", chrono::Utc::now().timestamp());
+
+        let connection_config = ConnectionConfig::S3 {
+            bucket: unique_bucket.clone(),
+            region: "us-east-1".to_string(),
+            endpoint_url: None,
+            auth_method: S3AuthMethod::CredentialChain,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            session_token: None,
+        };
+
+        let s3_client = crate::s3_client::S3Client::new(&connection_config).await?;
+
+        s3_client.create_bucket().await?;
+        println!("Created S3 test bucket: {unique_bucket}");
+
+        // テストJSONファイルを作成
+        let test_json = r#"{"id": 1, "name": "test_item", "value": 42}
+{"id": 2, "name": "another_item", "value": 84}
+{"id": 3, "name": "final_item", "value": 126}"#;
+
+        s3_client
+            .put_object("test-data.json", test_json.as_bytes().to_vec())
+            .await?;
+        println!("Uploaded test data to S3");
+
+        Ok(S3TestData {
+            bucket_name: unique_bucket,
+            s3_client,
+        })
+    }
+
+    async fn cleanup_s3_test_for_duckdb(test_data: &S3TestData) -> Result<()> {
+        test_data
+            .s3_client
+            .delete_objects(vec!["test-data.json".to_string()])
+            .await?;
+        test_data.s3_client.delete_bucket().await?;
+        println!("Cleaned up S3 test bucket: {}", test_data.bucket_name);
+        Ok(())
+    }
+
+    struct S3TestData {
+        bucket_name: String,
+        s3_client: crate::s3_client::S3Client,
     }
 }

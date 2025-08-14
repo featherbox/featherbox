@@ -1,0 +1,28 @@
+connection: s3_data
+description: 'Sales data stored in S3'
+file:
+  path: sales/2024-01-{DD}.json
+update_strategy:
+  detection: filename
+  timestamp_from: path
+  range:
+    since: "2024-01-20"
+    until: "2024-01-22"
+  limits:
+    max_files: 10
+    max_size: "10MB"
+format:
+  type: json
+columns:
+  - name: sale_id
+    type: INTEGER
+    description: 'Unique sale identifier'
+  - name: product_name
+    type: STRING
+    description: 'Product name'
+  - name: amount
+    type: DECIMAL
+    description: 'Sale amount'
+  - name: sale_date
+    type: DATE
+    description: 'Date of sale'
