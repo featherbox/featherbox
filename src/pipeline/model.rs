@@ -10,6 +10,7 @@ use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Model {
     config: ModelConfig,
     ducklake: Arc<DuckLake>,

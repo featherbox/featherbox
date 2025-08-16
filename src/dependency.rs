@@ -116,7 +116,8 @@ pub async fn save_execution_history(
     };
     let saved_pipeline = pipeline_model.insert(db).await?;
 
-    for (order, action) in pipeline.actions.iter().enumerate() {
+    let all_actions = pipeline.all_actions();
+    for (order, action) in all_actions.iter().enumerate() {
         let action_model = pipeline_actions::ActiveModel {
             id: NotSet,
             pipeline_id: Set(saved_pipeline.id),
@@ -192,7 +193,8 @@ pub async fn save_pipeline_execution(
     };
     let saved_pipeline = pipeline_model.insert(db).await?;
 
-    for (order, action) in pipeline.actions.iter().enumerate() {
+    let all_actions = pipeline.all_actions();
+    for (order, action) in all_actions.iter().enumerate() {
         let action_model = pipeline_actions::ActiveModel {
             id: NotSet,
             pipeline_id: Set(saved_pipeline.id),
@@ -321,13 +323,13 @@ mod tests {
         };
 
         let pipeline = Pipeline {
-            actions: vec![Action {
+            levels: vec![vec![Action {
                 table_name: "users".to_string(),
                 time_range: Some(TimeRange {
                     since: None,
                     until: None,
                 }),
-            }],
+            }]],
         };
 
         save_execution_history(&db, &graph, &pipeline).await?;
@@ -350,13 +352,13 @@ mod tests {
         };
 
         let pipeline = Pipeline {
-            actions: vec![Action {
+            levels: vec![vec![Action {
                 table_name: "users".to_string(),
                 time_range: Some(TimeRange {
                     since: None,
                     until: None,
                 }),
-            }],
+            }]],
         };
 
         save_execution_history(&db, &old_graph, &pipeline).await?;
@@ -402,7 +404,7 @@ mod tests {
         };
 
         let pipeline = Pipeline {
-            actions: vec![
+            levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
                     time_range: Some(TimeRange {
@@ -417,7 +419,7 @@ mod tests {
                         until: None,
                     }),
                 },
-            ],
+            ]],
         };
 
         save_execution_history(&db, &old_graph, &pipeline).await?;
@@ -460,7 +462,7 @@ mod tests {
         };
 
         let pipeline = Pipeline {
-            actions: vec![
+            levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
                     time_range: Some(TimeRange {
@@ -475,7 +477,7 @@ mod tests {
                         until: None,
                     }),
                 },
-            ],
+            ]],
         };
 
         save_execution_history(&db, &old_graph, &pipeline).await?;
@@ -532,7 +534,7 @@ mod tests {
         };
 
         let pipeline = Pipeline {
-            actions: vec![
+            levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
                     time_range: Some(TimeRange {
@@ -547,7 +549,7 @@ mod tests {
                         until: None,
                     }),
                 },
-            ],
+            ]],
         };
 
         save_execution_history(&db, &old_graph, &pipeline).await?;
@@ -601,7 +603,7 @@ mod tests {
         };
 
         let pipeline = Pipeline {
-            actions: vec![
+            levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
                     time_range: Some(TimeRange {
@@ -616,7 +618,7 @@ mod tests {
                         until: None,
                     }),
                 },
-            ],
+            ]],
         };
 
         save_execution_history(&db, &old_graph, &pipeline).await?;

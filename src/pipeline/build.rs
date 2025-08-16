@@ -20,24 +20,35 @@ pub struct TimeRange {
 
 #[derive(Debug)]
 pub struct Pipeline {
-    pub actions: Vec<Action>,
+    pub levels: Vec<Vec<Action>>,
 }
 
 impl Pipeline {
     pub fn from_graph(graph: &Graph) -> Self {
         let sorted_nodes = topological_sort(graph);
-        let actions = sorted_nodes
-            .into_iter()
-            .map(|node_name| Action {
+        let level_map = calculate_execution_levels(graph);
+        let mut levels_actions: HashMap<usize, Vec<Action>> = HashMap::new();
+
+        for node_name in sorted_nodes {
+            let level = level_map.get(&node_name).unwrap_or(&0);
+            let action = Action {
                 table_name: node_name,
                 time_range: Some(TimeRange {
                     since: None,
                     until: None,
                 }),
-            })
-            .collect();
+            };
+            levels_actions.entry(*level).or_default().push(action);
+        }
 
-        Pipeline { actions }
+        let max_level = levels_actions.keys().max().unwrap_or(&0);
+        let mut levels: Vec<Vec<Action>> = vec![Vec::new(); max_level + 1];
+
+        for (level, actions) in levels_actions {
+            levels[level] = actions;
+        }
+
+        Pipeline { levels }
     }
 
     pub async fn from_graph_with_ranges(
@@ -47,7 +58,8 @@ impl Pipeline {
         graph_id: i32,
     ) -> Result<Self> {
         let sorted_nodes = topological_sort(graph);
-        let mut actions = Vec::new();
+        let level_map = calculate_execution_levels(graph);
+        let mut levels_actions: HashMap<usize, Vec<Action>> = HashMap::new();
 
         for node_name in sorted_nodes {
             let time_range = if let Some(adapter) = config.adapters.get(&node_name) {
@@ -73,13 +85,26 @@ impl Pipeline {
                 None
             };
 
-            actions.push(Action {
+            let level = level_map.get(&node_name).unwrap_or(&0);
+            let action = Action {
                 table_name: node_name,
                 time_range,
-            });
+            };
+            levels_actions.entry(*level).or_default().push(action);
         }
 
-        Ok(Pipeline { actions })
+        let max_level = levels_actions.keys().max().unwrap_or(&0);
+        let mut levels: Vec<Vec<Action>> = vec![Vec::new(); max_level + 1];
+
+        for (level, actions) in levels_actions {
+            levels[level] = actions;
+        }
+
+        Ok(Pipeline { levels })
+    }
+
+    pub fn all_actions(&self) -> Vec<&Action> {
+        self.levels.iter().flat_map(|level| level.iter()).collect()
     }
 }
 
@@ -128,6 +153,42 @@ pub fn topological_sort(graph: &Graph) -> Vec<String> {
     }
 
     sorted_nodes
+}
+
+pub fn calculate_execution_levels(graph: &Graph) -> HashMap<String, usize> {
+    let mut levels = HashMap::new();
+    let mut adjacency = HashMap::<String, Vec<String>>::new();
+    let mut reverse_adjacency = HashMap::<String, Vec<String>>::new();
+
+    for node in &graph.nodes {
+        levels.insert(node.name.clone(), 0);
+        adjacency.insert(node.name.clone(), Vec::new());
+        reverse_adjacency.insert(node.name.clone(), Vec::new());
+    }
+
+    for edge in &graph.edges {
+        adjacency.get_mut(&edge.from).unwrap().push(edge.to.clone());
+        reverse_adjacency
+            .get_mut(&edge.to)
+            .unwrap()
+            .push(edge.from.clone());
+    }
+
+    let sorted_nodes = topological_sort(graph);
+
+    for node in sorted_nodes {
+        let mut max_level = 0;
+        if let Some(predecessors) = reverse_adjacency.get(&node) {
+            for predecessor in predecessors {
+                if let Some(&predecessor_level) = levels.get(predecessor) {
+                    max_level = max_level.max(predecessor_level + 1);
+                }
+            }
+        }
+        levels.insert(node, max_level);
+    }
+
+    levels
 }
 
 pub fn create_subgraph(graph: &Graph, affected_nodes: &[String]) -> Graph {
@@ -307,26 +368,18 @@ mod tests {
 
         let pipeline = Pipeline::from_graph(&graph);
 
-        assert_eq!(pipeline.actions.len(), 3);
+        assert_eq!(pipeline.levels.len(), 2);
+        assert_eq!(pipeline.levels[0].len(), 2);
+        assert_eq!(pipeline.levels[1].len(), 1);
 
-        let analytics_pos = pipeline
-            .actions
+        let level_0_tables: Vec<&str> = pipeline.levels[0]
             .iter()
-            .position(|a| a.table_name == "analytics")
-            .unwrap();
-        let users_pos = pipeline
-            .actions
-            .iter()
-            .position(|a| a.table_name == "users")
-            .unwrap();
-        let orders_pos = pipeline
-            .actions
-            .iter()
-            .position(|a| a.table_name == "orders")
-            .unwrap();
+            .map(|a| a.table_name.as_str())
+            .collect();
+        assert!(level_0_tables.contains(&"users"));
+        assert!(level_0_tables.contains(&"orders"));
 
-        assert!(users_pos < analytics_pos);
-        assert!(orders_pos < analytics_pos);
+        assert_eq!(pipeline.levels[1][0].table_name, "analytics");
     }
 
     #[test]
@@ -409,5 +462,50 @@ mod tests {
             time_range.until.unwrap().date_naive(),
             chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
         );
+    }
+
+    #[test]
+    fn test_calculate_execution_levels() {
+        let graph = Graph {
+            nodes: vec![
+                Node {
+                    name: "A".to_string(),
+                },
+                Node {
+                    name: "B".to_string(),
+                },
+                Node {
+                    name: "C".to_string(),
+                },
+                Node {
+                    name: "D".to_string(),
+                },
+            ],
+            edges: vec![
+                Edge {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Edge {
+                    from: "A".to_string(),
+                    to: "C".to_string(),
+                },
+                Edge {
+                    from: "B".to_string(),
+                    to: "D".to_string(),
+                },
+                Edge {
+                    from: "C".to_string(),
+                    to: "D".to_string(),
+                },
+            ],
+        };
+
+        let levels = calculate_execution_levels(&graph);
+
+        assert_eq!(levels.get("A"), Some(&0));
+        assert_eq!(levels.get("B"), Some(&1));
+        assert_eq!(levels.get("C"), Some(&1));
+        assert_eq!(levels.get("D"), Some(&2));
     }
 }

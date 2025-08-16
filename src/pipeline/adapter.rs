@@ -11,6 +11,7 @@ use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Adapter {
     config: AdapterConfig,
     delta_manager: Arc<DeltaManager>,

@@ -48,7 +48,10 @@ pub async fn run(project_path: &Path) -> Result<()> {
         Pipeline::from_graph_with_ranges(&current_graph, &config, &app_db, graph_id).await?;
     save_pipeline(&app_db, graph_id, &pipeline).await?;
 
-    if let Err(e) = pipeline.execute(&config, &ducklake, &app_db).await {
+    if let Err(e) = pipeline
+        .execute(&current_graph, &config, &ducklake, &app_db)
+        .await
+    {
         eprintln!("Pipeline execution failed: {e}");
         return Err(e);
     }
@@ -72,7 +75,8 @@ async fn save_pipeline(
     let pipeline_id = saved_pipeline.id;
 
     let mut action_ids = Vec::new();
-    for (execution_order, action) in pipeline.actions.iter().enumerate() {
+    let all_actions = pipeline.all_actions();
+    for (execution_order, action) in all_actions.iter().enumerate() {
         let action_model = pipeline_actions::ActiveModel {
             id: NotSet,
             pipeline_id: Set(pipeline_id),
@@ -359,13 +363,13 @@ mod tests {
         };
 
         let initial_pipeline = Pipeline {
-            actions: vec![Action {
+            levels: vec![vec![Action {
                 table_name: "users".to_string(),
                 time_range: Some(crate::pipeline::build::TimeRange {
                     since: None,
                     until: None,
                 }),
-            }],
+            }]],
         };
 
         save_execution_history(&app_db, &initial_graph, &initial_pipeline).await?;

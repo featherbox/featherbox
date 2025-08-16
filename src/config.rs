@@ -12,7 +12,7 @@ pub use adapter::AdapterConfig;
 pub use model::ModelConfig;
 pub use project::ProjectConfig;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub project: ProjectConfig,
     pub adapters: HashMap<String, AdapterConfig>,
