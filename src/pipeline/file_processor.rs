@@ -35,6 +35,9 @@ impl FileSystem {
             ConnectionConfig::Sqlite { .. } => Err(anyhow::anyhow!(
                 "SQLite connections are not supported by FileSystem. Use database adapter instead."
             )),
+            ConnectionConfig::Mysql { .. } => Err(anyhow::anyhow!(
+                "MySQL connections are not supported by FileSystem. Use database adapter instead."
+            )),
         }
     }
 

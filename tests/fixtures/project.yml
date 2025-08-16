@@ -18,3 +18,13 @@ connections:
     bucket: featherbox-test-bucket
     region: us-east-1
     auth_method: credential_chain
+  mysql_datasource:
+    type: mysql
+    host: localhost
+    port: 3307
+    database: datasource_test
+    username: datasource
+    password: datasourcepass
+  sqlite_source:
+    type: sqlite
+    path: ./test_data/source.db

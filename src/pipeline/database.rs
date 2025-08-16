@@ -3,13 +3,35 @@ use anyhow::Result;
 
 #[derive(Debug, Clone)]
 pub enum DatabaseSystem {
-    Sqlite { path: String },
+    Sqlite {
+        path: String,
+    },
+    Mysql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
 }
 
 impl DatabaseSystem {
     pub fn from_connection(connection: &ConnectionConfig) -> Result<Self> {
         match connection {
             ConnectionConfig::Sqlite { path } => Ok(Self::Sqlite { path: path.clone() }),
+            ConnectionConfig::Mysql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => Ok(Self::Mysql {
+                host: host.clone(),
+                port: *port,
+                database: database.clone(),
+                username: username.clone(),
+                password: password.clone(),
+            }),
             _ => Err(anyhow::anyhow!(
                 "Unsupported connection type for database system"
             )),
@@ -22,6 +44,10 @@ impl DatabaseSystem {
                 let uuid_suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
                 format!("sqlite_db_{uuid_suffix}")
             }
+            Self::Mysql { .. } => {
+                let uuid_suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+                format!("mysql_db_{uuid_suffix}")
+            }
         }
     }
 
@@ -31,12 +57,28 @@ impl DatabaseSystem {
                 let query = format!("ATTACH '{path}' AS {alias} (TYPE sqlite);");
                 Ok(query)
             }
+            Self::Mysql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                let query = format!(
+                    "ATTACH 'host={host} port={port} database={database} user={username} password={password}' AS {alias} (TYPE mysql);"
+                );
+                Ok(query)
+            }
         }
     }
 
     pub fn build_detach_query(&self, alias: &str) -> Result<String> {
         match self {
             Self::Sqlite { .. } => {
+                let query = format!("DETACH {alias};");
+                Ok(query)
+            }
+            Self::Mysql { .. } => {
                 let query = format!("DETACH {alias};");
                 Ok(query)
             }
@@ -49,6 +91,10 @@ impl DatabaseSystem {
                 let query = format!("SELECT * FROM {alias}.{table_name}");
                 Ok(query)
             }
+            Self::Mysql { .. } => {
+                let query = format!("SELECT * FROM {alias}.{table_name}");
+                Ok(query)
+            }
         }
     }
 
@@ -57,6 +103,12 @@ impl DatabaseSystem {
             Self::Sqlite { .. } => {
                 let query = format!(
                     "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_catalog = '{alias}' AND table_name = '{table_name}'"
+                );
+                Ok(query)
+            }
+            Self::Mysql { database, .. } => {
+                let query = format!(
+                    "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = '{database}' AND table_name = '{table_name}'"
                 );
                 Ok(query)
             }
@@ -80,6 +132,37 @@ mod tests {
             DatabaseSystem::Sqlite { path } => {
                 assert_eq!(path, "/tmp/test.db");
             }
+            _ => panic!("Expected SQLite system"),
+        }
+    }
+
+    #[test]
+    fn test_mysql_system_creation() {
+        let connection = ConnectionConfig::Mysql {
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let db_system = DatabaseSystem::from_connection(&connection).unwrap();
+
+        match db_system {
+            DatabaseSystem::Mysql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                assert_eq!(host, "localhost");
+                assert_eq!(port, 3307);
+                assert_eq!(database, "datasource_test");
+                assert_eq!(username, "datasource");
+                assert_eq!(password, "datasourcepass");
+            }
+            _ => panic!("Expected MySQL system"),
         }
     }
 
@@ -101,6 +184,27 @@ mod tests {
     }
 
     #[test]
+    fn test_mysql_attach_detach_queries() {
+        let db_system = DatabaseSystem::Mysql {
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let alias = "mysql_db";
+        let attach_query = db_system.build_attach_query(alias).unwrap();
+        assert_eq!(
+            attach_query,
+            "ATTACH 'host=localhost port=3307 database=datasource_test user=datasource password=datasourcepass' AS mysql_db (TYPE mysql);"
+        );
+
+        let detach_query = db_system.build_detach_query(alias).unwrap();
+        assert_eq!(detach_query, "DETACH mysql_db;");
+    }
+
+    #[test]
     fn test_sqlite_read_query() {
         let db_system = DatabaseSystem::Sqlite {
             path: "/tmp/test.db".to_string(),
@@ -109,6 +213,21 @@ mod tests {
         let alias = "test_db";
         let query = db_system.build_read_query(alias, "users").unwrap();
         assert_eq!(query, "SELECT * FROM test_db.users");
+    }
+
+    #[test]
+    fn test_mysql_read_query() {
+        let db_system = DatabaseSystem::Mysql {
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let alias = "mysql_db";
+        let query = db_system.build_read_query(alias, "users").unwrap();
+        assert_eq!(query, "SELECT * FROM mysql_db.users");
     }
 
     #[test]
@@ -126,14 +245,44 @@ mod tests {
     }
 
     #[test]
+    fn test_mysql_validate_table_exists() {
+        let db_system = DatabaseSystem::Mysql {
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let alias = "mysql_db";
+        let query = db_system.validate_table_exists(alias, "users").unwrap();
+        assert_eq!(
+            query,
+            "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'datasource_test' AND table_name = 'users'"
+        );
+    }
+
+    #[test]
     fn test_generate_alias() {
-        let db_system = DatabaseSystem::Sqlite {
+        let sqlite_system = DatabaseSystem::Sqlite {
             path: "/tmp/test.db".to_string(),
         };
 
-        let alias = db_system.generate_alias();
-        assert!(alias.starts_with("sqlite_db_"));
-        assert_eq!(alias.len(), "sqlite_db_".len() + 8);
+        let sqlite_alias = sqlite_system.generate_alias();
+        assert!(sqlite_alias.starts_with("sqlite_db_"));
+        assert_eq!(sqlite_alias.len(), "sqlite_db_".len() + 8);
+
+        let mysql_system = DatabaseSystem::Mysql {
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let mysql_alias = mysql_system.generate_alias();
+        assert!(mysql_alias.starts_with("mysql_db_"));
+        assert_eq!(mysql_alias.len(), "mysql_db_".len() + 8);
     }
 
     #[test]

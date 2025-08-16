@@ -1,5 +1,5 @@
 services:
-  mysql:
+  catalog_db_mysql:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: testpass
@@ -21,9 +21,9 @@ services:
       timeout: 20s
       retries: 10
     volumes:
-      - mysql_data:/var/lib/mysql
+      - catalog_mysql_data:/var/lib/mysql
 
-  postgres:
+  catalog_db_postgres:
     image: postgres:15
     environment:
       POSTGRES_PASSWORD: testpass
@@ -36,8 +36,33 @@ services:
       timeout: 20s
       retries: 10
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - catalog_postgres_data:/var/lib/postgresql/data
+
+  datasource_mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: datasourcepass
+      MYSQL_DATABASE: datasource_test
+      MYSQL_USER: datasource
+      MYSQL_PASSWORD: datasourcepass
+    command: --default-authentication-plugin=mysql_native_password
+    entrypoint: >
+      sh -c "
+        docker-entrypoint.sh mysqld &
+        until mysqladmin ping -h 127.0.0.1 --silent; do sleep 1; done
+        mysql -u root -pdatasourcepass -e \"GRANT ALL PRIVILEGES ON *.* TO 'datasource'@'%';\"
+        wait
+      "
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    volumes:
+      - datasource_mysql_data:/var/lib/mysql
 
 volumes:
-  mysql_data:
-  postgres_data:
+  catalog_mysql_data:
+  catalog_postgres_data:
+  datasource_mysql_data:

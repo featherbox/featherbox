@@ -1,0 +1,8 @@
+description: 'User statistics from MySQL data'
+sql: |
+  SELECT 
+    COUNT(*) as mysql_user_count,
+    MIN(created_at) as first_mysql_user_created,
+    MAX(created_at) as latest_mysql_user_created
+  FROM mysql_users
+max_age: 3600

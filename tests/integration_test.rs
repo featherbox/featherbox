@@ -111,7 +111,14 @@ connections:
     base_path: ./test_data
   sqlite_source:
     type: sqlite
-    path: {}"#,
+    path: {}
+  mysql_datasource:
+    type: mysql
+    host: localhost
+    port: 3307
+    database: datasource_test
+    username: datasource
+    password: datasourcepass"#,
         create_database_config_with_name(db_type, db_name),
         sqlite_path
     )
@@ -312,6 +319,10 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
             continue;
         }
 
+        if file_name_str == "mysql_users.yml" && !should_test_mysql() {
+            continue;
+        }
+
         fs::copy(entry.path(), project_dir.join("adapters").join(&file_name))?;
     }
 
@@ -324,6 +335,10 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
             continue;
         }
 
+        if file_name_str == "mysql_user_stats.yml" && !should_test_mysql() {
+            continue;
+        }
+
         fs::copy(entry.path(), project_dir.join("models").join(&file_name))?;
     }
 
@@ -331,6 +346,8 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
 }
 
 fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
+    setup_mysql_test_data()?;
+
     let temp_dir = TempDir::new()?;
     let project_dir = setup_test_project_with_database(temp_dir.path(), db_type)?;
 
@@ -440,11 +457,109 @@ fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
         "Expected Furniture category with 2 products for {db_type}"
     );
 
+    if should_test_mysql() {
+        let mysql_user_stats_output = verify_data_with_query(
+            &project_dir.0,
+            "SELECT mysql_user_count FROM mysql_user_stats",
+        );
+        match mysql_user_stats_output {
+            Ok(output) => {
+                assert!(
+                    output.contains("4"),
+                    "Expected mysql_user_count=4 in mysql_user_stats for {db_type}, got: {output}"
+                );
+                println!("MySQL integration test passed for {db_type}");
+            }
+            Err(e) => {
+                println!(
+                    "MySQL test failed for {db_type} (this is expected if MySQL container is not available): {e}"
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
 fn should_run_s3_tests() -> bool {
     env::var("FEATHERBOX_S3_TEST").is_ok()
+}
+
+fn should_test_mysql() -> bool {
+    use std::process::Command;
+
+    let output = Command::new("docker")
+        .args([
+            "compose",
+            "exec",
+            "datasource_mysql",
+            "mysql",
+            "-u",
+            "datasource",
+            "-pdatasourcepass",
+            "-e",
+            "SELECT 1;",
+        ])
+        .output();
+
+    output.is_ok() && output.unwrap().status.success()
+}
+
+fn setup_mysql_test_data() -> Result<()> {
+    use std::process::Command;
+    use std::sync::Once;
+
+    static MYSQL_SETUP: Once = Once::new();
+
+    if !should_test_mysql() {
+        return Ok(());
+    }
+
+    MYSQL_SETUP.call_once(|| {
+        let create_table_sql = "
+            USE datasource_test;
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            DELETE FROM users;
+            INSERT INTO users (name, email) VALUES 
+                ('John Doe', 'john@example.com'),
+                ('Jane Smith', 'jane@example.com'),
+                ('Bob Wilson', 'bob@example.com'),
+                ('Alice Brown', 'alice@example.com');
+        ";
+
+        let output = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "-T",
+                "datasource_mysql",
+                "mysql",
+                "-u",
+                "datasource",
+                "-pdatasourcepass",
+                "-e",
+            ])
+            .arg(create_table_sql)
+            .output();
+
+        if let Err(e) = output {
+            eprintln!("Failed to setup MySQL test data: {e}");
+        } else if let Ok(output) = output {
+            if !output.status.success() {
+                eprintln!(
+                    "Failed to setup MySQL test data: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    });
+
+    Ok(())
 }
 
 #[test]

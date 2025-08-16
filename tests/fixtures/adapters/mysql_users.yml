@@ -1,0 +1,6 @@
+connection: mysql_datasource
+description: 'MySQL users table adapter'
+source:
+  type: database
+  table_name: users
+columns: []

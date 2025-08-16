@@ -67,6 +67,13 @@ pub enum ConnectionConfig {
     Sqlite {
         path: String,
     },
+    Mysql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
 }
 
 fn expand_env_vars(value: &str) -> Result<String, String> {
@@ -234,6 +241,39 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                     .expect("SQLite path is required")
                     .to_string();
                 ConnectionConfig::Sqlite { path }
+            }
+            "mysql" => {
+                let host = value["host"]
+                    .as_str()
+                    .expect("MySQL host is required")
+                    .to_string();
+
+                let port = value["port"].as_i64().map(|p| p as u16).unwrap_or(3306);
+
+                let database = value["database"]
+                    .as_str()
+                    .expect("MySQL database is required")
+                    .to_string();
+
+                let username_str = value["username"]
+                    .as_str()
+                    .expect("MySQL username is required");
+                let username = expand_env_vars(username_str)
+                    .unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
+
+                let password_str = value["password"]
+                    .as_str()
+                    .expect("MySQL password is required");
+                let password = expand_env_vars(password_str)
+                    .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
+
+                ConnectionConfig::Mysql {
+                    host,
+                    port,
+                    database,
+                    username,
+                    password,
+                }
             }
             "s3" => {
                 let bucket = value["bucket"]
@@ -835,6 +875,85 @@ mod tests {
                 assert_eq!(path, "/data/my_database.db");
             }
             _ => panic!("Expected SQLite connection config"),
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_mysql() {
+        unsafe {
+            env::set_var("TEST_MYSQL_USER", "mysql_user");
+            env::set_var("TEST_MYSQL_PASSWORD", "mysql_pass");
+        }
+
+        let yaml_str = r#"
+            my_mysql_db:
+              type: mysql
+              host: localhost
+              port: 3307
+              database: datasource_test
+              username: ${TEST_MYSQL_USER}
+              password: ${TEST_MYSQL_PASSWORD}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 1);
+
+        match connections.get("my_mysql_db").unwrap() {
+            ConnectionConfig::Mysql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                assert_eq!(host, "localhost");
+                assert_eq!(*port, 3307);
+                assert_eq!(database, "datasource_test");
+                assert_eq!(username, "mysql_user");
+                assert_eq!(password, "mysql_pass");
+            }
+            _ => panic!("Expected MySQL connection config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_MYSQL_USER");
+            env::remove_var("TEST_MYSQL_PASSWORD");
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_mysql_default_port() {
+        unsafe {
+            env::set_var("TEST_MYSQL_DEFAULT_USER", "mysql_user");
+            env::set_var("TEST_MYSQL_DEFAULT_PASSWORD", "mysql_pass");
+        }
+
+        let yaml_str = r#"
+            my_mysql_db:
+              type: mysql
+              host: localhost
+              database: datasource_test
+              username: ${TEST_MYSQL_DEFAULT_USER}
+              password: ${TEST_MYSQL_DEFAULT_PASSWORD}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        match connections.get("my_mysql_db").unwrap() {
+            ConnectionConfig::Mysql { port, .. } => {
+                assert_eq!(*port, 3306);
+            }
+            _ => panic!("Expected MySQL connection config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_MYSQL_DEFAULT_USER");
+            env::remove_var("TEST_MYSQL_DEFAULT_PASSWORD");
         }
     }
 
