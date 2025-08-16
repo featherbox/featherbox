@@ -28,3 +28,10 @@ connections:
   sqlite_source:
     type: sqlite
     path: ./test_data/source.db
+  postgres_datasource:
+    type: postgresql
+    host: localhost
+    port: 5433
+    database: datasource_test
+    username: datasource
+    password: datasourcepass

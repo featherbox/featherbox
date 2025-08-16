@@ -1,0 +1,6 @@
+connection: postgres_datasource
+description: 'PostgreSQL users table adapter'
+source:
+  type: database
+  table_name: users
+columns: []

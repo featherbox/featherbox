@@ -74,6 +74,13 @@ pub enum ConnectionConfig {
         username: String,
         password: String,
     },
+    PostgreSql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
 }
 
 fn expand_env_vars(value: &str) -> Result<String, String> {
@@ -268,6 +275,39 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                     .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
 
                 ConnectionConfig::Mysql {
+                    host,
+                    port,
+                    database,
+                    username,
+                    password,
+                }
+            }
+            "postgresql" => {
+                let host = value["host"]
+                    .as_str()
+                    .expect("PostgreSQL host is required")
+                    .to_string();
+
+                let port = value["port"].as_i64().map(|p| p as u16).unwrap_or(5432);
+
+                let database = value["database"]
+                    .as_str()
+                    .expect("PostgreSQL database is required")
+                    .to_string();
+
+                let username_str = value["username"]
+                    .as_str()
+                    .expect("PostgreSQL username is required");
+                let username = expand_env_vars(username_str)
+                    .unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
+
+                let password_str = value["password"]
+                    .as_str()
+                    .expect("PostgreSQL password is required");
+                let password = expand_env_vars(password_str)
+                    .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
+
+                ConnectionConfig::PostgreSql {
                     host,
                     port,
                     database,
@@ -954,6 +994,67 @@ mod tests {
         unsafe {
             env::remove_var("TEST_MYSQL_DEFAULT_USER");
             env::remove_var("TEST_MYSQL_DEFAULT_PASSWORD");
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_postgresql() {
+        let yaml = &YamlLoader::load_from_str(
+            r"
+            postgres_db:
+              type: postgresql
+              host: localhost
+              port: 5433
+              database: test_db
+              username: testuser
+              password: testpass
+            ",
+        )
+        .unwrap()[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 1);
+        match &connections["postgres_db"] {
+            ConnectionConfig::PostgreSql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                assert_eq!(host, "localhost");
+                assert_eq!(*port, 5433);
+                assert_eq!(database, "test_db");
+                assert_eq!(username, "testuser");
+                assert_eq!(password, "testpass");
+            }
+            _ => panic!("Expected PostgreSQL connection"),
+        }
+    }
+
+    #[test]
+    fn test_parse_connections_postgresql_default_port() {
+        let yaml = &YamlLoader::load_from_str(
+            r"
+            postgres_db:
+              type: postgresql
+              host: localhost
+              database: test_db
+              username: testuser
+              password: testpass
+            ",
+        )
+        .unwrap()[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 1);
+        match &connections["postgres_db"] {
+            ConnectionConfig::PostgreSql { port, .. } => {
+                assert_eq!(*port, 5432);
+            }
+            _ => panic!("Expected PostgreSQL connection"),
         }
     }
 

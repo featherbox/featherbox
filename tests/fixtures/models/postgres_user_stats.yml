@@ -1,0 +1,8 @@
+description: 'User statistics from PostgreSQL data'
+sql: |
+  SELECT 
+    COUNT(*) as postgres_user_count,
+    MIN(created_at) as first_postgres_user_created,
+    MAX(created_at) as latest_postgres_user_created
+  FROM postgres_users
+max_age: 3600

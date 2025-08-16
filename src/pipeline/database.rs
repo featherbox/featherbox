@@ -13,6 +13,13 @@ pub enum DatabaseSystem {
         username: String,
         password: String,
     },
+    PostgreSql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
 }
 
 impl DatabaseSystem {
@@ -26,6 +33,19 @@ impl DatabaseSystem {
                 username,
                 password,
             } => Ok(Self::Mysql {
+                host: host.clone(),
+                port: *port,
+                database: database.clone(),
+                username: username.clone(),
+                password: password.clone(),
+            }),
+            ConnectionConfig::PostgreSql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => Ok(Self::PostgreSql {
                 host: host.clone(),
                 port: *port,
                 database: database.clone(),
@@ -48,6 +68,10 @@ impl DatabaseSystem {
                 let uuid_suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
                 format!("mysql_db_{uuid_suffix}")
             }
+            Self::PostgreSql { .. } => {
+                let uuid_suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+                format!("postgres_db_{uuid_suffix}")
+            }
         }
     }
 
@@ -69,6 +93,18 @@ impl DatabaseSystem {
                 );
                 Ok(query)
             }
+            Self::PostgreSql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                let query = format!(
+                    "ATTACH 'host={host} port={port} database={database} user={username} password={password}' AS {alias} (TYPE postgres);"
+                );
+                Ok(query)
+            }
         }
     }
 
@@ -82,6 +118,10 @@ impl DatabaseSystem {
                 let query = format!("DETACH {alias};");
                 Ok(query)
             }
+            Self::PostgreSql { .. } => {
+                let query = format!("DETACH {alias};");
+                Ok(query)
+            }
         }
     }
 
@@ -92,6 +132,10 @@ impl DatabaseSystem {
                 Ok(query)
             }
             Self::Mysql { .. } => {
+                let query = format!("SELECT * FROM {alias}.{table_name}");
+                Ok(query)
+            }
+            Self::PostgreSql { .. } => {
                 let query = format!("SELECT * FROM {alias}.{table_name}");
                 Ok(query)
             }
@@ -109,6 +153,12 @@ impl DatabaseSystem {
             Self::Mysql { database, .. } => {
                 let query = format!(
                     "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = '{database}' AND table_name = '{table_name}'"
+                );
+                Ok(query)
+            }
+            Self::PostgreSql { database, .. } => {
+                let query = format!(
+                    "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'public' AND table_catalog = '{database}' AND table_name = '{table_name}'"
                 );
                 Ok(query)
             }
@@ -263,6 +313,90 @@ mod tests {
     }
 
     #[test]
+    fn test_postgres_system_creation() {
+        let connection = ConnectionConfig::PostgreSql {
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let db_system = DatabaseSystem::from_connection(&connection).unwrap();
+
+        match db_system {
+            DatabaseSystem::PostgreSql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
+                assert_eq!(host, "localhost");
+                assert_eq!(port, 5433);
+                assert_eq!(database, "datasource_test");
+                assert_eq!(username, "datasource");
+                assert_eq!(password, "datasourcepass");
+            }
+            _ => panic!("Expected PostgreSQL system"),
+        }
+    }
+
+    #[test]
+    fn test_postgres_attach_detach_queries() {
+        let db_system = DatabaseSystem::PostgreSql {
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let alias = "postgres_db";
+        let attach_query = db_system.build_attach_query(alias).unwrap();
+        assert_eq!(
+            attach_query,
+            "ATTACH 'host=localhost port=5433 database=datasource_test user=datasource password=datasourcepass' AS postgres_db (TYPE postgres);"
+        );
+
+        let detach_query = db_system.build_detach_query(alias).unwrap();
+        assert_eq!(detach_query, "DETACH postgres_db;");
+    }
+
+    #[test]
+    fn test_postgres_read_query() {
+        let db_system = DatabaseSystem::PostgreSql {
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let alias = "postgres_db";
+        let query = db_system.build_read_query(alias, "users").unwrap();
+        assert_eq!(query, "SELECT * FROM postgres_db.users");
+    }
+
+    #[test]
+    fn test_postgres_validate_table_exists() {
+        let db_system = DatabaseSystem::PostgreSql {
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let alias = "postgres_db";
+        let query = db_system.validate_table_exists(alias, "users").unwrap();
+        assert_eq!(
+            query,
+            "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'public' AND table_catalog = 'datasource_test' AND table_name = 'users'"
+        );
+    }
+
+    #[test]
     fn test_generate_alias() {
         let sqlite_system = DatabaseSystem::Sqlite {
             path: "/tmp/test.db".to_string(),
@@ -283,6 +417,18 @@ mod tests {
         let mysql_alias = mysql_system.generate_alias();
         assert!(mysql_alias.starts_with("mysql_db_"));
         assert_eq!(mysql_alias.len(), "mysql_db_".len() + 8);
+
+        let postgres_system = DatabaseSystem::PostgreSql {
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
+        };
+
+        let postgres_alias = postgres_system.generate_alias();
+        assert!(postgres_alias.starts_with("postgres_db_"));
+        assert_eq!(postgres_alias.len(), "postgres_db_".len() + 8);
     }
 
     #[test]

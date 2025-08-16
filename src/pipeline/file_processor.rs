@@ -38,6 +38,9 @@ impl FileSystem {
             ConnectionConfig::Mysql { .. } => Err(anyhow::anyhow!(
                 "MySQL connections are not supported by FileSystem. Use database adapter instead."
             )),
+            ConnectionConfig::PostgreSql { .. } => Err(anyhow::anyhow!(
+                "PostgreSQL connections are not supported by FileSystem. Use database adapter instead."
+            )),
         }
     }
 

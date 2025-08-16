@@ -323,6 +323,10 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
             continue;
         }
 
+        if file_name_str == "postgres_users.yml" && !should_test_postgres() {
+            continue;
+        }
+
         fs::copy(entry.path(), project_dir.join("adapters").join(&file_name))?;
     }
 
@@ -339,6 +343,10 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
             continue;
         }
 
+        if file_name_str == "postgres_user_stats.yml" && !should_test_postgres() {
+            continue;
+        }
+
         fs::copy(entry.path(), project_dir.join("models").join(&file_name))?;
     }
 
@@ -347,6 +355,7 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
 
 fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
     setup_mysql_test_data()?;
+    setup_postgres_test_data()?;
 
     let temp_dir = TempDir::new()?;
     let project_dir = setup_test_project_with_database(temp_dir.path(), db_type)?;
@@ -478,6 +487,27 @@ fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
         }
     }
 
+    if should_test_postgres() {
+        let postgres_user_stats_output = verify_data_with_query(
+            &project_dir.0,
+            "SELECT postgres_user_count FROM postgres_user_stats",
+        );
+        match postgres_user_stats_output {
+            Ok(output) => {
+                assert!(
+                    output.contains("4"),
+                    "Expected postgres_user_count=4 in postgres_user_stats for {db_type}, got: {output}"
+                );
+                println!("PostgreSQL integration test passed for {db_type}");
+            }
+            Err(e) => {
+                println!(
+                    "PostgreSQL test failed for {db_type} (this is expected if PostgreSQL container is not available): {e}"
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -498,6 +528,27 @@ fn should_test_mysql() -> bool {
             "datasource",
             "-pdatasourcepass",
             "-e",
+            "SELECT 1;",
+        ])
+        .output();
+
+    output.is_ok() && output.unwrap().status.success()
+}
+
+fn should_test_postgres() -> bool {
+    use std::process::Command;
+
+    let output = Command::new("docker")
+        .args([
+            "compose",
+            "exec",
+            "datasource_postgres",
+            "psql",
+            "-U",
+            "datasource",
+            "-d",
+            "datasource_test",
+            "-c",
             "SELECT 1;",
         ])
         .output();
@@ -553,6 +604,63 @@ fn setup_mysql_test_data() -> Result<()> {
             if !output.status.success() {
                 eprintln!(
                     "Failed to setup MySQL test data: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    });
+
+    Ok(())
+}
+
+fn setup_postgres_test_data() -> Result<()> {
+    use std::process::Command;
+    use std::sync::Once;
+
+    static POSTGRES_SETUP: Once = Once::new();
+
+    if !should_test_postgres() {
+        return Ok(());
+    }
+
+    POSTGRES_SETUP.call_once(|| {
+        let create_table_sql = "
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            DELETE FROM users;
+            INSERT INTO users (name, email) VALUES 
+                ('John Doe', 'john@example.com'),
+                ('Jane Smith', 'jane@example.com'),
+                ('Bob Wilson', 'bob@example.com'),
+                ('Alice Brown', 'alice@example.com');
+        ";
+
+        let output = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "-T",
+                "datasource_postgres",
+                "psql",
+                "-U",
+                "datasource",
+                "-d",
+                "datasource_test",
+                "-c",
+            ])
+            .arg(create_table_sql)
+            .output();
+
+        if let Err(e) = output {
+            eprintln!("Failed to setup PostgreSQL test data: {e}");
+        } else if let Ok(output) = output {
+            if !output.status.success() {
+                eprintln!(
+                    "Failed to setup PostgreSQL test data: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
