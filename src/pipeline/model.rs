@@ -136,7 +136,7 @@ impl Model {
             }
         }
 
-        let _validated = Parser::parse_sql(&dialect, &modified_sql)
+        Parser::parse_sql(&dialect, &modified_sql)
             .with_context(|| format!("Modified SQL is not valid: {modified_sql}"))?;
 
         Ok(modified_sql)

@@ -71,8 +71,29 @@ pub async fn connect_app_db(project_config: &ProjectConfig) -> Result<DatabaseCo
     opt.connect_timeout(Duration::from_secs(30));
 
     let db = Database::connect(opt).await?;
+
+    if matches!(&project_config.database.ty, DatabaseType::Sqlite) {
+        enable_sqlite_wal_mode(&db).await?;
+    }
+
     ensure_migrations(&db).await?;
     Ok(db)
+}
+
+async fn enable_sqlite_wal_mode(db: &DatabaseConnection) -> Result<()> {
+    db.execute(sea_orm::Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        "PRAGMA journal_mode = WAL;".to_string(),
+    ))
+    .await?;
+
+    db.execute(sea_orm::Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        "PRAGMA busy_timeout = 10000;".to_string(),
+    ))
+    .await?;
+
+    Ok(())
 }
 
 async fn ensure_migrations(db: &DatabaseConnection) -> Result<()> {

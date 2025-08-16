@@ -109,18 +109,20 @@ mod tests {
             AdapterConfig {
                 connection: "test".to_string(),
                 description: Some("Test adapter".to_string()),
-                file: crate::config::adapter::FileConfig {
-                    path: "test.csv".to_string(),
-                    compression: None,
-                    max_batch_size: None,
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "test.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        has_header: Some(true),
+                        delimiter: None,
+                        null_value: None,
+                    },
                 },
                 update_strategy: None,
-                format: crate::config::adapter::FormatConfig {
-                    ty: "csv".to_string(),
-                    has_header: Some(true),
-                    delimiter: None,
-                    null_value: None,
-                },
                 columns: vec![],
                 limits: None,
             },

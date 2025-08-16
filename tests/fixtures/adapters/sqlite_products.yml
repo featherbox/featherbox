@@ -1,0 +1,6 @@
+connection: sqlite_source
+description: 'SQLite products table adapter'
+source:
+  type: database
+  table_name: products
+columns: []

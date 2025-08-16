@@ -192,8 +192,6 @@ pub fn calculate_execution_levels(graph: &Graph) -> HashMap<String, usize> {
 }
 
 pub fn create_subgraph(graph: &Graph, affected_nodes: &[String]) -> Graph {
-    let _affected_set: HashSet<String> = affected_nodes.iter().cloned().collect();
-
     let mut downstream_nodes = HashSet::new();
     let mut queue: VecDeque<String> = affected_nodes.iter().cloned().collect();
 

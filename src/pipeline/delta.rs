@@ -1,6 +1,6 @@
 use crate::config::adapter::AdapterConfig;
 use crate::database::entities::{deltas, pipeline_actions};
-use crate::pipeline::ducklake::DuckLake;
+use crate::pipeline::{database::DatabaseSystem, ducklake::DuckLake};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
@@ -140,6 +140,28 @@ impl DeltaManager {
         Ok(delta_metadata)
     }
 
+    pub async fn process_delta_for_database(
+        &self,
+        db_system: &DatabaseSystem,
+        source_table: &str,
+        target_table: &str,
+        app_db: &DatabaseConnection,
+        action_id: i32,
+    ) -> Result<DeltaMetadata> {
+        let delta_path = self.create_delta_path(target_table);
+
+        self.create_database_delta(&delta_path, db_system, source_table)
+            .await?;
+
+        let delta_metadata = self
+            .save_delta_metadata(app_db, action_id, &delta_path)
+            .await?;
+
+        self.apply_delta_to_table(target_table, &delta_path)?;
+
+        Ok(delta_metadata)
+    }
+
     pub async fn process_delta_for_model(
         &self,
         model_name: &str,
@@ -180,22 +202,30 @@ impl DeltaManager {
             .collect::<Vec<_>>()
             .join(", ");
 
-        match adapter.format.ty.as_str() {
-            "csv" => {
-                let has_header = adapter.format.has_header.unwrap_or(true);
-                let query =
-                    format!("SELECT * FROM read_csv_auto([{file_paths_str}], header={has_header})");
-                Ok(query)
+        match &adapter.source {
+            crate::config::adapter::AdapterSource::File { format, .. } => {
+                match format.ty.as_str() {
+                    "csv" => {
+                        let has_header = format.has_header.unwrap_or(true);
+                        let query = format!(
+                            "SELECT * FROM read_csv_auto([{file_paths_str}], header={has_header})"
+                        );
+                        Ok(query)
+                    }
+                    "parquet" => {
+                        let query = format!("SELECT * FROM read_parquet([{file_paths_str}])");
+                        Ok(query)
+                    }
+                    "json" => {
+                        let query = format!("SELECT * FROM read_json_auto([{file_paths_str}])");
+                        Ok(query)
+                    }
+                    _ => Err(anyhow::anyhow!("Unsupported format: {}", format.ty)),
+                }
             }
-            "parquet" => {
-                let query = format!("SELECT * FROM read_parquet([{file_paths_str}])");
-                Ok(query)
-            }
-            "json" => {
-                let query = format!("SELECT * FROM read_json_auto([{file_paths_str}])");
-                Ok(query)
-            }
-            _ => Err(anyhow::anyhow!("Unsupported format: {}", adapter.format.ty)),
+            _ => Err(anyhow::anyhow!(
+                "Only file sources are supported in delta processing"
+            )),
         }
     }
 
@@ -204,22 +234,30 @@ impl DeltaManager {
         adapter: &AdapterConfig,
         file_path: &str,
     ) -> Result<String> {
-        match adapter.format.ty.as_str() {
-            "csv" => {
-                let has_header = adapter.format.has_header.unwrap_or(true);
-                let query =
-                    format!("SELECT * FROM read_csv_auto('{file_path}', header={has_header})");
-                Ok(query)
+        match &adapter.source {
+            crate::config::adapter::AdapterSource::File { format, .. } => {
+                match format.ty.as_str() {
+                    "csv" => {
+                        let has_header = format.has_header.unwrap_or(true);
+                        let query = format!(
+                            "SELECT * FROM read_csv_auto('{file_path}', header={has_header})"
+                        );
+                        Ok(query)
+                    }
+                    "parquet" => {
+                        let query = format!("SELECT * FROM read_parquet('{file_path}')");
+                        Ok(query)
+                    }
+                    "json" => {
+                        let query = format!("SELECT * FROM read_json_auto('{file_path}')");
+                        Ok(query)
+                    }
+                    _ => Err(anyhow::anyhow!("Unsupported format: {}", format.ty)),
+                }
             }
-            "parquet" => {
-                let query = format!("SELECT * FROM read_parquet('{file_path}')");
-                Ok(query)
-            }
-            "json" => {
-                let query = format!("SELECT * FROM read_json_auto('{file_path}')");
-                Ok(query)
-            }
-            _ => Err(anyhow::anyhow!("Unsupported format: {}", adapter.format.ty)),
+            _ => Err(anyhow::anyhow!(
+                "Only file sources are supported in delta processing"
+            )),
         }
     }
 
@@ -249,6 +287,158 @@ impl DeltaManager {
         self.ducklake.drop_temp_table(&temp_table_name)?;
 
         Ok(())
+    }
+
+    async fn create_database_delta(
+        &self,
+        delta_path: &Path,
+        db_system: &DatabaseSystem,
+        source_table: &str,
+    ) -> Result<()> {
+        self.ducklake
+            .execute_batch("LOAD sqlite;")
+            .context("Failed to load SQLite extension")?;
+
+        let db_alias = db_system.generate_alias();
+        let temp_table_name = DuckLake::generate_temp_table_name("temp_db_delta");
+
+        let attach_result = self.attach_and_validate_database(&db_alias, db_system, source_table);
+        if let Err(e) = attach_result {
+            if let Err(detach_err) = self.detach_database(&db_alias, db_system) {
+                eprintln!("Warning: Failed to detach database during cleanup: {detach_err}");
+            }
+            return Err(e);
+        }
+
+        let delta_result = self
+            .create_delta_from_database(
+                &db_alias,
+                db_system,
+                source_table,
+                &temp_table_name,
+                delta_path,
+            )
+            .await;
+
+        self.ducklake.drop_temp_table(&temp_table_name)?;
+        let detach_result = self.detach_database(&db_alias, db_system);
+
+        delta_result?;
+        detach_result?;
+
+        Ok(())
+    }
+
+    fn attach_and_validate_database(
+        &self,
+        db_alias: &str,
+        db_system: &DatabaseSystem,
+        source_table: &str,
+    ) -> Result<()> {
+        let attach_query = db_system.build_attach_query(db_alias)?;
+        self.ducklake
+            .execute_batch(&attach_query)
+            .with_context(|| format!("Failed to attach SQLite database. Query: {attach_query}"))?;
+
+        let validation_query = db_system.validate_table_exists(db_alias, source_table)?;
+        let validation_result = self
+            .ducklake
+            .query(&validation_query)
+            .with_context(|| format!("Failed to validate table existence for: {source_table}"))?;
+
+        let table_exists = !validation_result.is_empty()
+            && !validation_result[0].is_empty()
+            && validation_result[0][0] != "0";
+
+        if !table_exists {
+            return Err(anyhow::anyhow!(
+                "Table '{}' does not exist in the source database",
+                source_table
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn create_delta_from_database(
+        &self,
+        db_alias: &str,
+        db_system: &DatabaseSystem,
+        source_table: &str,
+        temp_table_name: &str,
+        delta_path: &Path,
+    ) -> Result<()> {
+        self.ensure_delta_directory(delta_path)?;
+
+        let query = db_system.build_read_query(db_alias, source_table)?;
+        if let Err(e) = self.ducklake.drop_temp_table(temp_table_name) {
+            eprintln!("Warning: Failed to drop existing temp table: {e}");
+        }
+
+        self.ducklake
+            .create_table_from_query(temp_table_name, &query)
+            .with_context(|| {
+                format!("Failed to create temporary database delta table. Query: {query}")
+            })?;
+
+        self.log_temp_table_stats(temp_table_name)?;
+        self.cleanup_existing_delta_file(delta_path)?;
+        self.export_delta_to_parquet(temp_table_name, delta_path)?;
+
+        Ok(())
+    }
+
+    fn ensure_delta_directory(&self, delta_path: &Path) -> Result<()> {
+        if let Some(parent) = delta_path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create delta directory: {}", parent.display())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn log_temp_table_stats(&self, temp_table_name: &str) -> Result<()> {
+        let row_count_query = format!("SELECT COUNT(*) FROM {temp_table_name}");
+        let row_count_result = self.ducklake.query(&row_count_query).with_context(|| {
+            format!("Failed to check row count in temp table {temp_table_name}")
+        })?;
+
+        let row_count = row_count_result
+            .first()
+            .and_then(|r| r.first())
+            .map_or("unknown", |v| v);
+
+        println!("DEBUG: Temp table {temp_table_name} has {row_count} rows");
+        Ok(())
+    }
+
+    fn cleanup_existing_delta_file(&self, delta_path: &Path) -> Result<()> {
+        if delta_path.exists() {
+            std::fs::remove_file(delta_path).with_context(|| {
+                format!(
+                    "Failed to remove existing delta file: {}",
+                    delta_path.display()
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    fn export_delta_to_parquet(&self, temp_table_name: &str, delta_path: &Path) -> Result<()> {
+        let export_sql = format!(
+            "COPY (SELECT * FROM {temp_table_name}) TO '{}' (FORMAT PARQUET);",
+            delta_path.to_string_lossy()
+        );
+
+        self.ducklake.execute_batch(&export_sql).with_context(|| {
+            format!("Failed to export database delta insert data. SQL: {export_sql}")
+        })
+    }
+
+    fn detach_database(&self, db_alias: &str, db_system: &DatabaseSystem) -> Result<()> {
+        self.ducklake
+            .execute_batch(&db_system.build_detach_query(db_alias)?)
+            .with_context(|| format!("Failed to detach SQLite database: {db_alias}"))
     }
 
     fn apply_delta_to_table(&self, table_name: &str, delta_path: &Path) -> Result<()> {
@@ -601,7 +791,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_and_apply_delta_table() {
         let test_dir = "/tmp/delta_processor_test";
-        let _ = std::fs::remove_dir_all(test_dir);
+        std::fs::remove_dir_all(test_dir).ok();
         std::fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -621,18 +811,20 @@ mod tests {
         let adapter = AdapterConfig {
             connection: "test_table".to_string(),
             description: None,
-            file: FileConfig {
-                path: test_csv.to_string_lossy().to_string(),
-                compression: None,
-                max_batch_size: None,
+            source: crate::config::adapter::AdapterSource::File {
+                file: FileConfig {
+                    path: test_csv.to_string_lossy().to_string(),
+                    compression: None,
+                    max_batch_size: None,
+                },
+                format: FormatConfig {
+                    ty: "csv".to_string(),
+                    delimiter: None,
+                    null_value: None,
+                    has_header: Some(true),
+                },
             },
             update_strategy: None,
-            format: FormatConfig {
-                ty: "csv".to_string(),
-                delimiter: None,
-                null_value: None,
-                has_header: Some(true),
-            },
             columns: vec![],
             limits: None,
         };

@@ -1,0 +1,6 @@
+connection: sqlite_source
+description: 'SQLite users table adapter'
+source:
+  type: database
+  table_name: users
+columns: []

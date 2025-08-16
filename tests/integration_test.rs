@@ -84,7 +84,17 @@ fn create_database_config_with_name(db_type: &str, db_name: &str) -> String {
     }
 }
 
-fn create_project_config_for_db(db_type: &str, db_name: &str) -> String {
+fn create_project_config_for_db_with_sqlite(
+    db_type: &str,
+    db_name: &str,
+    project_dir: &Path,
+    sqlite_filename: &str,
+) -> String {
+    let sqlite_path = project_dir
+        .join(format!("test_data/{sqlite_filename}"))
+        .to_string_lossy()
+        .to_string();
+
     format!(
         r#"storage:
   type: local
@@ -98,8 +108,12 @@ deployments:
 connections:
   test_data:
     type: localfile
-    base_path: ./test_data"#,
-        create_database_config_with_name(db_type, db_name)
+    base_path: ./test_data
+  sqlite_source:
+    type: sqlite
+    path: {}"#,
+        create_database_config_with_name(db_type, db_name),
+        sqlite_path
     )
 }
 
@@ -246,16 +260,48 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
         db_name
     };
 
-    let project_config = create_project_config_for_db(db_type, &unique_db_name);
-
-    fs::write(project_dir.join("project.yml"), project_config)?;
-
     let fixtures_dir = Path::new("tests/fixtures");
 
     copy_dir_all(
         fixtures_dir.join("test_data"),
         project_dir.join("test_data"),
     )?;
+
+    let sqlite_db_name = format!("source_{}.db", Uuid::new_v4().simple());
+    let original_sqlite = project_dir.join("test_data/source.db");
+    let sqlite_db_path = project_dir.join(format!("test_data/{sqlite_db_name}"));
+
+    if original_sqlite.exists() {
+        fs::copy(&original_sqlite, &sqlite_db_path)?;
+        fs::remove_file(&original_sqlite)?;
+
+        use std::process::Command;
+        let verify_output = Command::new("sqlite3")
+            .arg(&sqlite_db_path)
+            .arg("SELECT COUNT(*) FROM users; SELECT COUNT(*) FROM products;")
+            .output();
+
+        if let Ok(output) = verify_output {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let lines: Vec<&str> = output_str.trim().split('\n').collect();
+            if lines.len() < 2 || lines[0] != "4" || lines[1] != "4" {
+                return Err(anyhow::anyhow!(
+                    "SQLite database verification failed. Expected 4 users and 4 products"
+                ));
+            }
+        } else {
+            return Err(anyhow::anyhow!("Failed to verify SQLite database"));
+        }
+    }
+
+    let project_config = create_project_config_for_db_with_sqlite(
+        db_type,
+        &unique_db_name,
+        &project_dir,
+        &sqlite_db_name,
+    );
+    let project_yml_path = project_dir.join("project.yml");
+    fs::write(&project_yml_path, &project_config)?;
 
     for entry in fs::read_dir(fixtures_dir.join("adapters"))? {
         let entry = entry?;
@@ -285,8 +331,6 @@ fn setup_test_project_with_database(temp_dir: &Path, db_type: &str) -> Result<(P
 }
 
 fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
-    println!("Running E2E test for {db_type}");
-
     let temp_dir = TempDir::new()?;
     let project_dir = setup_test_project_with_database(temp_dir.path(), db_type)?;
 
@@ -295,13 +339,10 @@ fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
 
     let (success, output) = run_fbox_command(&["run"], &project_dir.0)?;
     if !success {
-        println!("Run failed for {db_type}: {output}");
         let table_check = verify_data_with_query(&project_dir.0, get_table_list_query(db_type));
         if let Ok(tables) = table_check {
-            println!("Available tables: {tables}");
+            eprintln!("Available tables: {tables}");
         }
-    } else {
-        println!("Run succeeded for {db_type}: {output}");
     }
     assert!(success, "fbox run failed for {db_type}: {output}");
 
@@ -315,6 +356,22 @@ fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
         tables_output.contains("time_series_sensors"),
         "time_series_sensors table not found for {db_type}"
     );
+    assert!(
+        tables_output.contains("sqlite_users"),
+        "sqlite_users table not found for {db_type}"
+    );
+    assert!(
+        tables_output.contains("sqlite_products"),
+        "sqlite_products table not found for {db_type}"
+    );
+    assert!(
+        tables_output.contains("user_stats"),
+        "user_stats table not found for {db_type}"
+    );
+    assert!(
+        tables_output.contains("product_summary"),
+        "product_summary table not found for {db_type}"
+    );
 
     let sensors_count = verify_data_with_query(
         &project_dir.0,
@@ -325,15 +382,28 @@ fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
         "Expected 6 sensor entries for {db_type}, got: {sensors_count}"
     );
 
+    let users_count =
+        verify_data_with_query(&project_dir.0, "SELECT COUNT(*) as count FROM sqlite_users")?;
+    assert!(
+        users_count.contains("4"),
+        "Expected 4 users for {db_type}, got: {users_count}"
+    );
+
+    let products_count = verify_data_with_query(
+        &project_dir.0,
+        "SELECT COUNT(*) as count FROM sqlite_products",
+    )?;
+    assert!(
+        products_count.contains("4"),
+        "Expected 4 products for {db_type}, got: {products_count}"
+    );
+
     let summary_output = verify_data_with_query(
         &project_dir.0,
         "SELECT sensor_id, reading_count FROM sensor_summary ORDER BY sensor_id",
     )?;
-    println!("Summary output for {db_type}: {summary_output}");
 
-    let time_series_output =
-        verify_data_with_query(&project_dir.0, "SELECT * FROM time_series_sensors LIMIT 10")?;
-    println!("Time series data for {db_type}: {time_series_output}");
+    verify_data_with_query(&project_dir.0, "SELECT * FROM time_series_sensors LIMIT 10")?;
 
     assert!(
         summary_output.contains("sensor_01"),
@@ -349,7 +419,27 @@ fn run_e2e_test_for_database(db_type: &str) -> Result<()> {
         "Expected 3 readings per sensor for {db_type}"
     );
 
-    println!("E2E test for {db_type} completed successfully");
+    let user_stats_output =
+        verify_data_with_query(&project_dir.0, "SELECT user_count FROM user_stats")?;
+    assert!(
+        user_stats_output.contains("4"),
+        "Expected user_count=4 in user_stats for {db_type}, got: {user_stats_output}"
+    );
+
+    let product_summary_output = verify_data_with_query(
+        &project_dir.0,
+        "SELECT category, product_count FROM product_summary ORDER BY category",
+    )?;
+
+    assert!(
+        product_summary_output.contains("Electronics") && product_summary_output.contains("2"),
+        "Expected Electronics category with 2 products for {db_type}"
+    );
+    assert!(
+        product_summary_output.contains("Furniture") && product_summary_output.contains("2"),
+        "Expected Furniture category with 2 products for {db_type}"
+    );
+
     Ok(())
 }
 
@@ -358,16 +448,16 @@ fn should_run_s3_tests() -> bool {
 }
 
 #[test]
-fn test_complete_e2e_workflow_sqlite() -> Result<()> {
+fn test_e2e_workflow_sqlite() -> Result<()> {
     run_e2e_test_for_database("sqlite")
 }
 
 #[test]
-fn test_complete_e2e_workflow_mysql() -> Result<()> {
+fn test_e2e_workflow_mysql() -> Result<()> {
     run_e2e_test_for_database("mysql")
 }
 
 #[test]
-fn test_complete_e2e_workflow_postgresql() -> Result<()> {
+fn test_e2e_workflow_postgresql() -> Result<()> {
     run_e2e_test_for_database("postgresql")
 }

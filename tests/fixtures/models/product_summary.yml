@@ -1,0 +1,12 @@
+description: 'Product summary from SQLite data'
+sql: |
+  SELECT 
+    category,
+    COUNT(*) as product_count,
+    AVG(price) as avg_price,
+    MIN(price) as min_price,
+    MAX(price) as max_price
+  FROM sqlite_products
+  GROUP BY category
+  ORDER BY category
+max_age: 3600

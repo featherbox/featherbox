@@ -1,7 +1,11 @@
 use crate::{
-    config::{adapter::AdapterConfig, project::ConnectionConfig},
+    config::{
+        adapter::{AdapterConfig, AdapterSource},
+        project::ConnectionConfig,
+    },
     pipeline::{
         build::TimeRange,
+        database::DatabaseSystem,
         delta::{DeltaManager, DeltaMetadata},
         file_processor::{FileProcessor, FileSystem},
     },
@@ -33,6 +37,34 @@ impl Adapter {
         action_id: i32,
         connections: Option<&HashMap<String, ConnectionConfig>>,
     ) -> Result<Option<DeltaMetadata>> {
+        match &self.config.source {
+            AdapterSource::File { .. } => {
+                self.execute_file_import(table_name, time_range, app_db, action_id, connections)
+                    .await
+            }
+            AdapterSource::Database {
+                table_name: source_table,
+            } => {
+                self.execute_database_import(
+                    source_table,
+                    table_name,
+                    app_db,
+                    action_id,
+                    connections,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn execute_file_import(
+        &self,
+        table_name: &str,
+        time_range: Option<TimeRange>,
+        app_db: &DatabaseConnection,
+        action_id: i32,
+        connections: Option<&HashMap<String, ConnectionConfig>>,
+    ) -> Result<Option<DeltaMetadata>> {
         let filesystem = self.create_filesystem(connections).await?;
 
         let file_paths = FileProcessor::files_for_processing_with_filesystem(
@@ -52,6 +84,43 @@ impl Adapter {
             .await?;
 
         Ok(Some(delta_metadata))
+    }
+
+    async fn execute_database_import(
+        &self,
+        source_table: &str,
+        target_table: &str,
+        app_db: &DatabaseConnection,
+        action_id: i32,
+        connections: Option<&HashMap<String, ConnectionConfig>>,
+    ) -> Result<Option<DeltaMetadata>> {
+        let connection = self.get_connection(connections)?;
+        let db_system = DatabaseSystem::from_connection(connection)?;
+
+        let delta_metadata = self
+            .delta_manager
+            .process_delta_for_database(&db_system, source_table, target_table, app_db, action_id)
+            .await?;
+
+        Ok(Some(delta_metadata))
+    }
+
+    fn get_connection<'a>(
+        &self,
+        connections: Option<&'a HashMap<String, ConnectionConfig>>,
+    ) -> Result<&'a ConnectionConfig> {
+        if let Some(connections) = connections {
+            if let Some(connection) = connections.get(&self.config.connection) {
+                Ok(connection)
+            } else {
+                Err(anyhow::anyhow!(
+                    "Connection '{}' not found",
+                    self.config.connection
+                ))
+            }
+        } else {
+            Err(anyhow::anyhow!("No connections provided"))
+        }
     }
 
     async fn create_filesystem(
@@ -79,18 +148,20 @@ mod tests {
         AdapterConfig {
             connection: "local".to_string(),
             description: None,
-            file: FileConfig {
-                path: "test_data/*.csv".to_string(),
-                compression: None,
-                max_batch_size: None,
+            source: AdapterSource::File {
+                file: FileConfig {
+                    path: "test_data/*.csv".to_string(),
+                    compression: None,
+                    max_batch_size: None,
+                },
+                format: FormatConfig {
+                    ty: "csv".to_string(),
+                    delimiter: None,
+                    null_value: None,
+                    has_header: Some(true),
+                },
             },
             update_strategy: None,
-            format: FormatConfig {
-                ty: "csv".to_string(),
-                delimiter: None,
-                null_value: None,
-                has_header: Some(true),
-            },
             columns: vec![],
             limits: None,
         }

@@ -2,11 +2,21 @@
 pub struct AdapterConfig {
     pub connection: String,
     pub description: Option<String>,
-    pub file: FileConfig,
+    pub source: AdapterSource,
     pub update_strategy: Option<UpdateStrategyConfig>,
-    pub format: FormatConfig,
     pub columns: Vec<ColumnConfig>,
     pub limits: Option<LimitsConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AdapterSource {
+    File {
+        file: FileConfig,
+        format: FormatConfig,
+    },
+    Database {
+        table_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,9 +68,19 @@ pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterCo
 
     let description = yaml["description"].as_str().map(|s| s.to_string());
 
-    let file = parse_file_config(&yaml["file"]);
+    let source = if !yaml["source"].is_badvalue() {
+        parse_source(&yaml["source"])?
+    } else if !yaml["file"].is_badvalue() && !yaml["format"].is_badvalue() {
+        let file = parse_file_config(&yaml["file"]);
+        let format = parse_format_config(&yaml["format"]);
+        AdapterSource::File { file, format }
+    } else {
+        return Err(anyhow::anyhow!(
+            "Either 'source' or both 'file' and 'format' are required"
+        ));
+    };
+
     let update_strategy = parse_update_strategy(&yaml["update_strategy"]);
-    let format = parse_format_config(&yaml["format"]);
     let columns = parse_columns(&yaml["columns"]);
     let limits = if !yaml["limits"].is_badvalue() {
         Some(parse_limits(&yaml["limits"]))
@@ -71,12 +91,33 @@ pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterCo
     Ok(AdapterConfig {
         connection,
         description,
-        file,
+        source,
         update_strategy,
-        format,
         columns,
         limits,
     })
+}
+
+fn parse_source(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterSource> {
+    let source_type = yaml["type"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Source type is required"))?;
+
+    match source_type {
+        "file" => {
+            let file = parse_file_config(&yaml["file"]);
+            let format = parse_format_config(&yaml["format"]);
+            Ok(AdapterSource::File { file, format })
+        }
+        "database" => {
+            let table_name = yaml["table_name"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Database table_name is required"))?
+                .to_string();
+            Ok(AdapterSource::Database { table_name })
+        }
+        _ => Err(anyhow::anyhow!("Unsupported source type: {}", source_type)),
+    }
 }
 
 fn parse_file_config(yaml: &yaml_rust2::Yaml) -> FileConfig {
@@ -225,7 +266,7 @@ mod tests {
     use yaml_rust2::YamlLoader;
 
     #[test]
-    fn test_parse_adapter_config() {
+    fn test_parse_adapter_config_legacy_format() {
         let yaml_str = r#"
             connection: test_data
             description: 'Configuration for processing web server logs'
@@ -259,12 +300,18 @@ mod tests {
             Some("Configuration for processing web server logs".to_string())
         );
 
-        assert_eq!(
-            config.file.path,
-            "<YYYY>/<MM>/<DD>/*_<YYYY><MM><DD>T<HH><MM>.log.gz"
-        );
-        assert_eq!(config.file.compression, Some("gzip".to_string()));
-        assert_eq!(config.file.max_batch_size, Some("100MB".to_string()));
+        match &config.source {
+            AdapterSource::File { file, format } => {
+                assert_eq!(
+                    file.path,
+                    "<YYYY>/<MM>/<DD>/*_<YYYY><MM><DD>T<HH><MM>.log.gz"
+                );
+                assert_eq!(file.compression, Some("gzip".to_string()));
+                assert_eq!(file.max_batch_size, Some("100MB".to_string()));
+                assert_eq!(format.ty, "json");
+            }
+            _ => panic!("Expected File source"),
+        }
 
         assert!(config.update_strategy.is_some());
         let update_strategy = config.update_strategy.as_ref().unwrap();
@@ -272,13 +319,50 @@ mod tests {
         assert_eq!(update_strategy.timestamp_from, Some("path".to_string()));
         assert!(update_strategy.range.since.is_some());
 
-        assert_eq!(config.format.ty, "json");
-
         assert_eq!(config.columns.len(), 2);
         assert_eq!(config.columns[0].name, "timestamp");
         assert_eq!(config.columns[0].ty, "DATETIME");
         assert_eq!(config.columns[1].name, "status");
         assert_eq!(config.columns[1].ty, "INTEGER");
+    }
+
+    #[test]
+    fn test_parse_adapter_config_new_database_format() {
+        let yaml_str = r#"
+            connection: test_db
+            description: 'Database source configuration'
+            source:
+              type: database
+              table_name: users
+            columns:
+              - name: id
+                type: INTEGER
+              - name: name
+                type: STRING
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_adapter_config(yaml).unwrap();
+
+        assert_eq!(config.connection, "test_db");
+        assert_eq!(
+            config.description,
+            Some("Database source configuration".to_string())
+        );
+
+        match &config.source {
+            AdapterSource::Database { table_name } => {
+                assert_eq!(table_name, "users");
+            }
+            _ => panic!("Expected Database source"),
+        }
+
+        assert_eq!(config.columns.len(), 2);
+        assert_eq!(config.columns[0].name, "id");
+        assert_eq!(config.columns[0].ty, "INTEGER");
+        assert_eq!(config.columns[1].name, "name");
+        assert_eq!(config.columns[1].ty, "STRING");
     }
 
     #[test]
@@ -417,6 +501,25 @@ mod tests {
         let yaml = &docs[0];
 
         parse_adapter_config(yaml).unwrap();
+    }
+
+    #[test]
+    fn test_parse_adapter_config_missing_source_fields() {
+        let yaml_str = r#"
+            connection: test
+            columns: []
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let result = parse_adapter_config(yaml);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Either 'source' or both 'file' and 'format' are required")
+        );
     }
 
     #[test]

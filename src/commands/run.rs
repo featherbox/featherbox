@@ -256,7 +256,7 @@ mod tests {
         fs::write(project_path.join("project.yml"), project_yml)?;
 
         let config = Config::load_from_directory(project_path)?;
-        let _app_db = connect_app_db(&config.project).await?;
+        connect_app_db(&config.project).await?;
 
         let result = run(project_path).await;
         assert!(result.is_ok());

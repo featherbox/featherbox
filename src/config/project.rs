@@ -64,6 +64,9 @@ pub enum ConnectionConfig {
         secret_access_key: String,
         session_token: Option<String>,
     },
+    Sqlite {
+        path: String,
+    },
 }
 
 fn expand_env_vars(value: &str) -> Result<String, String> {
@@ -224,6 +227,13 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                     .expect("Base path is required")
                     .to_string();
                 ConnectionConfig::LocalFile { base_path }
+            }
+            "sqlite" => {
+                let path = value["path"]
+                    .as_str()
+                    .expect("SQLite path is required")
+                    .to_string();
+                ConnectionConfig::Sqlite { path }
             }
             "s3" => {
                 let bucket = value["bucket"]
@@ -807,6 +817,28 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_connections_sqlite() {
+        let yaml_str = r#"
+            my_database:
+              type: sqlite
+              path: /data/my_database.db
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let connections = parse_connections(yaml);
+
+        assert_eq!(connections.len(), 1);
+
+        match connections.get("my_database").unwrap() {
+            ConnectionConfig::Sqlite { path } => {
+                assert_eq!(path, "/data/my_database.db");
+            }
+            _ => panic!("Expected SQLite connection config"),
+        }
+    }
+
+    #[test]
     fn test_parse_connections_mixed_types() {
         unsafe {
             env::set_var("TEST_S3_MIXED_ACCESS_KEY", "test_access_key");
@@ -817,6 +849,9 @@ mod tests {
             local_files:
               type: localfile
               base_path: /data/local
+            my_database:
+              type: sqlite
+              path: /data/my_database.db
             s3_data:
               type: s3
               bucket: my-bucket
@@ -828,13 +863,20 @@ mod tests {
 
         let connections = parse_connections(yaml);
 
-        assert_eq!(connections.len(), 2);
+        assert_eq!(connections.len(), 3);
 
         match connections.get("local_files").unwrap() {
             ConnectionConfig::LocalFile { base_path } => {
                 assert_eq!(base_path, "/data/local");
             }
             _ => panic!("Expected LocalFile connection config"),
+        }
+
+        match connections.get("my_database").unwrap() {
+            ConnectionConfig::Sqlite { path } => {
+                assert_eq!(path, "/data/my_database.db");
+            }
+            _ => panic!("Expected SQLite connection config"),
         }
 
         match connections.get("s3_data").unwrap() {

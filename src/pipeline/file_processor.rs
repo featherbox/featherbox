@@ -32,6 +32,9 @@ impl FileSystem {
                 Ok(Self::new_local(Some(base_path.clone())))
             }
             ConnectionConfig::S3 { .. } => Self::new_s3(connection).await,
+            ConnectionConfig::Sqlite { .. } => Err(anyhow::anyhow!(
+                "SQLite connections are not supported by FileSystem. Use database adapter instead."
+            )),
         }
     }
 
@@ -117,12 +120,18 @@ impl FileProcessor {
             }
         }
 
-        let file_paths = Self::process_pattern_with_filesystem(
-            &adapter_with_range.file.path,
-            &adapter_with_range,
-            filesystem,
-        )
-        .await?;
+        let file_path = match &adapter_with_range.source {
+            crate::config::adapter::AdapterSource::File { file, .. } => &file.path,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Only file sources are supported in file processor"
+                ));
+            }
+        };
+
+        let file_paths =
+            Self::process_pattern_with_filesystem(file_path, &adapter_with_range, filesystem)
+                .await?;
 
         Ok(file_paths)
     }
@@ -283,18 +292,20 @@ mod tests {
         AdapterConfig {
             connection: "test".to_string(),
             description: None,
-            file: FileConfig {
-                path: path.to_string(),
-                compression: None,
-                max_batch_size: None,
+            source: crate::config::adapter::AdapterSource::File {
+                file: FileConfig {
+                    path: path.to_string(),
+                    compression: None,
+                    max_batch_size: None,
+                },
+                format: FormatConfig {
+                    ty: "csv".to_string(),
+                    delimiter: None,
+                    null_value: None,
+                    has_header: None,
+                },
             },
             update_strategy: None,
-            format: FormatConfig {
-                ty: "csv".to_string(),
-                delimiter: None,
-                null_value: None,
-                has_header: None,
-            },
             columns: vec![],
             limits: None,
         }
@@ -392,7 +403,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/file_pattern_integration_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         fs::write(format!("{test_dir}/users_2024-01-01.csv"), "test data").unwrap();
@@ -479,6 +490,6 @@ mod tests {
             );
         }
 
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).unwrap();
     }
 }

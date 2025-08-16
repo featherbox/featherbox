@@ -1,0 +1,8 @@
+description: 'User statistics from SQLite data'
+sql: |
+  SELECT 
+    COUNT(*) as user_count,
+    MIN(created_at) as first_user_created,
+    MAX(created_at) as latest_user_created
+  FROM sqlite_users
+max_age: 3600

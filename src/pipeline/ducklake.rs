@@ -321,7 +321,7 @@ impl DuckLake {
     pub fn create_table_from_query(&self, table_name: &str, query: &str) -> Result<()> {
         let sql = format!("CREATE OR REPLACE TABLE {table_name} AS ({query});");
         self.execute_batch(&sql)
-            .with_context(|| format!("Failed to create table '{table_name}' from query"))
+            .with_context(|| format!("Failed to create table '{table_name}' from query: '{query}'"))
     }
 
     pub fn create_table(&self, table_name: &str, columns: &[(String, String)]) -> Result<()> {
@@ -399,7 +399,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -418,7 +418,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_test_query";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -446,7 +446,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_test_exec";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -476,7 +476,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_s3_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -520,7 +520,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_mixed_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -570,7 +570,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_no_s3_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -613,7 +613,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_credential_chain_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -653,7 +653,7 @@ mod tests {
         use std::fs;
 
         let test_dir = "/tmp/ducklake_credential_chain_basic_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -694,7 +694,7 @@ mod tests {
 
         use std::fs;
         let test_dir = "/tmp/duckdb_s3_direct_test";
-        let _ = fs::remove_dir_all(test_dir);
+        fs::remove_dir_all(test_dir).ok();
         fs::create_dir_all(test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
@@ -760,7 +760,6 @@ mod tests {
         s3_client.create_bucket().await?;
         println!("Created S3 test bucket: {unique_bucket}");
 
-        // テストJSONファイルを作成
         let test_json = r#"{"id": 1, "name": "test_item", "value": 42}
 {"id": 2, "name": "another_item", "value": 84}
 {"id": 3, "name": "final_item", "value": 126}"#;
@@ -840,7 +839,7 @@ mod tests {
 
         let result = DuckLake::new(catalog_config, storage_config).await;
 
-        let _cleanup_result = Command::new("docker")
+        Command::new("docker")
             .args([
                 "compose",
                 "exec",
@@ -852,7 +851,8 @@ mod tests {
                 "-e",
             ])
             .arg(format!("DROP DATABASE IF EXISTS {db_name};"))
-            .output();
+            .output()
+            .ok();
 
         match result {
             Ok(_) => {
@@ -917,7 +917,7 @@ mod tests {
 
         let result = DuckLake::new(catalog_config, storage_config).await;
 
-        let _cleanup_result = Command::new("docker")
+        Command::new("docker")
             .args([
                 "compose",
                 "exec",
@@ -930,7 +930,8 @@ mod tests {
                 "-c",
             ])
             .arg(format!("DROP DATABASE IF EXISTS {db_name};"))
-            .output();
+            .output()
+            .ok();
 
         match result {
             Ok(_) => {
