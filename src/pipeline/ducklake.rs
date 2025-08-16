@@ -1,4 +1,4 @@
-use crate::config::project::{ConnectionConfig, S3AuthMethod};
+use crate::config::project::{ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod};
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::collections::HashMap;
@@ -10,19 +10,9 @@ pub enum CatalogConfig {
     Sqlite {
         path: String,
     },
-    Mysql {
-        host: String,
-        port: u16,
-        database: String,
-        username: String,
-        password: String,
-    },
-    Postgresql {
-        host: String,
-        port: u16,
-        database: String,
-        username: String,
-        password: String,
+    RemoteDatabase {
+        db_type: DatabaseType,
+        config: RemoteDatabaseConfig,
     },
 }
 
@@ -209,45 +199,54 @@ impl DuckLake {
                 self.execute_batch(&attach_sql)
                     .context("Failed to attach DuckLake catalog")?;
             }
-            CatalogConfig::Mysql {
-                host,
-                port,
-                database,
-                username,
-                password,
-            } => {
+            CatalogConfig::RemoteDatabase { db_type, config } => {
                 let data_path = match &self.storage_config {
                     StorageConfig::LocalFile { path } => path,
                 };
 
-                self.execute_batch("INSTALL mysql; LOAD mysql;")
-                    .context("Failed to install and load MySQL extension")?;
-
-                let attach_sql = format!(
-                    "ATTACH 'ducklake:mysql:db={database} host={host} port={port} user={username} password={password}' AS db (DATA_PATH '{data_path}', METADATA_SCHEMA '{database}_metadata'); USE db;"
-                );
-                self.execute_batch(&attach_sql)
-                    .context("Failed to attach DuckLake MySQL catalog")?;
-            }
-            CatalogConfig::Postgresql {
-                host,
-                port,
-                database,
-                username,
-                password,
-            } => {
-                let data_path = match &self.storage_config {
-                    StorageConfig::LocalFile { path } => path,
+                let (extension_name, connection_string) = match db_type {
+                    DatabaseType::Mysql => {
+                        let extension = "mysql";
+                        let conn_str = format!(
+                            "ducklake:mysql:db={} host={} port={} user={} password={}",
+                            config.database,
+                            config.host,
+                            config.port,
+                            config.username,
+                            config.password
+                        );
+                        (extension, conn_str)
+                    }
+                    DatabaseType::Postgresql => {
+                        let extension = "postgres";
+                        let conn_str = format!(
+                            "ducklake:postgres:dbname={} host={} port={} user={} password={}",
+                            config.database,
+                            config.host,
+                            config.port,
+                            config.username,
+                            config.password
+                        );
+                        (extension, conn_str)
+                    }
+                    DatabaseType::Sqlite => {
+                        unreachable!("SQLite should not use RemoteDatabase catalog variant")
+                    }
                 };
 
-                self.execute_batch("INSTALL postgres; LOAD postgres;")
-                    .context("Failed to install and load PostgreSQL extension")?;
+                let install_sql = format!("INSTALL {extension_name}; LOAD {extension_name};");
+                let install_error_msg =
+                    format!("Failed to install and load {extension_name} extension");
+                self.execute_batch(&install_sql)
+                    .context(install_error_msg)?;
 
                 let attach_sql = format!(
-                    "ATTACH 'ducklake:postgres:dbname={database} host={host} port={port} user={username} password={password}' AS db (DATA_PATH '{data_path}', METADATA_SCHEMA '{database}_metadata'); USE db;"
+                    "ATTACH '{connection_string}' AS db (DATA_PATH '{data_path}', METADATA_SCHEMA '{}_metadata'); USE db;",
+                    config.database
                 );
-                self.execute_batch(&attach_sql)
-                    .context("Failed to attach DuckLake PostgreSQL catalog")?;
+                let attach_error_msg =
+                    format!("Failed to attach DuckLake {extension_name} catalog");
+                self.execute_batch(&attach_sql).context(attach_error_msg)?;
             }
         }
 
@@ -825,12 +824,15 @@ mod tests {
             return Ok(());
         }
 
-        let catalog_config = CatalogConfig::Mysql {
-            host: "localhost".to_string(),
-            port: 3306,
-            database: db_name.clone(),
-            username: "featherbox".to_string(),
-            password: "testpass".to_string(),
+        let catalog_config = CatalogConfig::RemoteDatabase {
+            db_type: DatabaseType::Mysql,
+            config: RemoteDatabaseConfig {
+                host: "localhost".to_string(),
+                port: 3306,
+                database: db_name.clone(),
+                username: "featherbox".to_string(),
+                password: "testpass".to_string(),
+            },
         };
 
         let storage_config = StorageConfig::LocalFile {
@@ -903,12 +905,15 @@ mod tests {
             return Ok(());
         }
 
-        let catalog_config = CatalogConfig::Postgresql {
-            host: "localhost".to_string(),
-            port: 5432,
-            database: db_name.clone(),
-            username: "featherbox".to_string(),
-            password: "testpass".to_string(),
+        let catalog_config = CatalogConfig::RemoteDatabase {
+            db_type: DatabaseType::Postgresql,
+            config: RemoteDatabaseConfig {
+                host: "localhost".to_string(),
+                port: 5432,
+                database: db_name.clone(),
+                username: "featherbox".to_string(),
+                password: "testpass".to_string(),
+            },
         };
 
         let storage_config = StorageConfig::LocalFile {

@@ -32,13 +32,6 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DatabaseType {
-    Sqlite,
-    Mysql,
-    Postgresql,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentsConfig {
     pub timeout: u64,
 }
@@ -48,6 +41,22 @@ pub enum S3AuthMethod {
     CredentialChain,
     #[default]
     Explicit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteDatabaseConfig {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatabaseType {
+    Sqlite,
+    Mysql,
+    Postgresql,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,19 +76,9 @@ pub enum ConnectionConfig {
     Sqlite {
         path: String,
     },
-    Mysql {
-        host: String,
-        port: u16,
-        database: String,
-        username: String,
-        password: String,
-    },
-    PostgreSql {
-        host: String,
-        port: u16,
-        database: String,
-        username: String,
-        password: String,
+    RemoteDatabase {
+        db_type: DatabaseType,
+        config: RemoteDatabaseConfig,
     },
 }
 
@@ -100,6 +99,47 @@ fn expand_env_vars(value: &str) -> Result<String, String> {
     }
 
     Ok(result)
+}
+
+fn parse_remote_database_config(
+    _db_type: DatabaseType,
+    value: &yaml_rust2::Yaml,
+    default_port: u16,
+) -> RemoteDatabaseConfig {
+    let host = value["host"]
+        .as_str()
+        .expect("Database host is required")
+        .to_string();
+
+    let port = value["port"]
+        .as_i64()
+        .map(|p| p as u16)
+        .unwrap_or(default_port);
+
+    let database = value["database"]
+        .as_str()
+        .expect("Database name is required")
+        .to_string();
+
+    let username_str = value["username"]
+        .as_str()
+        .expect("Database username is required");
+    let username =
+        expand_env_vars(username_str).unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
+
+    let password_str = value["password"]
+        .as_str()
+        .expect("Database password is required");
+    let password =
+        expand_env_vars(password_str).unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
+
+    RemoteDatabaseConfig {
+        host,
+        port,
+        database,
+        username,
+        password,
+    }
 }
 
 pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
@@ -161,39 +201,34 @@ fn parse_database(database: &yaml_rust2::Yaml) -> DatabaseConfig {
                 password: None,
             }
         }
-        DatabaseType::Mysql | DatabaseType::Postgresql => {
-            let host = database["host"]
-                .as_str()
-                .expect("Database host is required")
-                .to_string();
-
-            let port = database["port"].as_i64().map(|p| p as u16);
-
-            let database_name = database["database"]
-                .as_str()
-                .expect("Database name is required")
-                .to_string();
-
-            let username_str = database["username"]
-                .as_str()
-                .expect("Database username is required");
-            let username = expand_env_vars(username_str)
-                .unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
-
-            let password_str = database["password"]
-                .as_str()
-                .expect("Database password is required");
-            let password = expand_env_vars(password_str)
-                .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
+        DatabaseType::Mysql => {
+            let default_port = 3306;
+            let remote_config =
+                parse_remote_database_config(DatabaseType::Mysql, database, default_port);
 
             DatabaseConfig {
                 ty,
                 path: None,
-                host: Some(host),
-                port,
-                database: Some(database_name),
-                username: Some(username),
-                password: Some(password),
+                host: Some(remote_config.host),
+                port: Some(remote_config.port),
+                database: Some(remote_config.database),
+                username: Some(remote_config.username),
+                password: Some(remote_config.password),
+            }
+        }
+        DatabaseType::Postgresql => {
+            let default_port = 5432;
+            let remote_config =
+                parse_remote_database_config(DatabaseType::Postgresql, database, default_port);
+
+            DatabaseConfig {
+                ty,
+                path: None,
+                host: Some(remote_config.host),
+                port: Some(remote_config.port),
+                database: Some(remote_config.database),
+                username: Some(remote_config.username),
+                password: Some(remote_config.password),
             }
         }
     }
@@ -250,69 +285,17 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                 ConnectionConfig::Sqlite { path }
             }
             "mysql" => {
-                let host = value["host"]
-                    .as_str()
-                    .expect("MySQL host is required")
-                    .to_string();
-
-                let port = value["port"].as_i64().map(|p| p as u16).unwrap_or(3306);
-
-                let database = value["database"]
-                    .as_str()
-                    .expect("MySQL database is required")
-                    .to_string();
-
-                let username_str = value["username"]
-                    .as_str()
-                    .expect("MySQL username is required");
-                let username = expand_env_vars(username_str)
-                    .unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
-
-                let password_str = value["password"]
-                    .as_str()
-                    .expect("MySQL password is required");
-                let password = expand_env_vars(password_str)
-                    .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
-
-                ConnectionConfig::Mysql {
-                    host,
-                    port,
-                    database,
-                    username,
-                    password,
+                let config = parse_remote_database_config(DatabaseType::Mysql, value, 3306);
+                ConnectionConfig::RemoteDatabase {
+                    db_type: DatabaseType::Mysql,
+                    config,
                 }
             }
             "postgresql" => {
-                let host = value["host"]
-                    .as_str()
-                    .expect("PostgreSQL host is required")
-                    .to_string();
-
-                let port = value["port"].as_i64().map(|p| p as u16).unwrap_or(5432);
-
-                let database = value["database"]
-                    .as_str()
-                    .expect("PostgreSQL database is required")
-                    .to_string();
-
-                let username_str = value["username"]
-                    .as_str()
-                    .expect("PostgreSQL username is required");
-                let username = expand_env_vars(username_str)
-                    .unwrap_or_else(|e| panic!("Failed to expand username: {e}"));
-
-                let password_str = value["password"]
-                    .as_str()
-                    .expect("PostgreSQL password is required");
-                let password = expand_env_vars(password_str)
-                    .unwrap_or_else(|e| panic!("Failed to expand password: {e}"));
-
-                ConnectionConfig::PostgreSql {
-                    host,
-                    port,
-                    database,
-                    username,
-                    password,
+                let config = parse_remote_database_config(DatabaseType::Postgresql, value, 5432);
+                ConnectionConfig::RemoteDatabase {
+                    db_type: DatabaseType::Postgresql,
+                    config,
                 }
             }
             "s3" => {
@@ -942,18 +925,13 @@ mod tests {
         assert_eq!(connections.len(), 1);
 
         match connections.get("my_mysql_db").unwrap() {
-            ConnectionConfig::Mysql {
-                host,
-                port,
-                database,
-                username,
-                password,
-            } => {
-                assert_eq!(host, "localhost");
-                assert_eq!(*port, 3307);
-                assert_eq!(database, "datasource_test");
-                assert_eq!(username, "mysql_user");
-                assert_eq!(password, "mysql_pass");
+            ConnectionConfig::RemoteDatabase { db_type, config } => {
+                assert_eq!(db_type, &DatabaseType::Mysql);
+                assert_eq!(config.host, "localhost");
+                assert_eq!(config.port, 3307);
+                assert_eq!(config.database, "datasource_test");
+                assert_eq!(config.username, "mysql_user");
+                assert_eq!(config.password, "mysql_pass");
             }
             _ => panic!("Expected MySQL connection config"),
         }
@@ -985,8 +963,9 @@ mod tests {
         let connections = parse_connections(yaml);
 
         match connections.get("my_mysql_db").unwrap() {
-            ConnectionConfig::Mysql { port, .. } => {
-                assert_eq!(*port, 3306);
+            ConnectionConfig::RemoteDatabase { db_type, config } => {
+                assert_eq!(*db_type, DatabaseType::Mysql);
+                assert_eq!(config.port, 3306);
             }
             _ => panic!("Expected MySQL connection config"),
         }
@@ -1016,18 +995,13 @@ mod tests {
 
         assert_eq!(connections.len(), 1);
         match &connections["postgres_db"] {
-            ConnectionConfig::PostgreSql {
-                host,
-                port,
-                database,
-                username,
-                password,
-            } => {
-                assert_eq!(host, "localhost");
-                assert_eq!(*port, 5433);
-                assert_eq!(database, "test_db");
-                assert_eq!(username, "testuser");
-                assert_eq!(password, "testpass");
+            ConnectionConfig::RemoteDatabase { db_type, config } => {
+                assert_eq!(*db_type, DatabaseType::Postgresql);
+                assert_eq!(config.host, "localhost");
+                assert_eq!(config.port, 5433);
+                assert_eq!(config.database, "test_db");
+                assert_eq!(config.username, "testuser");
+                assert_eq!(config.password, "testpass");
             }
             _ => panic!("Expected PostgreSQL connection"),
         }
@@ -1051,8 +1025,9 @@ mod tests {
 
         assert_eq!(connections.len(), 1);
         match &connections["postgres_db"] {
-            ConnectionConfig::PostgreSql { port, .. } => {
-                assert_eq!(*port, 5432);
+            ConnectionConfig::RemoteDatabase { db_type, config } => {
+                assert_eq!(*db_type, DatabaseType::Postgresql);
+                assert_eq!(config.port, 5432);
             }
             _ => panic!("Expected PostgreSQL connection"),
         }

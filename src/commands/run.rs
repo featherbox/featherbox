@@ -1,6 +1,9 @@
 use crate::{
     commands::workspace::ensure_project_directory,
-    config::Config,
+    config::{
+        Config,
+        project::{DatabaseType, RemoteDatabaseConfig},
+    },
     database::{
         connect_app_db,
         entities::{pipeline_actions, pipelines},
@@ -111,68 +114,80 @@ pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
                 .expect("SQLite database path is required")
                 .clone(),
         },
-        crate::config::project::DatabaseType::Mysql => CatalogConfig::Mysql {
-            host: config
-                .project
-                .database
-                .host
-                .as_ref()
-                .expect("MySQL host is required")
-                .clone(),
-            port: config.project.database.port.unwrap_or(3306),
-            database: config
-                .project
-                .database
-                .database
-                .as_ref()
-                .expect("MySQL database name is required")
-                .clone(),
-            username: config
-                .project
-                .database
-                .username
-                .as_ref()
-                .expect("MySQL username is required")
-                .clone(),
-            password: config
-                .project
-                .database
-                .password
-                .as_ref()
-                .expect("MySQL password is required")
-                .clone(),
-        },
-        crate::config::project::DatabaseType::Postgresql => CatalogConfig::Postgresql {
-            host: config
-                .project
-                .database
-                .host
-                .as_ref()
-                .expect("PostgreSQL host is required")
-                .clone(),
-            port: config.project.database.port.unwrap_or(5432),
-            database: config
-                .project
-                .database
-                .database
-                .as_ref()
-                .expect("PostgreSQL database name is required")
-                .clone(),
-            username: config
-                .project
-                .database
-                .username
-                .as_ref()
-                .expect("PostgreSQL username is required")
-                .clone(),
-            password: config
-                .project
-                .database
-                .password
-                .as_ref()
-                .expect("PostgreSQL password is required")
-                .clone(),
-        },
+        crate::config::project::DatabaseType::Mysql => {
+            let remote_config = RemoteDatabaseConfig {
+                host: config
+                    .project
+                    .database
+                    .host
+                    .as_ref()
+                    .expect("MySQL host is required")
+                    .clone(),
+                port: config.project.database.port.unwrap_or(3306),
+                database: config
+                    .project
+                    .database
+                    .database
+                    .as_ref()
+                    .expect("MySQL database name is required")
+                    .clone(),
+                username: config
+                    .project
+                    .database
+                    .username
+                    .as_ref()
+                    .expect("MySQL username is required")
+                    .clone(),
+                password: config
+                    .project
+                    .database
+                    .password
+                    .as_ref()
+                    .expect("MySQL password is required")
+                    .clone(),
+            };
+            CatalogConfig::RemoteDatabase {
+                db_type: DatabaseType::Mysql,
+                config: remote_config,
+            }
+        }
+        crate::config::project::DatabaseType::Postgresql => {
+            let remote_config = RemoteDatabaseConfig {
+                host: config
+                    .project
+                    .database
+                    .host
+                    .as_ref()
+                    .expect("PostgreSQL host is required")
+                    .clone(),
+                port: config.project.database.port.unwrap_or(5432),
+                database: config
+                    .project
+                    .database
+                    .database
+                    .as_ref()
+                    .expect("PostgreSQL database name is required")
+                    .clone(),
+                username: config
+                    .project
+                    .database
+                    .username
+                    .as_ref()
+                    .expect("PostgreSQL username is required")
+                    .clone(),
+                password: config
+                    .project
+                    .database
+                    .password
+                    .as_ref()
+                    .expect("PostgreSQL password is required")
+                    .clone(),
+            };
+            CatalogConfig::RemoteDatabase {
+                db_type: DatabaseType::Postgresql,
+                config: remote_config,
+            }
+        }
     };
 
     let storage_config = match &config.project.storage.ty {
