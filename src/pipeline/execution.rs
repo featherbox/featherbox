@@ -14,7 +14,24 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tokio::task::JoinSet;
+use tokio::task::JoinHandle;
+
+struct ExecutionContext {
+    graph: Arc<Graph>,
+    config: Arc<Config>,
+    app_db: sea_orm::DatabaseConnection,
+    adapters: Arc<HashMap<String, Adapter>>,
+    models: Arc<HashMap<String, Model>>,
+    action_id_map: Arc<HashMap<String, i32>>,
+}
+
+enum TaskResult {
+    Success(String),
+    Failed {
+        table_name: String,
+        error: anyhow::Error,
+    },
+}
 
 impl Pipeline {
     async fn get_latest_pipeline_action_ids(
@@ -89,20 +106,38 @@ impl Pipeline {
             action_id_map.insert(action.table_name.clone(), action_ids[idx]);
         }
 
+        let context = ExecutionContext {
+            graph: Arc::new(graph.clone()),
+            config: Arc::new(config.clone()),
+            app_db: app_db.clone(),
+            adapters: shared_adapters,
+            models: shared_models,
+            action_id_map: Arc::new(action_id_map),
+        };
+
         let mut failed_tasks = HashSet::new();
 
         for level in &self.levels {
-            self.execute_level(
-                level,
-                graph,
-                &mut failed_tasks,
-                app_db,
-                &shared_adapters,
-                &shared_models,
-                config,
-                &action_id_map,
-            )
-            .await?;
+            let results = self
+                .execute_level(level, &context, &mut failed_tasks)
+                .await?;
+
+            for result in results {
+                match result {
+                    TaskResult::Success(table_name) => {
+                        println!("Task completed successfully: {table_name}");
+                    }
+                    TaskResult::Failed { table_name, error } => {
+                        eprintln!("Task failed for table '{table_name}': {error}");
+                        failed_tasks.insert(table_name.clone());
+                        self.mark_downstream_as_failed(
+                            &table_name,
+                            &context.graph,
+                            &mut failed_tasks,
+                        );
+                    }
+                }
+            }
         }
 
         if !failed_tasks.is_empty() {
@@ -119,40 +154,38 @@ impl Pipeline {
     async fn execute_level(
         &self,
         actions: &[Action],
-        graph: &Graph,
+        context: &ExecutionContext,
         failed_tasks: &mut HashSet<String>,
-        app_db: &sea_orm::DatabaseConnection,
-        shared_adapters: &Arc<HashMap<String, Adapter>>,
-        shared_models: &Arc<HashMap<String, Model>>,
-        config: &Config,
-        action_id_map: &HashMap<String, i32>,
-    ) -> Result<()> {
-        let mut task_set = JoinSet::new();
+    ) -> Result<Vec<TaskResult>> {
+        let mut task_handles = Vec::new();
 
         for action in actions {
             if failed_tasks.contains(&action.table_name) {
                 continue;
             }
 
-            let should_skip = self.should_skip_task(&action.table_name, graph, failed_tasks);
+            let should_skip =
+                self.should_skip_task(&action.table_name, &context.graph, failed_tasks);
             if should_skip {
                 failed_tasks.insert(action.table_name.clone());
                 continue;
             }
 
-            self.spawn_task(
-                action,
-                &mut task_set,
-                app_db,
-                shared_adapters,
-                shared_models,
-                config,
-                action_id_map,
-            )?;
+            let handle = self.spawn_task(action, context)?;
+            task_handles.push(handle);
         }
 
-        self.collect_task_results(&mut task_set, graph, failed_tasks)
-            .await
+        let mut results = Vec::new();
+        for handle in task_handles {
+            match handle.await {
+                Ok(result) => results.push(result),
+                Err(join_error) => {
+                    eprintln!("Task join error: {join_error}");
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     fn should_skip_task(
@@ -172,83 +205,47 @@ impl Pipeline {
     fn spawn_task(
         &self,
         action: &Action,
-        task_set: &mut JoinSet<Result<String, (String, anyhow::Error)>>,
-        app_db: &sea_orm::DatabaseConnection,
-        shared_adapters: &Arc<HashMap<String, Adapter>>,
-        shared_models: &Arc<HashMap<String, Model>>,
-        config: &Config,
-        action_id_map: &HashMap<String, i32>,
-    ) -> Result<()> {
-        let action_id = *action_id_map.get(&action.table_name).unwrap();
+        context: &ExecutionContext,
+    ) -> Result<JoinHandle<TaskResult>> {
+        let action_id = *context.action_id_map.get(&action.table_name).unwrap();
         let table_name = action.table_name.clone();
         let time_range = action.time_range.clone();
-        let app_db_clone = app_db.clone();
-        let connections_clone = config.project.connections.clone();
-        let config_clone = Config {
-            project: config.project.clone(),
-            adapters: config.adapters.clone(),
-            models: config.models.clone(),
-            project_root: config.project_root.clone(),
-        };
+        let app_db = context.app_db.clone();
+        let connections = context.config.project.connections.clone();
+        let config = context.config.clone();
 
-        if let Some(adapter) = shared_adapters.get(&action.table_name).cloned() {
-            task_set.spawn(async move {
+        if let Some(adapter) = context.adapters.get(&action.table_name).cloned() {
+            Ok(tokio::spawn(async move {
                 match adapter
                     .execute_import(
                         &table_name,
                         time_range,
-                        &app_db_clone,
+                        &app_db,
                         action_id,
-                        Some(&connections_clone),
+                        Some(&connections),
                     )
                     .await
                 {
-                    Ok(_) => Ok(table_name.clone()),
-                    Err(e) => Err((table_name.clone(), e)),
+                    Ok(_) => TaskResult::Success(table_name),
+                    Err(error) => TaskResult::Failed { table_name, error },
                 }
-            });
-        } else if let Some(model) = shared_models.get(&action.table_name).cloned() {
-            task_set.spawn(async move {
+            }))
+        } else if let Some(model) = context.models.get(&action.table_name).cloned() {
+            Ok(tokio::spawn(async move {
                 match model
-                    .execute_transform(&table_name, &app_db_clone, action_id, &config_clone)
+                    .execute_transform(&table_name, &app_db, action_id, &config)
                     .await
                 {
-                    Ok(_) => Ok(table_name.clone()),
-                    Err(e) => Err((table_name.clone(), e)),
+                    Ok(_) => TaskResult::Success(table_name),
+                    Err(error) => TaskResult::Failed { table_name, error },
                 }
-            });
+            }))
         } else {
-            return Err(anyhow::anyhow!(
+            Err(anyhow::anyhow!(
                 "Table '{}' not found in adapters or models",
                 action.table_name
-            ));
+            ))
         }
-
-        Ok(())
-    }
-
-    async fn collect_task_results(
-        &self,
-        task_set: &mut JoinSet<Result<String, (String, anyhow::Error)>>,
-        graph: &Graph,
-        failed_tasks: &mut HashSet<String>,
-    ) -> Result<()> {
-        while let Some(result) = task_set.join_next().await {
-            match result {
-                Ok(Ok(table_name)) => {
-                    println!("Task completed successfully: {table_name}");
-                }
-                Ok(Err((table_name, e))) => {
-                    eprintln!("Task failed for table '{table_name}': {e}");
-                    failed_tasks.insert(table_name.clone());
-                    self.mark_downstream_as_failed(&table_name, graph, failed_tasks);
-                }
-                Err(join_error) => {
-                    eprintln!("Task join error: {join_error}");
-                }
-            }
-        }
-        Ok(())
     }
 
     fn mark_downstream_as_failed(
