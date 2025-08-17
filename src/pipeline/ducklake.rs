@@ -835,8 +835,9 @@ mod tests {
             },
         };
 
+        let temp_dir = tempfile::tempdir().unwrap();
         let storage_config = StorageConfig::LocalFile {
-            path: "./test_data".to_string(),
+            path: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let result = DuckLake::new(catalog_config, storage_config).await;
@@ -916,8 +917,9 @@ mod tests {
             },
         };
 
+        let temp_dir = tempfile::tempdir().unwrap();
         let storage_config = StorageConfig::LocalFile {
-            path: "./test_data".to_string(),
+            path: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let result = DuckLake::new(catalog_config, storage_config).await;
