@@ -63,7 +63,7 @@ impl DuckLake {
 
     async fn initialize(&self) -> Result<()> {
         self.initialize_base().await?;
-        self.setup_catalog_and_storage().await?;
+        self.attach().await?;
         Ok(())
     }
 
@@ -73,7 +73,7 @@ impl DuckLake {
     ) -> Result<()> {
         self.initialize_base().await?;
         self.configure_s3_connections(connections).await?;
-        self.setup_catalog_and_storage().await?;
+        self.attach().await?;
         Ok(())
     }
 
@@ -177,7 +177,26 @@ impl DuckLake {
         Ok(())
     }
 
-    async fn setup_catalog_and_storage(&self) -> Result<()> {
+    async fn attach(&self) -> Result<()> {
+        let (extension_sql, attach_sql) = self.catalog_sql()?;
+
+        let data_path = match &self.storage_config {
+            StorageConfig::LocalFile { path } => path,
+        };
+
+        std::fs::create_dir_all(data_path)
+            .with_context(|| format!("Failed to create storage directory: {data_path}"))?;
+
+        self.execute_batch(&extension_sql)
+            .context("Failed to install and load database extension")?;
+
+        self.execute_batch(&attach_sql)
+            .context("Failed to attach DuckLake catalog")?;
+
+        Ok(())
+    }
+
+    fn catalog_sql(&self) -> Result<(String, String)> {
         match &self.catalog_config {
             CatalogConfig::Sqlite { path } => {
                 let catalog_path = Path::new(path);
@@ -190,14 +209,12 @@ impl DuckLake {
                     StorageConfig::LocalFile { path } => path,
                 };
 
-                self.execute_batch("INSTALL sqlite; LOAD sqlite;")
-                    .context("Failed to install and load SQLite extension")?;
-
+                let extension_sql = "INSTALL sqlite; LOAD sqlite;".to_string();
                 let attach_sql = format!(
                     "ATTACH 'ducklake:sqlite:{path}' AS db (DATA_PATH '{data_path}'); USE db;"
                 );
-                self.execute_batch(&attach_sql)
-                    .context("Failed to attach DuckLake catalog")?;
+
+                Ok((extension_sql, attach_sql))
             }
             CatalogConfig::RemoteDatabase { db_type, config } => {
                 let data_path = match &self.storage_config {
@@ -234,29 +251,15 @@ impl DuckLake {
                     }
                 };
 
-                let install_sql = format!("INSTALL {extension_name}; LOAD {extension_name};");
-                let install_error_msg =
-                    format!("Failed to install and load {extension_name} extension");
-                self.execute_batch(&install_sql)
-                    .context(install_error_msg)?;
-
+                let extension_sql = format!("INSTALL {extension_name}; LOAD {extension_name};");
                 let attach_sql = format!(
                     "ATTACH '{connection_string}' AS db (DATA_PATH '{data_path}', METADATA_SCHEMA '{}_metadata'); USE db;",
                     config.database
                 );
-                let attach_error_msg =
-                    format!("Failed to attach DuckLake {extension_name} catalog");
-                self.execute_batch(&attach_sql).context(attach_error_msg)?;
+
+                Ok((extension_sql, attach_sql))
             }
         }
-
-        match &self.storage_config {
-            StorageConfig::LocalFile { path } => {
-                std::fs::create_dir_all(path).context("Failed to create storage directory")?;
-            }
-        }
-
-        Ok(())
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
