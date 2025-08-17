@@ -6,10 +6,11 @@ use crate::{
         build::{Action, Pipeline},
         delta::DeltaManager,
         ducklake::DuckLake,
+        logger::Logger,
         model::Model,
     },
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -17,23 +18,42 @@ use std::{
 use tokio::task::JoinHandle;
 
 struct ExecutionContext {
+    pipeline_id: i32,
     graph: Arc<Graph>,
     config: Arc<Config>,
     app_db: sea_orm::DatabaseConnection,
+    logger: Arc<Logger>,
     adapters: Arc<HashMap<String, Adapter>>,
     models: Arc<HashMap<String, Model>>,
     action_id_map: Arc<HashMap<String, i32>>,
 }
 
 enum TaskResult {
-    Success(String),
+    Success {
+        table_name: String,
+        execution_time_ms: u64,
+    },
     Failed {
         table_name: String,
         error: anyhow::Error,
+        execution_time_ms: u64,
     },
 }
 
 impl Pipeline {
+    async fn get_latest_pipeline_id(&self, app_db: &sea_orm::DatabaseConnection) -> Result<i32> {
+        use crate::database::entities::pipelines;
+        use sea_orm::{EntityTrait, QueryOrder};
+
+        let latest_pipeline = pipelines::Entity::find()
+            .order_by_desc(pipelines::Column::CreatedAt)
+            .one(app_db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No pipeline found in database"))?;
+
+        Ok(latest_pipeline.id)
+    }
+
     async fn get_latest_pipeline_action_ids(
         &self,
         app_db: &sea_orm::DatabaseConnection,
@@ -76,6 +96,7 @@ impl Pipeline {
         app_db: &sea_orm::DatabaseConnection,
     ) -> Result<()> {
         let shared_ducklake = Arc::new(ducklake.clone());
+        let shared_logger = Arc::new(Logger::new(Arc::clone(&shared_ducklake)).await?);
         let shared_delta_manager = Arc::new(DeltaManager::new(
             &config.project_root,
             Arc::clone(&shared_ducklake),
@@ -106,14 +127,31 @@ impl Pipeline {
             action_id_map.insert(action.table_name.clone(), action_ids[idx]);
         }
 
+        let pipeline_id = self.get_latest_pipeline_id(app_db).await?;
+
         let context = ExecutionContext {
+            pipeline_id,
             graph: Arc::new(graph.clone()),
             config: Arc::new(config.clone()),
             app_db: app_db.clone(),
+            logger: shared_logger.clone(),
             adapters: shared_adapters,
             models: shared_models,
             action_id_map: Arc::new(action_id_map),
         };
+
+        context
+            .logger
+            .log_pipeline_event(
+                context.pipeline_id,
+                "PIPELINE_START",
+                &format!(
+                    "Pipeline execution started with {} levels",
+                    self.levels.len()
+                ),
+                None,
+            )
+            .context("Failed to log pipeline start")?;
 
         let mut failed_tasks = HashSet::new();
 
@@ -124,11 +162,45 @@ impl Pipeline {
 
             for result in results {
                 match result {
-                    TaskResult::Success(table_name) => {
-                        println!("Task completed successfully: {table_name}");
+                    TaskResult::Success {
+                        table_name,
+                        execution_time_ms,
+                    } => {
+                        println!(
+                            "Task completed successfully: {table_name} ({execution_time_ms}ms)"
+                        );
+
+                        context
+                            .logger
+                            .log_task_execution(
+                                context.pipeline_id,
+                                &table_name,
+                                "SUCCESS",
+                                None,
+                                execution_time_ms,
+                            )
+                            .context("Failed to log successful task execution")?;
                     }
-                    TaskResult::Failed { table_name, error } => {
-                        eprintln!("Task failed for table '{table_name}': {error}");
+                    TaskResult::Failed {
+                        table_name,
+                        error,
+                        execution_time_ms,
+                    } => {
+                        eprintln!(
+                            "Task failed for table '{table_name}': {error} ({execution_time_ms}ms)"
+                        );
+
+                        context
+                            .logger
+                            .log_task_execution(
+                                context.pipeline_id,
+                                &table_name,
+                                "FAILED",
+                                Some(&error.to_string()),
+                                execution_time_ms,
+                            )
+                            .context("Failed to log failed task execution")?;
+
                         failed_tasks.insert(table_name.clone());
                         self.mark_downstream_as_failed(
                             &table_name,
@@ -141,12 +213,79 @@ impl Pipeline {
         }
 
         if !failed_tasks.is_empty() {
-            eprintln!("Pipeline completed with failures. Failed tasks: {failed_tasks:?}");
-            return Err(anyhow::anyhow!(
-                "Pipeline execution had {} failed tasks",
-                failed_tasks.len()
-            ));
+            let error_message =
+                format!("Pipeline execution had {} failed tasks", failed_tasks.len());
+            context
+                .logger
+                .log_pipeline_event(
+                    context.pipeline_id,
+                    "PIPELINE_FAILED",
+                    &error_message,
+                    Some(&format!("Failed tasks: {failed_tasks:?}")),
+                )
+                .context("Failed to log pipeline failure")?;
+
+            self.print_pipeline_summary(context.pipeline_id, &context.logger)?;
+
+            return Err(anyhow::anyhow!(error_message));
         }
+
+        context
+            .logger
+            .log_pipeline_event(
+                context.pipeline_id,
+                "PIPELINE_SUCCESS",
+                "Pipeline execution completed successfully",
+                None,
+            )
+            .context("Failed to log pipeline success")?;
+
+        self.print_pipeline_summary(context.pipeline_id, &context.logger)?;
+
+        Ok(())
+    }
+
+    pub fn print_pipeline_summary(&self, pipeline_id: i32, logger: &Logger) -> Result<()> {
+        let task_summary_query = format!(
+            "SELECT status, COUNT(*) as count FROM db.__fbox_task_logs WHERE pipeline_id = {pipeline_id} GROUP BY status"
+        );
+
+        let task_results = logger.query_logs(&task_summary_query)?;
+
+        let mut success_count = 0;
+        let mut failed_count = 0;
+
+        for row in &task_results {
+            if row.len() >= 2 {
+                let count: i32 = row[1].parse().unwrap_or(0);
+                match row[0].as_str() {
+                    "SUCCESS" => success_count = count,
+                    "FAILED" => failed_count = count,
+                    _ => {}
+                }
+            }
+        }
+
+        let failed_tasks_query = format!(
+            "SELECT table_name, error_message FROM db.__fbox_task_logs WHERE pipeline_id = {pipeline_id} AND status = 'FAILED'"
+        );
+
+        let failed_tasks = logger.query_logs(&failed_tasks_query)?;
+
+        println!("\n=== Pipeline Execution Summary ===");
+        println!("✅ Successful tasks: {success_count}");
+        println!("❌ Failed tasks: {failed_count}");
+
+        if !failed_tasks.is_empty() {
+            println!("\nFailed tasks:");
+            for task in &failed_tasks {
+                if task.len() >= 2 {
+                    println!("  - {}: {}", task[0], task[1]);
+                }
+            }
+        }
+
+        println!("==================================\n");
 
         Ok(())
     }
@@ -180,7 +319,17 @@ impl Pipeline {
             match handle.await {
                 Ok(result) => results.push(result),
                 Err(join_error) => {
-                    eprintln!("Task join error: {join_error}");
+                    let error_message = format!("Task join error: {join_error}");
+                    eprintln!("{error_message}");
+                    context
+                        .logger
+                        .log_pipeline_event(
+                            context.pipeline_id,
+                            "TASK_JOIN_ERROR",
+                            &error_message,
+                            Some(&join_error.to_string()),
+                        )
+                        .ok();
                 }
             }
         }
@@ -216,6 +365,7 @@ impl Pipeline {
 
         if let Some(adapter) = context.adapters.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
+                let start_time = std::time::Instant::now();
                 match adapter
                     .execute_import(
                         &table_name,
@@ -226,18 +376,33 @@ impl Pipeline {
                     )
                     .await
                 {
-                    Ok(_) => TaskResult::Success(table_name),
-                    Err(error) => TaskResult::Failed { table_name, error },
+                    Ok(_) => TaskResult::Success {
+                        table_name,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
+                    Err(error) => TaskResult::Failed {
+                        table_name,
+                        error,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
                 }
             }))
         } else if let Some(model) = context.models.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
+                let start_time = std::time::Instant::now();
                 match model
                     .execute_transform(&table_name, &app_db, action_id, &config)
                     .await
                 {
-                    Ok(_) => TaskResult::Success(table_name),
-                    Err(error) => TaskResult::Failed { table_name, error },
+                    Ok(_) => TaskResult::Success {
+                        table_name,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
+                    Err(error) => TaskResult::Failed {
+                        table_name,
+                        error,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
                 }
             }))
         } else {

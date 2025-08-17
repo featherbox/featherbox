@@ -51,15 +51,9 @@ pub async fn run(project_path: &Path) -> Result<()> {
         Pipeline::from_graph_with_ranges(&current_graph, &config, &app_db, graph_id).await?;
     save_pipeline(&app_db, graph_id, &pipeline).await?;
 
-    if let Err(e) = pipeline
+    pipeline
         .execute(&current_graph, &config, &ducklake, &app_db)
-        .await
-    {
-        eprintln!("Pipeline execution failed: {e}");
-        return Err(e);
-    }
-
-    println!("Pipeline execution completed successfully!");
+        .await?;
 
     Ok(())
 }
