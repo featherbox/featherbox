@@ -213,6 +213,11 @@ mod tests {
     use super::*;
     use crate::dependency::graph::Node;
     use crate::pipeline::build::Action;
+    fn create_project_structure(project_path: &std::path::Path) -> Result<()> {
+        fs::create_dir_all(project_path.join("adapters"))?;
+        fs::create_dir_all(project_path.join("models"))?;
+        Ok(())
+    }
     use std::fs;
     use tempfile;
 
@@ -221,8 +226,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let project_path = temp_dir.path();
 
-        fs::create_dir_all(project_path.join("adapters"))?;
-        fs::create_dir_all(project_path.join("models"))?;
+        create_project_structure(project_path)?;
 
         let project_yml = format!(
             r#"
@@ -251,8 +255,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let project_path = temp_dir.path();
 
-        fs::create_dir_all(project_path.join("adapters"))?;
-        fs::create_dir_all(project_path.join("models"))?;
+        create_project_structure(project_path)?;
 
         let project_yml = format!(
             r#"
@@ -326,8 +329,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let project_path = temp_dir.path();
 
-        fs::create_dir_all(project_path.join("adapters"))?;
-        fs::create_dir_all(project_path.join("models"))?;
+        create_project_structure(project_path)?;
         fs::create_dir_all(project_path.join("data"))?;
 
         let project_yml = format!(
@@ -425,8 +427,7 @@ mod tests {
         let temp_dir = tempdir()?;
         let project_path = temp_dir.path();
 
-        fs::create_dir_all(project_path.join("adapters"))?;
-        fs::create_dir_all(project_path.join("models"))?;
+        create_project_structure(project_path)?;
 
         unsafe {
             env::set_var("TEST_DUCKLAKE_S3_ACCESS_KEY", "test_access_key");
@@ -477,8 +478,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let project_path = temp_dir.path();
 
-        fs::create_dir_all(project_path.join("adapters"))?;
-        fs::create_dir_all(project_path.join("models"))?;
+        create_project_structure(project_path)?;
 
         let project_yml = format!(
             r#"

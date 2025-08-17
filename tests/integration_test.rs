@@ -118,6 +118,13 @@ connections:
     port: 3307
     database: datasource_test
     username: datasource
+    password: datasourcepass
+  postgres_datasource:
+    type: postgresql
+    host: localhost
+    port: 5433
+    database: datasource_test
+    username: datasource
     password: datasourcepass"#,
         create_database_config_with_name(db_type, db_name),
         sqlite_path
@@ -148,7 +155,7 @@ fn create_test_database(db_type: &str, db_name: &str) -> Result<()> {
                 .args([
                     "compose",
                     "exec",
-                    "mysql",
+                    "catalog_db_mysql",
                     "mysql",
                     "-u",
                     "featherbox",
@@ -173,7 +180,7 @@ fn create_test_database(db_type: &str, db_name: &str) -> Result<()> {
                 .args([
                     "compose",
                     "exec",
-                    "mysql",
+                    "catalog_db_mysql",
                     "mysql",
                     "-u",
                     "featherbox",
@@ -195,7 +202,7 @@ fn create_test_database(db_type: &str, db_name: &str) -> Result<()> {
                 .args([
                     "compose",
                     "exec",
-                    "postgres",
+                    "catalog_db_postgres",
                     "psql",
                     "-U",
                     "featherbox",
@@ -221,7 +228,7 @@ fn create_test_database(db_type: &str, db_name: &str) -> Result<()> {
                 .args([
                     "compose",
                     "exec",
-                    "postgres",
+                    "catalog_db_postgres",
                     "psql",
                     "-U",
                     "featherbox",

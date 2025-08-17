@@ -251,21 +251,23 @@ pub async fn get_executed_ranges_for_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::project::{DatabaseConfig, DatabaseType, ProjectConfig};
-    use crate::database::connect_app_db;
-    use crate::database::migration::Migrator;
     use crate::dependency::graph::Node;
     use crate::pipeline::build::Action;
-    use sea_orm_migration::MigratorTrait;
     use tempfile;
 
-    async fn setup_test_db() -> Result<DatabaseConnection> {
+    async fn setup_test_db_connection() -> Result<sea_orm::DatabaseConnection> {
+        use crate::config::project::{
+            DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
+            StorageType,
+        };
+        use crate::database::connection::connect_app_db;
+
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = ProjectConfig {
-            storage: crate::config::project::StorageConfig {
-                ty: crate::config::project::StorageType::Local,
+            storage: StorageConfig {
+                ty: StorageType::Local,
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
             database: DatabaseConfig {
@@ -277,20 +279,18 @@ mod tests {
                 username: None,
                 password: None,
             },
-            deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
+            deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 
         let db = connect_app_db(&project_config).await?;
-        Migrator::up(&db, None).await?;
-
         std::mem::forget(temp_dir);
         Ok(db)
     }
 
     #[tokio::test]
     async fn test_detect_changes_first_run() -> Result<()> {
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let graph = graph::Graph {
             nodes: vec![Node {
@@ -313,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_no_changes() -> Result<()> {
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let graph = graph::Graph {
             nodes: vec![Node {
@@ -342,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_with_changes() -> Result<()> {
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![Node {
@@ -389,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_removed_nodes() -> Result<()> {
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![
@@ -447,7 +447,7 @@ mod tests {
     async fn test_detect_changes_added_edges() -> Result<()> {
         use crate::dependency::graph::Edge;
 
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![
@@ -516,7 +516,7 @@ mod tests {
     async fn test_detect_changes_removed_edges() -> Result<()> {
         use crate::dependency::graph::Edge;
 
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![
@@ -585,7 +585,7 @@ mod tests {
     async fn test_detect_changes_multiple_changes() -> Result<()> {
         use crate::dependency::graph::Edge;
 
-        let db = setup_test_db().await?;
+        let db = setup_test_db_connection().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![

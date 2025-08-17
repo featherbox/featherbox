@@ -52,16 +52,26 @@ impl DatabaseSystem {
                 Ok(query)
             }
             Self::RemoteDatabase { db_type, config } => {
-                let db_type_str = match db_type {
-                    DatabaseType::Mysql => "mysql",
-                    DatabaseType::Postgresql => "postgres",
+                let (extension_name, db_type_str) = match db_type {
+                    DatabaseType::Mysql => ("mysql", "mysql"),
+                    DatabaseType::Postgresql => ("postgres", "postgres"),
                     DatabaseType::Sqlite => {
                         unreachable!("SQLite should not use RemoteDatabase variant")
                     }
                 };
+                let connection_string = match db_type {
+                    DatabaseType::Mysql => format!(
+                        "host={} port={} database={} user={} password={}",
+                        config.host, config.port, config.database, config.username, config.password
+                    ),
+                    DatabaseType::Postgresql => format!(
+                        "host={} port={} dbname={} user={} password={}",
+                        config.host, config.port, config.database, config.username, config.password
+                    ),
+                    DatabaseType::Sqlite => unreachable!(),
+                };
                 let query = format!(
-                    "ATTACH 'host={} port={} database={} user={} password={}' AS {alias} (TYPE {db_type_str});",
-                    config.host, config.port, config.database, config.username, config.password
+                    "INSTALL {extension_name}; LOAD {extension_name}; ATTACH '{connection_string}' AS {alias} (TYPE {db_type_str});",
                 );
                 Ok(query)
             }
@@ -86,20 +96,12 @@ impl DatabaseSystem {
                 );
                 Ok(query)
             }
-            Self::RemoteDatabase { db_type, config } => {
-                let query = match db_type {
-                    DatabaseType::Mysql => format!(
-                        "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = '{}' AND table_name = '{table_name}'",
-                        config.database
-                    ),
-                    DatabaseType::Postgresql => format!(
-                        "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'public' AND table_catalog = '{}' AND table_name = '{table_name}'",
-                        config.database
-                    ),
-                    DatabaseType::Sqlite => {
-                        unreachable!("SQLite should not use RemoteDatabase variant")
-                    }
-                };
+            Self::RemoteDatabase { .. } => {
+                // Use direct table access for validation as it's simpler and more reliable
+                // than constructing information_schema queries with correct catalog/schema names
+                let query = format!(
+                    "SELECT COUNT(*) as count FROM (SELECT 1 FROM {alias}.{table_name} LIMIT 1) t"
+                );
                 Ok(query)
             }
         }
@@ -188,7 +190,7 @@ mod tests {
         let attach_query = db_system.build_attach_query(alias).unwrap();
         assert_eq!(
             attach_query,
-            "ATTACH 'host=localhost port=3307 database=datasource_test user=datasource password=datasourcepass' AS mysql_db (TYPE mysql);"
+            "INSTALL mysql; LOAD mysql; ATTACH 'host=localhost port=3307 database=datasource_test user=datasource password=datasourcepass' AS mysql_db (TYPE mysql);"
         );
 
         let detach_query = db_system.build_detach_query(alias).unwrap();
@@ -255,7 +257,7 @@ mod tests {
         let query = db_system.validate_table_exists(alias, "users").unwrap();
         assert_eq!(
             query,
-            "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'datasource_test' AND table_name = 'users'"
+            "SELECT COUNT(*) as count FROM (SELECT 1 FROM mysql_db.users LIMIT 1) t"
         );
     }
 
@@ -304,7 +306,7 @@ mod tests {
         let attach_query = db_system.build_attach_query(alias).unwrap();
         assert_eq!(
             attach_query,
-            "ATTACH 'host=localhost port=5433 database=datasource_test user=datasource password=datasourcepass' AS postgres_db (TYPE postgres);"
+            "INSTALL postgres; LOAD postgres; ATTACH 'host=localhost port=5433 dbname=datasource_test user=datasource password=datasourcepass' AS postgres_db (TYPE postgres);"
         );
 
         let detach_query = db_system.build_detach_query(alias).unwrap();
@@ -346,7 +348,7 @@ mod tests {
         let query = db_system.validate_table_exists(alias, "users").unwrap();
         assert_eq!(
             query,
-            "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'public' AND table_catalog = 'datasource_test' AND table_name = 'users'"
+            "SELECT COUNT(*) as count FROM (SELECT 1 FROM postgres_db.users LIMIT 1) t"
         );
     }
 

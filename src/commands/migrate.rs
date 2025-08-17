@@ -50,26 +50,21 @@ pub async fn migrate_from_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        Config,
-        adapter::AdapterConfig,
-        model::ModelConfig,
-        project::{
-            DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
-            StorageType,
-        },
-    };
-    use crate::database::connect_app_db;
+    use crate::config::{adapter::AdapterConfig, model::ModelConfig};
     use crate::database::entities::{edges, nodes};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-    use std::collections::HashMap;
     use tempfile;
+    async fn setup_test_db_with_config()
+    -> Result<(sea_orm::DatabaseConnection, crate::config::Config)> {
+        use crate::config::project::{
+            DatabaseConfig, DatabaseType, DeploymentsConfig, StorageConfig, StorageType,
+        };
+        use crate::database::connection::connect_app_db;
 
-    async fn setup_test_db() -> Result<(DatabaseConnection, Config)> {
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
 
-        let project_config = ProjectConfig {
+        let project_config = crate::config::project::ProjectConfig {
             storage: StorageConfig {
                 ty: StorageType::Local,
                 path: temp_dir.path().to_string_lossy().to_string(),
@@ -84,25 +79,24 @@ mod tests {
                 password: None,
             },
             deployments: DeploymentsConfig { timeout: 600 },
-            connections: HashMap::new(),
+            connections: std::collections::HashMap::new(),
         };
 
-        let config = Config {
+        let config = crate::config::Config {
             project: project_config.clone(),
-            adapters: HashMap::new(),
-            models: HashMap::new(),
+            adapters: std::collections::HashMap::new(),
+            models: std::collections::HashMap::new(),
             project_root: temp_dir.path().to_path_buf(),
         };
 
         let db = connect_app_db(&project_config).await?;
-
         std::mem::forget(temp_dir);
         Ok((db, config))
     }
 
     #[tokio::test]
     async fn test_execute_migrate_from_config() -> Result<()> {
-        let (app_db, mut config) = setup_test_db().await?;
+        let (app_db, mut config) = setup_test_db_with_config().await?;
 
         config.adapters.insert(
             "test".to_string(),
