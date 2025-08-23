@@ -53,8 +53,8 @@ enum ConnectionAction {
 
 #[derive(Subcommand)]
 enum ModelAction {
-    New { name: String },
-    Delete { name: String },
+    New,
+    Delete,
 }
 
 #[tokio::main]
@@ -77,10 +77,8 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Model { action } => match action {
-            ModelAction::New { name } => commands::model::execute_model_new(name, &current_dir),
-            ModelAction::Delete { name } => {
-                commands::model::execute_model_delete(name, &current_dir)
-            }
+            ModelAction::New => commands::model::execute_model_new(&current_dir).await,
+            ModelAction::Delete => commands::model::execute_model_delete(&current_dir).await,
         },
         Commands::Migrate => commands::migrate::migrate(&current_dir).await,
         Commands::Run => commands::run::run(&current_dir).await,
