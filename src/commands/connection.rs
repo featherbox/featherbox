@@ -455,3 +455,66 @@ async fn test_s3_connection(
         },
     }
 }
+
+pub async fn execute_connection_delete(current_dir: &Path) -> Result<()> {
+    use inquire::Select;
+    use std::fs;
+    use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
+
+    let project_root = find_project_root(Some(current_dir))?;
+    let project_yml = project_root.join("project.yml");
+
+    if !project_yml.exists() {
+        return Err(anyhow::anyhow!(
+            "project.yml not found. Run 'fbox init' first."
+        ));
+    }
+
+    let content = fs::read_to_string(&project_yml)?;
+    let docs = YamlLoader::load_from_str(&content)?;
+
+    if docs.is_empty() {
+        return Err(anyhow::anyhow!("Invalid project.yml"));
+    }
+
+    let yaml = &docs[0];
+
+    let connection_names: Vec<String> = if let Some(connections) = yaml["connections"].as_hash() {
+        connections
+            .keys()
+            .filter_map(|k| k.as_str().map(String::from))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    if connection_names.is_empty() {
+        println!("No connections found.");
+        return Ok(());
+    }
+
+    let selected = Select::new("Select connection to delete:", connection_names).prompt()?;
+
+    let mut yaml = docs.into_iter().next().unwrap();
+
+    if let Yaml::Hash(ref mut root_hash) = yaml {
+        if let Some(Yaml::Hash(connections)) =
+            root_hash.get_mut(&Yaml::String("connections".to_string()))
+        {
+            let connection_key = Yaml::String(selected.clone());
+            if connections.remove(&connection_key).is_some() {
+                println!("✓ Connection '{selected}' removed successfully");
+            } else {
+                return Err(anyhow::anyhow!("Connection '{}' not found", selected));
+            }
+        }
+    }
+
+    let mut output = String::new();
+    let mut emitter = YamlEmitter::new(&mut output);
+    emitter.dump(&yaml)?;
+
+    fs::write(&project_yml, output)?;
+
+    Ok(())
+}

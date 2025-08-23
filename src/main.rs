@@ -33,13 +33,22 @@ enum Commands {
     Query {
         sql: String,
     },
-    Connection,
+    Connection {
+        #[command(subcommand)]
+        action: ConnectionAction,
+    },
 }
 
 #[derive(Subcommand)]
 enum AdapterAction {
-    New { name: String },
+    New,
     Delete { name: String },
+}
+
+#[derive(Subcommand)]
+enum ConnectionAction {
+    New,
+    Delete,
 }
 
 #[derive(Subcommand)]
@@ -60,8 +69,8 @@ async fn main() -> Result<()> {
     let result = match &cli.command {
         Commands::Init { name } => commands::init::execute_init(name.as_deref(), &current_dir),
         Commands::Adapter { action } => match action {
-            AdapterAction::New { name } => {
-                commands::adapter::execute_adapter_new(name, &current_dir)
+            AdapterAction::New => {
+                commands::adapter::execute_adapter_interactive(&current_dir).await
             }
             AdapterAction::Delete { name } => {
                 commands::adapter::execute_adapter_delete(name, &current_dir)
@@ -76,7 +85,12 @@ async fn main() -> Result<()> {
         Commands::Migrate => commands::migrate::migrate(&current_dir).await,
         Commands::Run => commands::run::run(&current_dir).await,
         Commands::Query { sql } => commands::query::execute_query(sql, &current_dir).await,
-        Commands::Connection => commands::connection::execute_connection(&current_dir).await,
+        Commands::Connection { action } => match action {
+            ConnectionAction::New => commands::connection::execute_connection(&current_dir).await,
+            ConnectionAction::Delete => {
+                commands::connection::execute_connection_delete(&current_dir).await
+            }
+        },
     };
 
     if let Err(err) = result {
