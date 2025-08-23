@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod connection;
 pub mod init;
 pub mod migrate;
 pub mod model;

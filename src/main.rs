@@ -33,6 +33,7 @@ enum Commands {
     Query {
         sql: String,
     },
+    Connection,
 }
 
 #[derive(Subcommand)]
@@ -75,6 +76,7 @@ async fn main() -> Result<()> {
         Commands::Migrate => commands::migrate::migrate(&current_dir).await,
         Commands::Run => commands::run::run(&current_dir).await,
         Commands::Query { sql } => commands::query::execute_query(sql, &current_dir).await,
+        Commands::Connection => commands::connection::execute_connection(&current_dir).await,
     };
 
     if let Err(err) = result {
