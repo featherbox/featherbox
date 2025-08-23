@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
+use crate::secret::SecretManager;
+
 pub fn execute_init(project_name: Option<&str>, project_path: &Path) -> Result<()> {
     if project_path.join("project.yml").exists() {
         return Err(anyhow::anyhow!(
@@ -11,6 +13,7 @@ pub fn execute_init(project_name: Option<&str>, project_path: &Path) -> Result<(
 
     create_project_structure(project_path)?;
     create_project_yml(project_path, project_name)?;
+    ensure_secret_key()?;
 
     println!("FeatherBox project initialized successfully");
     Ok(())
@@ -40,6 +43,17 @@ connections: {}
 
     fs::write(project_path.join("project.yml"), project_yml_content)
         .context("Failed to create project.yml")?;
+    Ok(())
+}
+
+fn ensure_secret_key() -> Result<()> {
+    let dummy_project_root = std::path::Path::new(".");
+
+    let key_manager = SecretManager::new(dummy_project_root)?;
+    if !key_manager.key_exists() {
+        key_manager.generate_key()?;
+        println!("✓ Secret key generated at ~/.featherbox/secret.key");
+    }
     Ok(())
 }
 

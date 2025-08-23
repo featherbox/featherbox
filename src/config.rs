@@ -4,6 +4,8 @@ use std::fs;
 use std::path::Path;
 use yaml_rust2::YamlLoader;
 
+use crate::secret::expand_secrets_in_text;
+
 pub mod adapter;
 pub mod model;
 pub mod project;
@@ -44,7 +46,8 @@ fn load_project_config(project_path: &Path) -> Result<ProjectConfig> {
     }
 
     let content = fs::read_to_string(&project_yml_path)?;
-    let docs = YamlLoader::load_from_str(&content)?;
+    let expanded_content = expand_secrets_in_text(&content, project_path)?;
+    let docs = YamlLoader::load_from_str(&expanded_content)?;
     let yaml = &docs[0];
 
     Ok(project::parse_project_config(yaml))
@@ -70,7 +73,8 @@ fn load_adapters(project_path: &Path) -> Result<HashMap<String, AdapterConfig>> 
                 .to_string();
 
             let content = fs::read_to_string(&path)?;
-            let docs = YamlLoader::load_from_str(&content)?;
+            let expanded_content = expand_secrets_in_text(&content, project_path)?;
+            let docs = YamlLoader::load_from_str(&expanded_content)?;
             let yaml = &docs[0];
 
             let adapter_config = adapter::parse_adapter_config(yaml)?;
@@ -101,7 +105,8 @@ fn load_models(project_path: &Path) -> Result<HashMap<String, ModelConfig>> {
                 .to_string();
 
             let content = fs::read_to_string(&path)?;
-            let docs = YamlLoader::load_from_str(&content)?;
+            let expanded_content = expand_secrets_in_text(&content, project_path)?;
+            let docs = YamlLoader::load_from_str(&expanded_content)?;
             let yaml = &docs[0];
 
             let model_config = model::parse_model_config(yaml)?;

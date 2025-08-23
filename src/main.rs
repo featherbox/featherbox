@@ -7,6 +7,7 @@ pub mod database;
 pub mod dependency;
 pub mod pipeline;
 pub mod s3_client;
+pub mod secret;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -37,6 +38,10 @@ enum Commands {
         #[command(subcommand)]
         action: ConnectionAction,
     },
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    }
 }
 
 #[derive(Subcommand)]
@@ -55,6 +60,15 @@ enum ConnectionAction {
 enum ModelAction {
     New,
     Delete,
+}
+
+#[derive(Subcommand)]
+enum SecretAction {
+    New,
+    Edit,
+    Delete,
+    List,
+    GenKey,
 }
 
 #[tokio::main]
@@ -88,6 +102,13 @@ async fn main() -> Result<()> {
             ConnectionAction::Delete => {
                 commands::connection::execute_connection_delete(&current_dir).await
             }
+        },
+        Commands::Secret { action } => match action {
+            SecretAction::New => commands::secret::execute_secret_new(&current_dir).await,
+            SecretAction::Edit => commands::secret::execute_secret_edit(&current_dir).await,
+            SecretAction::Delete => commands::secret::execute_secret_delete(&current_dir).await,
+            SecretAction::List => commands::secret::execute_secret_list(&current_dir).await,
+            SecretAction::GenKey => commands::secret::execute_secret_gen_key(&current_dir).await,
         },
     };
 

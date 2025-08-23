@@ -4,6 +4,7 @@ pub mod database;
 pub mod dependency;
 pub mod pipeline;
 pub mod s3_client;
+pub mod secret;
 
 #[cfg(test)]
 pub mod test_helpers;
