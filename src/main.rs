@@ -41,7 +41,7 @@ enum Commands {
     Secret {
         #[command(subcommand)]
         action: SecretAction,
-    }
+    },
 }
 
 #[derive(Subcommand)]

@@ -253,14 +253,14 @@ mod tests {
     use super::*;
     use crate::dependency::graph::Node;
     use crate::pipeline::build::Action;
-    use tempfile;
 
-    async fn setup_test_db_connection() -> Result<sea_orm::DatabaseConnection> {
+    async fn setup_test_db() -> Result<sea_orm::DatabaseConnection> {
         use crate::config::project::{
             DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
             StorageType,
         };
         use crate::database::connection::connect_app_db;
+        use tempfile;
 
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
@@ -281,6 +281,7 @@ mod tests {
             },
             deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
+            secret_key_path: None,
         };
 
         let db = connect_app_db(&project_config).await?;
@@ -290,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_first_run() -> Result<()> {
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let graph = graph::Graph {
             nodes: vec![Node {
@@ -313,7 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_no_changes() -> Result<()> {
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let graph = graph::Graph {
             nodes: vec![Node {
@@ -342,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_with_changes() -> Result<()> {
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![Node {
@@ -389,7 +390,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_changes_removed_nodes() -> Result<()> {
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![
@@ -447,7 +448,7 @@ mod tests {
     async fn test_detect_changes_added_edges() -> Result<()> {
         use crate::dependency::graph::Edge;
 
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![
@@ -516,7 +517,7 @@ mod tests {
     async fn test_detect_changes_removed_edges() -> Result<()> {
         use crate::dependency::graph::Edge;
 
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![
@@ -585,7 +586,7 @@ mod tests {
     async fn test_detect_changes_multiple_changes() -> Result<()> {
         use crate::dependency::graph::Edge;
 
-        let db = setup_test_db_connection().await?;
+        let db = setup_test_db().await?;
 
         let old_graph = graph::Graph {
             nodes: vec![

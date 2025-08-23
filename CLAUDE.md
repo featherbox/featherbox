@@ -11,8 +11,8 @@ FeatherBox is a lightweight data pipeline framework built in Rust that enables E
 ```bash
 # Development
 cargo build                    # Build the fbox binary
-cargo test                     # Run all tests
-nix develop --command cargo test  # Run tests in Nix environment (if dependencies missing)
+nix develop --command cargo test  # ALWAYS use this for testing - required for proper dependencies
+cargo test                     # DO NOT use this directly - may fail due to missing dependencies
 
 # CLI Usage
 target/debug/fbox init <project>          # Initialize new project
@@ -239,6 +239,8 @@ src/
 ## Important Notes
 
 - The binary requires `libstdc++.so.6` - use `nix develop` environment if missing
+- **CRITICAL**: ALWAYS use `nix develop --command cargo test` for testing - direct `cargo test` may fail due to missing dependencies
+- **CRITICAL**: Before any code changes, run `nix develop --command cargo test` to establish baseline - ensure existing tests are not broken
 - Configuration changes trigger full dependency graph recalculation
 - All user data operations go through DuckDB for performance
 - Metadata operations use SQLite via Sea-ORM for reliability

@@ -1,3 +1,4 @@
+use crate::config::project::ProjectConfig;
 use age::secrecy::ExposeSecret;
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -18,16 +19,46 @@ pub struct SecretManager {
 }
 
 impl SecretManager {
-    pub fn new(project_root: &Path) -> Result<Self> {
-        let home_dir = dirs::home_dir().context("Unable to find home directory")?;
-        let featherbox_dir = home_dir.join(".featherbox");
+    pub fn new(project_config: &ProjectConfig, project_root: &Path) -> Result<Self> {
+        let key_file_path = match &project_config.secret_key_path {
+            Some(path) => PathBuf::from(path),
+            None => {
+                let home_dir = dirs::home_dir().context("Unable to find home directory")?;
+                let featherbox_dir = home_dir.join(".featherbox");
 
-        fs::create_dir_all(&featherbox_dir)
-            .with_context(|| format!("Failed to create directory: {}", featherbox_dir.display()))?;
+                fs::create_dir_all(&featherbox_dir).with_context(|| {
+                    format!("Failed to create directory: {}", featherbox_dir.display())
+                })?;
+
+                featherbox_dir.join("secret.key")
+            }
+        };
+
+        let secrets_file_path = project_root.join("secrets.enc");
+
+        if let Some(parent) = key_file_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
 
         Ok(Self {
-            key_file_path: featherbox_dir.join("secret.key"),
-            secrets_file_path: project_root.join("secrets.enc"),
+            key_file_path,
+            secrets_file_path,
+        })
+    }
+
+    pub fn new_for_project_root(project_root: &Path) -> Result<Self> {
+        let key_file_path = project_root.join("secret.key");
+        let secrets_file_path = project_root.join("secrets.enc");
+
+        if let Some(parent) = key_file_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+
+        Ok(Self {
+            key_file_path,
+            secrets_file_path,
         })
     }
 
@@ -174,17 +205,13 @@ impl SecretManager {
         let data = self.load_secrets()?;
         Ok(data.secrets)
     }
-
-    #[cfg(test)]
-    pub fn new_for_test(key_file_path: PathBuf, secrets_file_path: PathBuf) -> Self {
-        Self {
-            key_file_path,
-            secrets_file_path,
-        }
-    }
 }
 
-pub fn expand_secrets_in_text(text: &str, project_root: &Path) -> Result<String> {
+pub fn expand_secrets_in_text(
+    text: &str,
+    project_config: &ProjectConfig,
+    project_root: &Path,
+) -> Result<String> {
     let secret_regex =
         Regex::new(r"\$\{SECRET_([a-zA-Z][a-zA-Z0-9_]*)\}").expect("Invalid regex pattern");
 
@@ -192,7 +219,7 @@ pub fn expand_secrets_in_text(text: &str, project_root: &Path) -> Result<String>
         return Ok(text.to_string());
     }
 
-    let manager = SecretManager::new(project_root)?;
+    let manager = SecretManager::new(project_config, project_root)?;
     let secrets = manager.get_all_secrets()?;
 
     let mut result = text.to_string();
@@ -215,12 +242,13 @@ pub fn expand_secrets_in_text(text: &str, project_root: &Path) -> Result<String>
 
 pub fn expand_secrets_in_hash_map(
     map: &HashMap<String, String>,
+    project_config: &ProjectConfig,
     project_root: &Path,
 ) -> Result<HashMap<String, String>> {
     let mut expanded = HashMap::new();
 
     for (key, value) in map {
-        let expanded_value = expand_secrets_in_text(value, project_root)?;
+        let expanded_value = expand_secrets_in_text(value, project_config, project_root)?;
         expanded.insert(key.clone(), expanded_value);
     }
 
@@ -228,46 +256,44 @@ pub fn expand_secrets_in_hash_map(
 }
 
 #[cfg(test)]
-pub fn expand_secrets_in_text_with_manager(text: &str, manager: &SecretManager) -> Result<String> {
-    let secret_regex =
-        Regex::new(r"\$\{SECRET_([a-zA-Z][a-zA-Z0-9_]*)\}").expect("Invalid regex pattern");
-
-    if !secret_regex.is_match(text) {
-        return Ok(text.to_string());
-    }
-
-    let secrets = manager.get_all_secrets()?;
-
-    let mut result = text.to_string();
-    for captures in secret_regex.captures_iter(text) {
-        let full_match = captures.get(0).unwrap().as_str();
-        let key = captures.get(1).unwrap().as_str();
-
-        if let Some(value) = secrets.get(key) {
-            result = result.replace(full_match, value);
-        } else {
-            return Err(anyhow::anyhow!(
-                "Secret '{}' not found. Use 'fbox secret new' to add it.",
-                key
-            ));
-        }
-    }
-
-    Ok(result)
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn create_test_project_config(
+        secret_key_path: Option<String>,
+    ) -> crate::config::project::ProjectConfig {
+        crate::config::project::ProjectConfig {
+            storage: crate::config::project::StorageConfig {
+                ty: crate::config::project::StorageType::Local,
+                path: "./storage".to_string(),
+            },
+            database: crate::config::project::DatabaseConfig {
+                ty: crate::config::project::DatabaseType::Sqlite,
+                path: Some("./database.db".to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+            },
+            deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
+            connections: std::collections::HashMap::new(),
+            secret_key_path,
+        }
+    }
+
     #[test]
     fn test_secret_manager_generate_and_load_key() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new_for_test(
-            temp_dir.path().join("test_secret.key"),
-            temp_dir.path().join("test_secrets.enc"),
-        );
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
 
         assert!(!manager.key_exists());
 
@@ -282,10 +308,14 @@ mod tests {
     #[test]
     fn test_secret_manager_operations() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new_for_test(
-            temp_dir.path().join("test_secret.key"),
-            temp_dir.path().join("test_secrets.enc"),
-        );
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
         manager.generate_key()?;
 
         let keys = manager.list_secrets()?;
@@ -316,17 +346,21 @@ mod tests {
     #[test]
     fn test_secret_expansion() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new_for_test(
-            temp_dir.path().join("test_secret.key"),
-            temp_dir.path().join("test_secrets.enc"),
-        );
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
         manager.generate_key()?;
 
         manager.set_secret("DB_HOST", "localhost")?;
         manager.set_secret("DB_PORT", "5432")?;
 
         let text = "host: ${SECRET_DB_HOST}\nport: ${SECRET_DB_PORT}";
-        let expanded = expand_secrets_in_text_with_manager(text, &manager)?;
+        let expanded = expand_secrets_in_text(text, &project_config, temp_dir.path())?;
 
         assert_eq!(expanded, "host: localhost\nport: 5432");
 
@@ -336,8 +370,16 @@ mod tests {
     #[test]
     fn test_secret_expansion_missing_key() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+
         let text = "host: ${SECRET_MISSING_KEY}";
-        let result = expand_secrets_in_text(text, temp_dir.path());
+        let result = expand_secrets_in_text(text, &project_config, temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
@@ -348,10 +390,221 @@ mod tests {
     #[test]
     fn test_secret_expansion_no_match() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(None);
+
         let text = "host: localhost";
-        let expanded = expand_secrets_in_text(text, temp_dir.path())?;
+        let expanded = expand_secrets_in_text(text, &project_config, temp_dir.path())?;
 
         assert_eq!(expanded, "host: localhost");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_text_multiple_secrets() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
+        manager.generate_key()?;
+
+        manager.set_secret("API_KEY", "secret123")?;
+        manager.set_secret("ENDPOINT", "https://api.example.com")?;
+        manager.set_secret("VERSION", "v2")?;
+
+        let text = "url: ${SECRET_ENDPOINT}/${SECRET_VERSION}/data?key=${SECRET_API_KEY}";
+        let expanded = expand_secrets_in_text(text, &project_config, temp_dir.path())?;
+
+        assert_eq!(
+            expanded,
+            "url: https://api.example.com/v2/data?key=secret123"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_text_same_secret_multiple_times() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
+        manager.generate_key()?;
+
+        manager.set_secret("TOKEN", "abc123")?;
+
+        let text = "auth_header: Bearer ${SECRET_TOKEN}\nbackup_token: ${SECRET_TOKEN}";
+        let expanded = expand_secrets_in_text(text, &project_config, temp_dir.path())?;
+
+        assert_eq!(expanded, "auth_header: Bearer abc123\nbackup_token: abc123");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_text_invalid_secret_name() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
+        manager.generate_key()?;
+
+        let text = "value: ${SECRET_NONEXISTENT_KEY}";
+        let result = expand_secrets_in_text(text, &project_config, temp_dir.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_hash_map_success() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
+        manager.generate_key()?;
+
+        manager.set_secret("USERNAME", "testuser")?;
+        manager.set_secret("PASSWORD", "testpass")?;
+
+        let mut input_map = HashMap::new();
+        input_map.insert("user".to_string(), "${SECRET_USERNAME}".to_string());
+        input_map.insert("pass".to_string(), "${SECRET_PASSWORD}".to_string());
+        input_map.insert("host".to_string(), "localhost".to_string());
+
+        let expanded = expand_secrets_in_hash_map(&input_map, &project_config, temp_dir.path())?;
+
+        assert_eq!(expanded.get("user").unwrap(), "testuser");
+        assert_eq!(expanded.get("pass").unwrap(), "testpass");
+        assert_eq!(expanded.get("host").unwrap(), "localhost");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_hash_map_empty_map() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let input_map = HashMap::new();
+
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let expanded = expand_secrets_in_hash_map(&input_map, &project_config, temp_dir.path())?;
+
+        assert!(expanded.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_hash_map_no_secrets() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+
+        let mut input_map = HashMap::new();
+        input_map.insert("config1".to_string(), "value1".to_string());
+        input_map.insert("config2".to_string(), "value2".to_string());
+
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let expanded = expand_secrets_in_hash_map(&input_map, &project_config, temp_dir.path())?;
+
+        assert_eq!(expanded.get("config1").unwrap(), "value1");
+        assert_eq!(expanded.get("config2").unwrap(), "value2");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_hash_map_missing_secret() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
+        manager.generate_key()?;
+
+        let mut input_map = HashMap::new();
+        input_map.insert("key".to_string(), "${SECRET_NONEXISTENT}".to_string());
+
+        let result = expand_secrets_in_hash_map(&input_map, &project_config, temp_dir.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_secrets_in_hash_map_mixed_values() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let project_config = create_test_project_config(Some(
+            temp_dir
+                .path()
+                .join("secret.key")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let manager = SecretManager::new(&project_config, temp_dir.path())?;
+        manager.generate_key()?;
+
+        manager.set_secret("DATABASE_URL", "postgres://localhost:5432/db")?;
+
+        let mut input_map = HashMap::new();
+        input_map.insert("db_url".to_string(), "${SECRET_DATABASE_URL}".to_string());
+        input_map.insert("timeout".to_string(), "30".to_string());
+        input_map.insert("ssl_mode".to_string(), "require".to_string());
+        input_map.insert(
+            "connection_string".to_string(),
+            "server=${SECRET_DATABASE_URL};timeout=30".to_string(),
+        );
+
+        let expanded = expand_secrets_in_hash_map(&input_map, &project_config, temp_dir.path())?;
+
+        assert_eq!(
+            expanded.get("db_url").unwrap(),
+            "postgres://localhost:5432/db"
+        );
+        assert_eq!(expanded.get("timeout").unwrap(), "30");
+        assert_eq!(expanded.get("ssl_mode").unwrap(), "require");
+        assert_eq!(
+            expanded.get("connection_string").unwrap(),
+            "server=postgres://localhost:5432/db;timeout=30"
+        );
 
         Ok(())
     }

@@ -54,4 +54,61 @@ mod tests {
         assert!(validate_name("test@adapter").is_err());
         assert!(validate_name("test/adapter").is_err());
     }
+
+    #[test]
+    fn test_render_adapter_template_replaces_name() {
+        let result = render_adapter_template("test_adapter");
+        assert!(result.contains("Generated adapter for test_adapter"));
+        assert!(!result.contains("{name}"));
+    }
+
+    #[test]
+    fn test_render_adapter_template_preserves_other_placeholders() {
+        let result = render_adapter_template("my_adapter");
+        assert!(result.contains("<CONNECTION_NAME>"));
+        assert!(result.contains("<PATH_TO_DATA_FILE>"));
+        assert!(result.contains("Generated adapter for my_adapter"));
+    }
+
+    #[test]
+    fn test_render_adapter_template_with_empty_name() {
+        let result = render_adapter_template("");
+        assert!(result.contains("Generated adapter for "));
+        assert!(!result.contains("{name}"));
+    }
+
+    #[test]
+    fn test_render_adapter_template_with_special_characters() {
+        let result = render_adapter_template("test-adapter_123");
+        assert!(result.contains("Generated adapter for test-adapter_123"));
+    }
+
+    #[test]
+    fn test_render_model_template_replaces_name() {
+        let result = render_model_template("test_model");
+        assert!(result.contains("Generated model for test_model"));
+        assert!(!result.contains("{name}"));
+    }
+
+    #[test]
+    fn test_render_model_template_preserves_sql_structure() {
+        let result = render_model_template("analytics");
+        assert!(result.contains("sql: |"));
+        assert!(result.contains("SELECT COUNT(*) FROM source_table"));
+        assert!(result.contains("max_age: 3600"));
+        assert!(result.contains("Generated model for analytics"));
+    }
+
+    #[test]
+    fn test_render_model_template_with_empty_name() {
+        let result = render_model_template("");
+        assert!(result.contains("Generated model for "));
+        assert!(!result.contains("{name}"));
+    }
+
+    #[test]
+    fn test_render_model_template_with_special_characters() {
+        let result = render_model_template("user-profile_v2");
+        assert!(result.contains("Generated model for user-profile_v2"));
+    }
 }

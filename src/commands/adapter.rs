@@ -803,11 +803,12 @@ connections:
 
         assert!(!schema.is_empty());
         assert!(schema.iter().all(|col| col.description.is_some()));
-        assert!(
-            schema
-                .iter()
-                .any(|col| col.description.as_ref().unwrap().contains("CSV"))
-        );
+        assert!(schema.iter().all(|col| {
+            col.description
+                .as_ref()
+                .unwrap()
+                .starts_with("Auto-detected")
+        }));
     }
 
     #[tokio::test]
@@ -829,11 +830,12 @@ connections:
 
         assert!(!schema.is_empty());
         assert!(schema.iter().all(|col| col.description.is_some()));
-        assert!(
-            schema
-                .iter()
-                .any(|col| col.description.as_ref().unwrap().contains("JSON"))
-        );
+        assert!(schema.iter().all(|col| {
+            col.description
+                .as_ref()
+                .unwrap()
+                .starts_with("Auto-detected")
+        }));
     }
 
     #[tokio::test]

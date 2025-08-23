@@ -533,4 +533,79 @@ mod tests {
 
         parse_file_config(yaml);
     }
+
+    #[test]
+    fn test_parse_size_to_bytes_gigabytes() {
+        assert_eq!(parse_size_to_bytes("1GB").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("2gb").unwrap(), 2 * 1024 * 1024 * 1024);
+        assert_eq!(
+            parse_size_to_bytes("10GB").unwrap(),
+            10 * 1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_megabytes() {
+        assert_eq!(parse_size_to_bytes("1MB").unwrap(), 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("5mb").unwrap(), 5 * 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("100MB").unwrap(), 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_kilobytes() {
+        assert_eq!(parse_size_to_bytes("1KB").unwrap(), 1024);
+        assert_eq!(parse_size_to_bytes("10kb").unwrap(), 10 * 1024);
+        assert_eq!(parse_size_to_bytes("512KB").unwrap(), 512 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_raw_bytes() {
+        assert_eq!(parse_size_to_bytes("1024").unwrap(), 1024);
+        assert_eq!(parse_size_to_bytes("0").unwrap(), 0);
+        assert_eq!(parse_size_to_bytes("999999").unwrap(), 999999);
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_case_insensitive() {
+        assert_eq!(parse_size_to_bytes("1gb").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("1Gb").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("1GB").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("1mb").unwrap(), 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("1Mb").unwrap(), 1024 * 1024);
+        assert_eq!(parse_size_to_bytes("1MB").unwrap(), 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_invalid_format() {
+        assert!(parse_size_to_bytes("invalid").is_err());
+        assert!(parse_size_to_bytes("1TB").is_err());
+        assert!(parse_size_to_bytes("1.5GB").is_err());
+        assert!(parse_size_to_bytes("-1MB").is_err());
+        assert!(parse_size_to_bytes("").is_err());
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_non_numeric_prefix() {
+        assert!(parse_size_to_bytes("abcGB").is_err());
+        assert!(parse_size_to_bytes("GB").is_err());
+        assert!(parse_size_to_bytes("xyzMB").is_err());
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_edge_cases() {
+        assert_eq!(parse_size_to_bytes("0GB").unwrap(), 0);
+        assert_eq!(parse_size_to_bytes("0MB").unwrap(), 0);
+        assert_eq!(parse_size_to_bytes("0KB").unwrap(), 0);
+
+        let max_gb = u64::MAX / (1024 * 1024 * 1024);
+        let valid_gb = format!("{max_gb}GB");
+        assert!(parse_size_to_bytes(&valid_gb).is_ok());
+    }
+
+    #[test]
+    fn test_parse_size_to_bytes_whitespace() {
+        assert!(parse_size_to_bytes(" 1GB").is_err());
+        assert!(parse_size_to_bytes("1GB ").is_err());
+        assert!(parse_size_to_bytes("1 GB").is_err());
+    }
 }

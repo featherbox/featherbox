@@ -7,6 +7,7 @@ pub struct ProjectConfig {
     pub database: DatabaseConfig,
     pub deployments: DeploymentsConfig,
     pub connections: HashMap<String, ConnectionConfig>,
+    pub secret_key_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,12 +148,14 @@ pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
     let database = parse_database(&yaml["database"]);
     let deployments = parse_deployments(&yaml["deployments"]);
     let connections = parse_connections(&yaml["connections"]);
+    let secret_key_path = yaml["secret_key_path"].as_str().map(|s| s.to_string());
 
     ProjectConfig {
         storage,
         database,
         deployments,
         connections,
+        secret_key_path,
     }
 }
 
@@ -1238,5 +1241,32 @@ mod tests {
             }
             _ => panic!("Expected LocalFile connection config"),
         }
+
+        assert_eq!(config.secret_key_path, None);
+    }
+
+    #[test]
+    fn test_parse_project_config_with_secret_key_path() {
+        let yaml_str = r#"
+            storage:
+              type: local
+              path: /home/user/featherbox/storage
+            database:
+              type: sqlite
+              path: /home/user/featherbox/database.db
+            deployments:
+              timeout: 600
+            connections: {}
+            secret_key_path: /custom/path/secret.key
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_project_config(yaml);
+
+        assert_eq!(
+            config.secret_key_path,
+            Some("/custom/path/secret.key".to_string())
+        );
     }
 }

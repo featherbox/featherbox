@@ -78,4 +78,123 @@ mod tests {
                 .contains("This command must be run inside a FeatherBox project")
         );
     }
+
+    #[test]
+    fn test_find_project_root_with_none_path() -> Result<()> {
+        let result = find_project_root(None);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not in a FeatherBox project")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_project_root_absolute_path() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        fs::write(project_path.join("project.yml"), "test_config: true")?;
+
+        let result = find_project_root(Some(project_path))?;
+        assert_eq!(result.canonicalize()?, project_path.canonicalize()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_project_root_nested_directory_structure() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let root_path = temp_dir.path();
+        let nested_path = root_path.join("level1").join("level2").join("level3");
+        fs::create_dir_all(&nested_path)?;
+
+        fs::write(root_path.join("project.yml"), "project: test")?;
+
+        let result = find_project_root(Some(root_path));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), root_path);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_project_root_no_project_file() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        let result = find_project_root(Some(project_path));
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Not in a FeatherBox project"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_project_root_empty_project_file() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        fs::write(project_path.join("project.yml"), "")?;
+
+        let result = find_project_root(Some(project_path))?;
+        assert_eq!(result, project_path);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ensure_project_directory_with_none_path() {
+        let result = ensure_project_directory(None);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("This command must be run inside a FeatherBox project")
+        );
+    }
+
+    #[test]
+    fn test_ensure_project_directory_context_message() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        let result = ensure_project_directory(Some(project_path));
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("This command must be run inside a FeatherBox project"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ensure_project_directory_preserves_original_error() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        let result = ensure_project_directory(Some(project_path));
+        assert!(result.is_err());
+
+        let error = result.unwrap_err();
+        let error_chain: Vec<String> = error.chain().map(|e| e.to_string()).collect();
+        assert!(
+            error_chain
+                .iter()
+                .any(|msg| msg.contains("Not in a FeatherBox project"))
+        );
+        assert!(
+            error_chain
+                .iter()
+                .any(|msg| msg.contains("This command must be run inside a FeatherBox project"))
+        );
+
+        Ok(())
+    }
 }

@@ -13,7 +13,7 @@ pub fn execute_init(project_name: Option<&str>, project_path: &Path) -> Result<(
 
     create_project_structure(project_path)?;
     create_project_yml(project_path, project_name)?;
-    ensure_secret_key()?;
+    ensure_secret_key(project_path)?;
 
     println!("FeatherBox project initialized successfully");
     Ok(())
@@ -27,7 +27,9 @@ fn create_project_structure(project_path: &Path) -> Result<()> {
 }
 
 fn create_project_yml(project_path: &Path, _project_name: Option<&str>) -> Result<()> {
-    let project_yml_content = r#"storage:
+    let secret_key_path = project_path.join("secret.key");
+    let project_yml_content = format!(
+        r#"storage:
   type: local
   path: ./storage
 
@@ -38,21 +40,26 @@ database:
 deployments:
   timeout: 600
 
-connections: {}
-"#;
+connections: {{}}
+
+secret_key_path: {}
+"#,
+        secret_key_path.to_string_lossy()
+    );
 
     fs::write(project_path.join("project.yml"), project_yml_content)
         .context("Failed to create project.yml")?;
     Ok(())
 }
 
-fn ensure_secret_key() -> Result<()> {
-    let dummy_project_root = std::path::Path::new(".");
-
-    let key_manager = SecretManager::new(dummy_project_root)?;
+fn ensure_secret_key(project_path: &Path) -> Result<()> {
+    let key_manager = SecretManager::new_for_project_root(project_path)?;
     if !key_manager.key_exists() {
         key_manager.generate_key()?;
-        println!("✓ Secret key generated at ~/.featherbox/secret.key");
+        println!(
+            "✓ Secret key generated at {}",
+            project_path.join("secret.key").display()
+        );
     }
     Ok(())
 }
@@ -79,6 +86,7 @@ mod tests {
         assert!(content.contains("database:"));
         assert!(content.contains("deployments:"));
         assert!(content.contains("connections: {}"));
+        assert!(content.contains("secret_key_path:"));
 
         Ok(())
     }
@@ -119,6 +127,7 @@ mod tests {
         assert!(content.contains("storage:"));
         assert!(content.contains("type: local"));
         assert!(content.contains("type: sqlite"));
+        assert!(content.contains("secret_key_path:"));
 
         Ok(())
     }

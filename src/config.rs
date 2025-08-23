@@ -6,6 +6,10 @@ use yaml_rust2::YamlLoader;
 
 use crate::secret::expand_secrets_in_text;
 
+pub fn load_from_directory(project_path: &Path) -> Result<Config> {
+    Config::load_from_directory(project_path)
+}
+
 pub mod adapter;
 pub mod model;
 pub mod project;
@@ -25,8 +29,8 @@ pub struct Config {
 impl Config {
     pub fn load_from_directory(project_path: &Path) -> Result<Self> {
         let project_config = load_project_config(project_path)?;
-        let adapters = load_adapters(project_path)?;
-        let models = load_models(project_path)?;
+        let adapters = load_adapters(&project_config, project_path)?;
+        let models = load_models(&project_config, project_path)?;
 
         Ok(Config {
             project: project_config,
@@ -46,75 +50,145 @@ fn load_project_config(project_path: &Path) -> Result<ProjectConfig> {
     }
 
     let content = fs::read_to_string(&project_yml_path)?;
-    let expanded_content = expand_secrets_in_text(&content, project_path)?;
-    let docs = YamlLoader::load_from_str(&expanded_content)?;
+    let docs = YamlLoader::load_from_str(&content)?;
     let yaml = &docs[0];
 
-    Ok(project::parse_project_config(yaml))
+    let project_config = project::parse_project_config(yaml);
+
+    let expanded_content = expand_secrets_in_text(&content, &project_config, project_path)?;
+    let expanded_docs = YamlLoader::load_from_str(&expanded_content)?;
+    let expanded_yaml = &expanded_docs[0];
+
+    Ok(project::parse_project_config(expanded_yaml))
 }
 
-fn load_adapters(project_path: &Path) -> Result<HashMap<String, AdapterConfig>> {
-    let adapters_dir = project_path.join("adapters");
-    let mut adapters = HashMap::new();
+fn load_config_files<T>(
+    config_dir: &Path,
+    file_type: &str,
+    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    project_config: &ProjectConfig,
+    project_path: &Path,
+) -> Result<HashMap<String, T>> {
+    let mut configs = HashMap::new();
 
-    if !adapters_dir.exists() {
-        return Ok(adapters);
+    if !config_dir.exists() {
+        return Ok(configs);
     }
 
-    for entry in fs::read_dir(&adapters_dir)? {
+    for entry in fs::read_dir(config_dir)? {
         let entry = entry?;
         let path = entry.path();
 
         if path.extension().and_then(|s| s.to_str()) == Some("yml") {
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| anyhow::anyhow!("Invalid adapter filename: {:?}", path))?
-                .to_string();
-
-            let content = fs::read_to_string(&path)?;
-            let expanded_content = expand_secrets_in_text(&content, project_path)?;
-            let docs = YamlLoader::load_from_str(&expanded_content)?;
-            let yaml = &docs[0];
-
-            let adapter_config = adapter::parse_adapter_config(yaml)?;
-            adapters.insert(name, adapter_config);
+            let name = extract_config_name(&path, file_type)?;
+            let config = parse_config_file(&path, parse_fn, project_config, project_path)?;
+            configs.insert(name, config);
         }
     }
 
-    Ok(adapters)
+    Ok(configs)
 }
 
-fn load_models(project_path: &Path) -> Result<HashMap<String, ModelConfig>> {
-    let models_dir = project_path.join("models");
-    let mut models = HashMap::new();
+fn load_config_files_recursive<T>(
+    config_dir: &Path,
+    file_type: &str,
+    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    project_config: &ProjectConfig,
+    project_path: &Path,
+) -> Result<HashMap<String, T>> {
+    let mut configs = HashMap::new();
 
-    if !models_dir.exists() {
-        return Ok(models);
+    if !config_dir.exists() {
+        return Ok(configs);
     }
 
-    for entry in fs::read_dir(&models_dir)? {
+    collect_config_files_recursive(
+        config_dir,
+        file_type,
+        parse_fn,
+        project_config,
+        project_path,
+        &mut configs,
+    )?;
+
+    Ok(configs)
+}
+
+fn collect_config_files_recursive<T>(
+    dir: &Path,
+    file_type: &str,
+    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    project_config: &ProjectConfig,
+    project_path: &Path,
+    configs: &mut HashMap<String, T>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().and_then(|s| s.to_str()) == Some("yml") {
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| anyhow::anyhow!("Invalid model filename: {:?}", path))?
-                .to_string();
-
-            let content = fs::read_to_string(&path)?;
-            let expanded_content = expand_secrets_in_text(&content, project_path)?;
-            let docs = YamlLoader::load_from_str(&expanded_content)?;
-            let yaml = &docs[0];
-
-            let model_config = model::parse_model_config(yaml)?;
-            models.insert(name, model_config);
+        if path.is_dir() {
+            collect_config_files_recursive(
+                &path,
+                file_type,
+                parse_fn,
+                project_config,
+                project_path,
+                configs,
+            )?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("yml") {
+            let name = extract_config_name(&path, file_type)?;
+            let config = parse_config_file(&path, parse_fn, project_config, project_path)?;
+            configs.insert(name, config);
         }
     }
 
-    Ok(models)
+    Ok(())
+}
+
+fn extract_config_name(path: &Path, file_type: &str) -> Result<String> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Invalid {} filename: {:?}", file_type, path))
+        .map(|s| s.to_string())
+}
+
+fn parse_config_file<T>(
+    path: &Path,
+    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    project_config: &ProjectConfig,
+    project_path: &Path,
+) -> Result<T> {
+    let content = fs::read_to_string(path)?;
+    let expanded_content = expand_secrets_in_text(&content, project_config, project_path)?;
+    let docs = YamlLoader::load_from_str(&expanded_content)?;
+    let yaml = &docs[0];
+    parse_fn(yaml)
+}
+
+fn load_adapters(
+    project_config: &ProjectConfig,
+    project_path: &Path,
+) -> Result<HashMap<String, AdapterConfig>> {
+    load_config_files(
+        &project_path.join("adapters"),
+        "adapter",
+        adapter::parse_adapter_config,
+        project_config,
+        project_path,
+    )
+}
+
+fn load_models(
+    project_config: &ProjectConfig,
+    project_path: &Path,
+) -> Result<HashMap<String, ModelConfig>> {
+    load_config_files_recursive(
+        &project_path.join("models"),
+        "model",
+        model::parse_model_config,
+        project_config,
+        project_path,
+    )
 }
 
 #[cfg(test)]
@@ -140,7 +214,8 @@ mod tests {
               path: ./database.db
             deployments:
               timeout: 600
-            connections: {}"#;
+            connections: {}
+            secret_key_path: secret.key"#;
         fs::write(project_path.join("project.yml"), project_yml)?;
 
         let adapter_yml = r#"

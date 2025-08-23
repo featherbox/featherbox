@@ -3,12 +3,14 @@ use inquire::{Password, Select, Text};
 use std::path::Path;
 
 use crate::commands::workspace::find_project_root;
+use crate::config;
 use crate::secret::SecretManager;
 
 pub async fn execute_secret_new(current_dir: &Path) -> Result<()> {
     let project_root = find_project_root(Some(current_dir))?;
+    let config = config::load_from_directory(&project_root)?;
 
-    ensure_key_exists(&project_root)?;
+    ensure_key_exists(&config.project, &project_root)?;
 
     let key = Text::new("Secret key:")
         .with_help_message("Use letters, numbers, and underscores (e.g., db_password, API_KEY)")
@@ -28,7 +30,7 @@ pub async fn execute_secret_new(current_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let manager = SecretManager::new(&project_root)?;
+    let manager = SecretManager::new(&config.project, &project_root)?;
 
     let existing = manager.get_secret(&key)?;
     if existing.is_some() {
@@ -53,10 +55,11 @@ pub async fn execute_secret_new(current_dir: &Path) -> Result<()> {
 
 pub async fn execute_secret_edit(current_dir: &Path) -> Result<()> {
     let project_root = find_project_root(Some(current_dir))?;
+    let config = config::load_from_directory(&project_root)?;
 
-    ensure_key_exists(&project_root)?;
+    ensure_key_exists(&config.project, &project_root)?;
 
-    let manager = SecretManager::new(&project_root)?;
+    let manager = SecretManager::new(&config.project, &project_root)?;
     let keys = manager.list_secrets()?;
 
     if keys.is_empty() {
@@ -87,10 +90,11 @@ pub async fn execute_secret_edit(current_dir: &Path) -> Result<()> {
 
 pub async fn execute_secret_delete(current_dir: &Path) -> Result<()> {
     let project_root = find_project_root(Some(current_dir))?;
+    let config = config::load_from_directory(&project_root)?;
 
-    ensure_key_exists(&project_root)?;
+    ensure_key_exists(&config.project, &project_root)?;
 
-    let manager = SecretManager::new(&project_root)?;
+    let manager = SecretManager::new(&config.project, &project_root)?;
     let keys = manager.list_secrets()?;
 
     if keys.is_empty() {
@@ -124,7 +128,8 @@ pub async fn execute_secret_delete(current_dir: &Path) -> Result<()> {
 
 pub async fn execute_secret_gen_key(current_dir: &Path) -> Result<()> {
     let project_root = find_project_root(Some(current_dir))?;
-    let manager = SecretManager::new(&project_root)?;
+    let config = config::load_from_directory(&project_root)?;
+    let manager = SecretManager::new(&config.project, &project_root)?;
 
     if manager.key_exists() {
         let options = vec!["Yes, regenerate", "No, cancel"];
@@ -151,10 +156,11 @@ pub async fn execute_secret_gen_key(current_dir: &Path) -> Result<()> {
 
 pub async fn execute_secret_list(current_dir: &Path) -> Result<()> {
     let project_root = find_project_root(Some(current_dir))?;
+    let config = config::load_from_directory(&project_root)?;
 
-    ensure_key_exists(&project_root)?;
+    ensure_key_exists(&config.project, &project_root)?;
 
-    let manager = SecretManager::new(&project_root)?;
+    let manager = SecretManager::new(&config.project, &project_root)?;
     let keys = manager.list_secrets()?;
 
     if keys.is_empty() {
@@ -171,8 +177,11 @@ pub async fn execute_secret_list(current_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_key_exists(project_root: &Path) -> Result<()> {
-    let manager = SecretManager::new(project_root)?;
+fn ensure_key_exists(
+    project_config: &crate::config::project::ProjectConfig,
+    project_root: &Path,
+) -> Result<()> {
+    let manager = SecretManager::new(project_config, project_root)?;
     if !manager.key_exists() {
         return Err(anyhow::anyhow!(
             "Secret key not found. Run 'fbox secret gen-key' first."
