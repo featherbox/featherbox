@@ -1,8 +1,4 @@
 description: 'Generated model for {name}'
 sql: |
-  SELECT 
-    *
-  FROM 
-    -- TODO: specify source table
-    source_table
-max_age: 3600  # 1 hour in seconds
+  SELECT COUNT(*) FROM source_table
+max_age: 3600
