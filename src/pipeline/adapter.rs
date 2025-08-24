@@ -67,12 +67,8 @@ impl Adapter {
     ) -> Result<Option<DeltaMetadata>> {
         let filesystem = self.create_filesystem(connections).await?;
 
-        let file_paths = FileProcessor::files_for_processing_with_filesystem(
-            &self.config,
-            time_range,
-            &filesystem,
-        )
-        .await?;
+        let file_paths =
+            FileProcessor::files_for_processing(&self.config, time_range, &filesystem).await?;
 
         if file_paths.is_empty() {
             return Ok(None);

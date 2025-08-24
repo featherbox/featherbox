@@ -1,6 +1,6 @@
 use crate::{
     config::{
-        adapter::{AdapterConfig, LimitsConfig, RangeConfig, UpdateStrategyConfig},
+        adapter::{AdapterConfig, DetectionMethod, LimitsConfig},
         project::ConnectionConfig,
     },
     pipeline::build::TimeRange,
@@ -98,7 +98,7 @@ impl FileProcessor {
         let expanded_paths = filesystem.list_files(&pattern_to_expand).await?;
 
         let filtered_paths = if let Some(strategy) = &adapter.update_strategy {
-            Self::filter_paths_by_time_range(expanded_paths, &strategy.range, strategy)?
+            Self::filter_paths_by_time_range(expanded_paths, &strategy.range, &strategy.detection)?
         } else {
             expanded_paths
         };
@@ -110,28 +110,33 @@ impl FileProcessor {
         Ok(filtered_paths)
     }
 
-    pub async fn files_for_processing_with_filesystem(
+    pub async fn find_matching_files(
+        pattern: &str,
+        filesystem: &FileSystem,
+    ) -> Result<Vec<String>> {
+        let pattern = if Self::has_date_pattern(pattern) {
+            Self::convert_date_pattern_to_wildcard(pattern)
+        } else {
+            pattern.to_string()
+        };
+
+        filesystem.list_files(&pattern).await
+    }
+
+    pub fn filter_by_time_range(
+        files: Vec<String>,
+        range: &TimeRange,
+        strategy: &DetectionMethod,
+    ) -> Result<Vec<String>> {
+        Self::filter_paths_by_time_range(files, range, strategy)
+    }
+
+    pub async fn files_for_processing(
         adapter: &AdapterConfig,
         range: Option<TimeRange>,
         filesystem: &FileSystem,
     ) -> Result<Vec<String>> {
-        let Some(time_range) = range else {
-            return Ok(Vec::new());
-        };
-
-        let mut adapter_with_range = adapter.clone();
-
-        if let Some(ref mut strategy) = adapter_with_range.update_strategy {
-            let adapter_range = &mut strategy.range;
-            if let Some(since) = time_range.since {
-                adapter_range.since = Some(since.naive_utc());
-            }
-            if let Some(until) = time_range.until {
-                adapter_range.until = Some(until.naive_utc());
-            }
-        }
-
-        let file_path = match &adapter_with_range.source {
+        let pattern = match &adapter.source {
             crate::config::adapter::AdapterSource::File { file, .. } => &file.path,
             _ => {
                 return Err(anyhow::anyhow!(
@@ -140,11 +145,13 @@ impl FileProcessor {
             }
         };
 
-        let file_paths =
-            Self::process_pattern_with_filesystem(file_path, &adapter_with_range, filesystem)
-                .await?;
+        let mut files = Self::find_matching_files(pattern, filesystem).await?;
 
-        Ok(file_paths)
+        if let (Some(update_strategy), Some(range)) = (&adapter.update_strategy, range.as_ref()) {
+            files = Self::filter_by_time_range(files, range, &update_strategy.detection)?;
+        }
+
+        Ok(files)
     }
 
     fn has_date_pattern(pattern: &str) -> bool {
@@ -169,31 +176,24 @@ impl FileProcessor {
 
     fn filter_paths_by_time_range(
         paths: Vec<String>,
-        range: &RangeConfig,
-        strategy: &UpdateStrategyConfig,
+        range: &TimeRange,
+        method: &DetectionMethod,
     ) -> Result<Vec<String>> {
-        match strategy.detection.as_str() {
-            "filename" => Self::filter_by_filename_timestamps(paths, range),
-            "metadata" => Self::filter_by_file_metadata(paths, range),
-            _ => Ok(paths),
+        match method {
+            DetectionMethod::Filename => Self::filter_by_filename_timestamps(paths, range),
+            DetectionMethod::Metadata => Self::filter_by_file_metadata(paths, range),
         }
     }
 
-    fn filter_by_filename_timestamps(
-        paths: Vec<String>,
-        range: &RangeConfig,
-    ) -> Result<Vec<String>> {
-        let since = range
-            .since
-            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
-        let until = range
-            .until
-            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+    fn filter_by_filename_timestamps(paths: Vec<String>, range: &TimeRange) -> Result<Vec<String>> {
+        let since = range.since.unwrap_or_else(chrono::Utc::now);
+        let until = range.until.unwrap_or_else(chrono::Utc::now);
 
         let mut filtered_paths = Vec::new();
         for path in paths {
             if let Some(timestamp) = Self::extract_timestamp_from_filename(&path) {
-                if timestamp >= since && timestamp <= until {
+                let timestamp_utc = timestamp.and_utc();
+                if timestamp_utc >= since && timestamp_utc <= until {
                     filtered_paths.push(path);
                 }
             }
@@ -201,19 +201,15 @@ impl FileProcessor {
         Ok(filtered_paths)
     }
 
-    fn filter_by_file_metadata(paths: Vec<String>, range: &RangeConfig) -> Result<Vec<String>> {
-        let since = range
-            .since
-            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
-        let until = range
-            .until
-            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+    fn filter_by_file_metadata(paths: Vec<String>, range: &TimeRange) -> Result<Vec<String>> {
+        let since = range.since.unwrap_or_else(chrono::Utc::now);
+        let until = range.until.unwrap_or_else(chrono::Utc::now);
 
         let mut filtered_paths = Vec::new();
         for path in paths {
             if let Ok(metadata) = std::fs::metadata(&path) {
                 if let Ok(modified) = metadata.modified() {
-                    let modified_time = chrono::DateTime::<chrono::Utc>::from(modified).naive_utc();
+                    let modified_time = chrono::DateTime::<chrono::Utc>::from(modified);
                     if modified_time >= since && modified_time <= until {
                         filtered_paths.push(path);
                     }
@@ -296,6 +292,8 @@ impl FileProcessor {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
     use crate::config::adapter::{FileConfig, FormatConfig, UpdateStrategyConfig};
 
@@ -392,9 +390,9 @@ mod tests {
     async fn test_process_pattern_with_non_filename_detection() {
         let mut adapter = create_test_adapter("data/*.csv");
         adapter.update_strategy = Some(UpdateStrategyConfig {
-            detection: "content".to_string(),
+            detection: DetectionMethod::Filename,
             timestamp_from: None,
-            range: RangeConfig {
+            range: TimeRange {
                 since: None,
                 until: None,
             },
@@ -422,25 +420,27 @@ mod tests {
         fs::write(format!("{test_dir}/users_2024-02-01.csv"), "test data").unwrap();
         fs::write(format!("{test_dir}/users_2024-03-01.csv"), "test data").unwrap();
 
-        let range_config = RangeConfig {
+        let range_config = TimeRange {
             since: Some(
                 NaiveDate::from_ymd_opt(2024, 1, 1)
                     .unwrap()
                     .and_hms_opt(0, 0, 0)
-                    .unwrap(),
+                    .unwrap()
+                    .and_utc(),
             ),
             until: Some(
                 NaiveDate::from_ymd_opt(2024, 1, 31)
                     .unwrap()
                     .and_hms_opt(23, 59, 59)
-                    .unwrap(),
+                    .unwrap()
+                    .and_utc(),
             ),
         };
 
         let mut adapter_date_pattern =
             create_test_adapter(&format!("{test_dir}/users_{{YYYY}}-{{MM}}-{{DD}}.csv"));
         adapter_date_pattern.update_strategy = Some(UpdateStrategyConfig {
-            detection: "filename".to_string(),
+            detection: DetectionMethod::Filename,
             timestamp_from: None,
             range: range_config.clone(),
         });
@@ -478,7 +478,7 @@ mod tests {
 
         let mut adapter_wildcard = create_test_adapter(&format!("{test_dir}/users_*.csv"));
         adapter_wildcard.update_strategy = Some(UpdateStrategyConfig {
-            detection: "filename".to_string(),
+            detection: DetectionMethod::Filename,
             timestamp_from: None,
             range: range_config,
         });
@@ -502,5 +502,27 @@ mod tests {
         }
 
         fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_files_for_processing() {
+        use std::fs;
+        let tmpdir = TempDir::new().unwrap().path().to_path_buf();
+        let tmppath = tmpdir.to_str().unwrap();
+        fs::remove_dir_all(tmppath).ok();
+        fs::create_dir_all(tmppath).unwrap();
+        fs::write(format!("{tmppath}/users.csv"), "id,name\n1,Alice\n2,Bob").unwrap();
+
+        let mut adapter = create_test_adapter(&format!("{tmppath}/users.csv"));
+        adapter.update_strategy = None;
+
+        let result = FileProcessor::files_for_processing(
+            &adapter,
+            None,
+            &FileSystem::new_local(Some(tmppath.to_string())),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), vec![format!("{tmppath}/users.csv")]);
     }
 }

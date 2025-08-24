@@ -1,3 +1,5 @@
+use crate::pipeline::build::TimeRange;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdapterConfig {
     pub connection: String,
@@ -28,15 +30,15 @@ pub struct FileConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateStrategyConfig {
-    pub detection: String,
+    pub detection: DetectionMethod,
     pub timestamp_from: Option<String>,
-    pub range: RangeConfig,
+    pub range: TimeRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct RangeConfig {
-    pub since: Option<chrono::NaiveDateTime>,
-    pub until: Option<chrono::NaiveDateTime>,
+pub enum DetectionMethod {
+    Filename,
+    Metadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,11 +145,19 @@ fn parse_update_strategy(yaml: &yaml_rust2::Yaml) -> Option<UpdateStrategyConfig
         return None;
     };
 
+    let detection = match detection.as_str() {
+        "filename" => DetectionMethod::Filename,
+        "metadata" => DetectionMethod::Metadata,
+        _ => {
+            panic!("Unsupported detection method: {detection}");
+        }
+    };
+
     let timestamp_from = yaml["timestamp_from"].as_str().map(|s| s.to_string());
     let range = if !yaml["range"].is_badvalue() {
         parse_range(&yaml["range"])
     } else {
-        RangeConfig {
+        TimeRange {
             since: None,
             until: None,
         }
@@ -160,7 +170,7 @@ fn parse_update_strategy(yaml: &yaml_rust2::Yaml) -> Option<UpdateStrategyConfig
     })
 }
 
-fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
+fn parse_range(yaml: &yaml_rust2::Yaml) -> TimeRange {
     let since = yaml["since"].as_str().map(|s| s.to_string());
     let until = yaml["until"].as_str().map(|s| s.to_string());
 
@@ -171,6 +181,7 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
                     .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
             })
             .ok()
+            .map(|naive| naive.and_utc())
     });
 
     let until = until.as_ref().and_then(|s| {
@@ -180,9 +191,10 @@ fn parse_range(yaml: &yaml_rust2::Yaml) -> RangeConfig {
                     .map(|date| date.and_hms_opt(23, 59, 59).unwrap())
             })
             .ok()
+            .map(|naive| naive.and_utc())
     });
 
-    RangeConfig { since, until }
+    TimeRange { since, until }
 }
 
 fn parse_limits(yaml: &yaml_rust2::Yaml) -> LimitsConfig {
@@ -315,7 +327,7 @@ mod tests {
 
         assert!(config.update_strategy.is_some());
         let update_strategy = config.update_strategy.as_ref().unwrap();
-        assert_eq!(update_strategy.detection, "filename");
+        assert_eq!(update_strategy.detection, DetectionMethod::Filename);
         assert_eq!(update_strategy.timestamp_from, Some("path".to_string()));
         assert!(update_strategy.range.since.is_some());
 
@@ -384,7 +396,7 @@ mod tests {
     #[test]
     fn test_parse_update_strategy() {
         let yaml_str = r#"
-            detection: content
+            detection: metadata
             timestamp_from: timestamp_column
             range:
               since: 2024-01-01
@@ -396,7 +408,7 @@ mod tests {
         let config = parse_update_strategy(yaml);
         assert!(config.is_some());
         let config = config.unwrap();
-        assert_eq!(config.detection, "content");
+        assert_eq!(config.detection, DetectionMethod::Metadata);
         assert_eq!(config.timestamp_from, Some("timestamp_column".to_string()));
         let range = &config.range;
         assert!(range.since.is_some());

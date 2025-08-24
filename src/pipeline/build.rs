@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, adapter::RangeConfig},
+    config::Config,
     dependency::{get_executed_ranges_for_graph, graph::Graph},
 };
 use anyhow::Result;
@@ -235,7 +235,7 @@ pub struct ExecutedRange {
 }
 
 pub fn calculate_remaining_range(
-    config_range: &RangeConfig,
+    config_range: &TimeRange,
     executed_ranges: &[ExecutedRange],
 ) -> Result<Option<TimeRange>> {
     let Some(config_since) = config_range.since else {
@@ -245,19 +245,10 @@ pub fn calculate_remaining_range(
         return Ok(None);
     };
 
-    let config_since_utc = config_since
-        .and_utc()
-        .checked_add_signed(chrono::Duration::zero())
-        .ok_or_else(|| anyhow::anyhow!("Failed to convert config_since to UTC"))?;
-    let config_until_utc = config_until
-        .and_utc()
-        .checked_add_signed(chrono::Duration::zero())
-        .ok_or_else(|| anyhow::anyhow!("Failed to convert config_until to UTC"))?;
-
     if executed_ranges.is_empty() {
         return Ok(Some(TimeRange {
-            since: Some(config_since_utc),
-            until: Some(config_until_utc),
+            since: Some(config_since),
+            until: Some(config_until),
         }));
     }
 
@@ -287,19 +278,19 @@ pub fn calculate_remaining_range(
 
     let last_executed = merged_ranges.last().unwrap();
 
-    if last_executed.until >= config_until_utc {
+    if last_executed.until >= config_until {
         return Ok(None);
     }
 
-    let start_time = if last_executed.until >= config_since_utc {
+    let start_time = if last_executed.until >= config_since {
         last_executed.until
     } else {
-        config_since_utc
+        config_since
     };
 
     Ok(Some(TimeRange {
         since: Some(start_time),
-        until: Some(config_until_utc),
+        until: Some(config_until),
     }))
 }
 
@@ -429,18 +420,20 @@ mod tests {
 
     #[test]
     fn test_calculate_remaining_range_empty_executed() {
-        let config_range = RangeConfig {
+        let config_range = TimeRange {
             since: Some(
                 chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
                     .unwrap()
                     .and_hms_opt(0, 0, 0)
-                    .unwrap(),
+                    .unwrap()
+                    .and_utc(),
             ),
             until: Some(
                 chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
                     .unwrap()
                     .and_hms_opt(23, 59, 59)
-                    .unwrap(),
+                    .unwrap()
+                    .and_utc(),
             ),
         };
 
