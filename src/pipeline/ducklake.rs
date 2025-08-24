@@ -1,7 +1,8 @@
-use crate::config::project::{ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod};
+use crate::config::project::{
+    ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod, StorageConfig,
+};
 use anyhow::{Context, Result};
 use duckdb::Connection;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -14,11 +15,6 @@ pub enum CatalogConfig {
         db_type: DatabaseType,
         config: RemoteDatabaseConfig,
     },
-}
-
-#[derive(Debug, Clone)]
-pub enum StorageConfig {
-    LocalFile { path: String },
 }
 
 #[derive(Clone)]
@@ -43,36 +39,8 @@ impl DuckLake {
         Ok(instance)
     }
 
-    pub async fn new_with_connections(
-        catalog_config: CatalogConfig,
-        storage_config: StorageConfig,
-        connections: HashMap<String, ConnectionConfig>,
-    ) -> Result<Self> {
-        let connection =
-            Connection::open_in_memory().context("Failed to create DuckDB connection")?;
-
-        let instance = Self {
-            catalog_config,
-            storage_config,
-            connection: Arc::new(Mutex::new(connection)),
-        };
-
-        instance.initialize_with_connections(&connections).await?;
-        Ok(instance)
-    }
-
     async fn initialize(&self) -> Result<()> {
         self.initialize_base().await?;
-        self.attach().await?;
-        Ok(())
-    }
-
-    async fn initialize_with_connections(
-        &self,
-        connections: &HashMap<String, ConnectionConfig>,
-    ) -> Result<()> {
-        self.initialize_base().await?;
-        self.configure_s3_connections(connections).await?;
         self.attach().await?;
         Ok(())
     }
@@ -83,109 +51,91 @@ impl DuckLake {
         Ok(())
     }
 
-    async fn configure_s3_connections(
-        &self,
-        connections: &HashMap<String, ConnectionConfig>,
-    ) -> Result<()> {
-        let has_s3_connection = connections
-            .values()
-            .any(|conn| matches!(conn, ConnectionConfig::S3 { .. }));
-
-        if has_s3_connection {
+    pub async fn configure_s3_connection(&self, connection: &ConnectionConfig) -> Result<()> {
+        if let ConnectionConfig::S3 {
+            bucket: _,
+            region,
+            endpoint_url: _,
+            auth_method,
+            access_key_id,
+            secret_access_key,
+            session_token,
+            path_style_access,
+        } = connection
+        {
             self.execute_batch("INSTALL httpfs; LOAD httpfs;")
                 .context("Failed to install and load httpfs extension for S3")?;
 
-            for connection in connections.values() {
-                if let ConnectionConfig::S3 {
-                    bucket: _,
-                    region,
-                    endpoint_url,
-                    auth_method,
-                    access_key_id,
-                    secret_access_key,
-                    session_token,
-                } = connection
-                {
-                    self.apply_s3_authentication(
-                        region,
-                        endpoint_url.as_ref(),
-                        auth_method,
-                        access_key_id,
-                        secret_access_key,
-                        session_token.as_ref(),
-                    )
-                    .await?;
-                    break;
+            match auth_method {
+                S3AuthMethod::CredentialChain => {
+                    self.execute_batch("INSTALL aws; LOAD aws;")
+                        .context("Failed to install and load aws extension for credential chain")?;
+
+                    let mut create_secret_parts = vec![
+                        "CREATE OR REPLACE SECRET s3_secret (".to_string(),
+                        "    TYPE S3,".to_string(),
+                        format!("    REGION '{}'", region),
+                        ",    PROVIDER credential_chain".to_string(),
+                    ];
+
+                    if let Some(endpoint) = connection.get_full_endpoint_url() {
+                        create_secret_parts.push(format!(",    ENDPOINT '{endpoint}'"));
+                    }
+
+                    if *path_style_access {
+                        create_secret_parts.push(",    URL_STYLE 'path'".to_string());
+                    }
+
+                    create_secret_parts.push(");".to_string());
+
+                    let create_secret_sql = create_secret_parts.join("\n");
+                    self.execute_batch(&create_secret_sql)
+                        .context("Failed to create S3 secret with credential chain")?;
+                }
+                S3AuthMethod::Explicit => {
+                    let mut s3_settings = vec![
+                        format!("SET s3_region = '{}';", region),
+                        format!("SET s3_access_key_id = '{}';", access_key_id),
+                        format!("SET s3_secret_access_key = '{}';", secret_access_key),
+                    ];
+
+                    if let Some(clean_endpoint) = connection.get_clean_endpoint_url() {
+                        s3_settings.push(format!("SET s3_endpoint = '{clean_endpoint}';"));
+                    }
+
+                    if *path_style_access {
+                        s3_settings.push("SET s3_url_style = 'path';".to_string());
+                    }
+
+                    if !connection.uses_ssl() {
+                        s3_settings.push("SET s3_use_ssl = false;".to_string());
+                    }
+
+                    if let Some(token) = session_token {
+                        s3_settings.push(format!("SET s3_session_token = '{token}';"));
+                    }
+
+                    let settings_sql = s3_settings.join(" ");
+                    self.execute_batch(&settings_sql)
+                        .context("Failed to configure S3 authentication settings")?;
                 }
             }
         }
-        Ok(())
-    }
-
-    async fn apply_s3_authentication(
-        &self,
-        region: &str,
-        endpoint_url: Option<&String>,
-        auth_method: &S3AuthMethod,
-        access_key_id: &str,
-        secret_access_key: &str,
-        session_token: Option<&String>,
-    ) -> Result<()> {
-        match auth_method {
-            S3AuthMethod::CredentialChain => {
-                self.execute_batch("INSTALL aws; LOAD aws;")
-                    .context("Failed to install and load aws extension for credential chain")?;
-
-                let mut create_secret_parts = vec![
-                    "CREATE OR REPLACE SECRET s3_secret (".to_string(),
-                    "    TYPE S3,".to_string(),
-                    format!("    REGION '{}'", region),
-                    ",    PROVIDER credential_chain".to_string(),
-                ];
-
-                if let Some(endpoint) = endpoint_url {
-                    create_secret_parts.push(format!(",    ENDPOINT '{endpoint}'"));
-                }
-
-                create_secret_parts.push(");".to_string());
-
-                let create_secret_sql = create_secret_parts.join("\n");
-                self.execute_batch(&create_secret_sql)
-                    .context("Failed to create S3 secret with credential chain")?;
-            }
-            S3AuthMethod::Explicit => {
-                let mut s3_settings = vec![
-                    format!("SET s3_region = '{}';", region),
-                    format!("SET s3_access_key_id = '{}';", access_key_id),
-                    format!("SET s3_secret_access_key = '{}';", secret_access_key),
-                ];
-
-                if let Some(endpoint) = endpoint_url {
-                    s3_settings.push(format!("SET s3_endpoint = '{endpoint}';"));
-                }
-
-                if let Some(token) = session_token {
-                    s3_settings.push(format!("SET s3_session_token = '{token}';"));
-                }
-
-                let settings_sql = s3_settings.join(" ");
-                self.execute_batch(&settings_sql)
-                    .context("Failed to configure S3 authentication settings")?;
-            }
-        }
-
         Ok(())
     }
 
     async fn attach(&self) -> Result<()> {
         let (extension_sql, attach_sql) = self.catalog_sql()?;
 
-        let data_path = match &self.storage_config {
-            StorageConfig::LocalFile { path } => path,
+        match &self.storage_config {
+            StorageConfig::LocalFile { path } => {
+                std::fs::create_dir_all(path)
+                    .with_context(|| format!("Failed to create storage directory: {path}"))?;
+            }
+            StorageConfig::S3 { .. } => {
+                self.configure_s3_storage().await?;
+            }
         };
-
-        std::fs::create_dir_all(data_path)
-            .with_context(|| format!("Failed to create storage directory: {data_path}"))?;
 
         self.execute_batch(&extension_sql)
             .context("Failed to install and load database extension")?;
@@ -205,9 +155,7 @@ impl DuckLake {
                         .context("Failed to create catalog directory")?;
                 }
 
-                let data_path = match &self.storage_config {
-                    StorageConfig::LocalFile { path } => path,
-                };
+                let data_path = self.get_storage_path();
 
                 let extension_sql = "INSTALL sqlite; LOAD sqlite;".to_string();
                 let attach_sql = format!(
@@ -217,9 +165,7 @@ impl DuckLake {
                 Ok((extension_sql, attach_sql))
             }
             CatalogConfig::RemoteDatabase { db_type, config } => {
-                let data_path = match &self.storage_config {
-                    StorageConfig::LocalFile { path } => path,
-                };
+                let data_path = self.get_storage_path();
 
                 let (extension_name, connection_string) = match db_type {
                     DatabaseType::Mysql => {
@@ -267,7 +213,7 @@ impl DuckLake {
 
         connection
             .execute_batch(sql)
-            .context("Failed to execute batch SQL")
+            .with_context(|| format!("Failed to execute batch SQL: {sql}"))
     }
 
     pub fn query(&self, sql: &str) -> Result<Vec<Vec<String>>> {
@@ -389,12 +335,153 @@ impl DuckLake {
             .collect();
         Ok(columns)
     }
+
+    async fn configure_s3_storage(&self) -> Result<()> {
+        if let StorageConfig::S3 {
+            bucket: _,
+            region,
+            endpoint_url,
+            auth_method,
+            access_key_id,
+            secret_access_key,
+            session_token,
+        } = &self.storage_config
+        {
+            self.execute_batch("INSTALL httpfs; LOAD httpfs;")
+                .context("Failed to install and load httpfs extension")?;
+
+            let secret_sql = Self::build_s3_secret_sql(
+                region,
+                endpoint_url.as_deref(),
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token.as_deref(),
+                false,
+                "s3_secret",
+                true,
+            );
+
+            self.execute_batch(&secret_sql)
+                .context("Failed to create S3 secret")?;
+        }
+
+        Ok(())
+    }
+
+    fn build_s3_secret_sql(
+        region: &str,
+        endpoint_url: Option<&str>,
+        auth_method: &S3AuthMethod,
+        access_key_id: &str,
+        secret_access_key: &str,
+        session_token: Option<&str>,
+        path_style_access: bool,
+        secret_name: &str,
+        if_not_exists: bool,
+    ) -> String {
+        let is_minio = endpoint_url
+            .map(|url| url.contains("localhost") || url.contains("127.0.0.1"))
+            .unwrap_or(false);
+
+        let create_clause = if if_not_exists {
+            format!("CREATE SECRET IF NOT EXISTS {secret_name}")
+        } else {
+            format!("CREATE OR REPLACE SECRET {secret_name}")
+        };
+
+        let mut sql = match auth_method {
+            S3AuthMethod::Explicit => format!(
+                "{create_clause} (
+                    TYPE S3,
+                    KEY_ID '{access_key_id}',
+                    SECRET '{secret_access_key}',
+                    REGION '{region}'"
+            ),
+            S3AuthMethod::CredentialChain => format!(
+                "{create_clause} (
+                    TYPE S3,
+                    PROVIDER credential_chain,
+                    REGION '{region}'"
+            ),
+        };
+
+        if let Some(endpoint) = endpoint_url {
+            let clean_endpoint = endpoint
+                .strip_prefix("http://")
+                .or_else(|| endpoint.strip_prefix("https://"))
+                .unwrap_or(endpoint);
+            sql.push_str(&format!(",\n    ENDPOINT '{clean_endpoint}'"));
+        }
+
+        if let Some(token) = session_token {
+            sql.push_str(&format!(",\n    SESSION_TOKEN '{token}'"));
+        }
+
+        if path_style_access || is_minio {
+            sql.push_str(",\n    URL_STYLE 'path'");
+        }
+
+        if is_minio {
+            sql.push_str(",\n    USE_SSL false");
+        }
+
+        sql.push_str("\n);");
+        sql
+    }
+
+    fn get_storage_path(&self) -> String {
+        match &self.storage_config {
+            StorageConfig::LocalFile { path } => path.clone(),
+            StorageConfig::S3 { bucket, .. } => format!("s3://{bucket}/ducklake"),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_test_s3_storage(
+        bucket: &str,
+        region: &str,
+        endpoint_url: Option<String>,
+        auth_method: S3AuthMethod,
+        access_key_id: &str,
+        secret_access_key: &str,
+    ) -> StorageConfig {
+        create_test_s3_storage_with_session_token(
+            bucket,
+            region,
+            endpoint_url,
+            auth_method,
+            access_key_id,
+            secret_access_key,
+            None,
+        )
+    }
+
+    fn create_test_s3_storage_with_session_token(
+        bucket: &str,
+        region: &str,
+        endpoint_url: Option<String>,
+        auth_method: S3AuthMethod,
+        access_key_id: &str,
+        secret_access_key: &str,
+        session_token: Option<String>,
+    ) -> StorageConfig {
+        StorageConfig::S3 {
+            bucket: bucket.to_string(),
+            region: region.to_string(),
+            endpoint_url,
+            auth_method,
+            access_key_id: access_key_id.to_string(),
+            secret_access_key: secret_access_key.to_string(),
+            session_token,
+        }
+    }
     use crate::config::project::ConnectionConfig;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_ducklake_new() {
@@ -413,6 +500,122 @@ mod tests {
 
         let ducklake = DuckLake::new(catalog_config, storage_config).await;
         assert!(ducklake.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ducklake_new_with_s3() {
+        use std::fs;
+
+        let test_dir = "/tmp/ducklake_s3_test";
+        fs::remove_dir_all(test_dir).ok();
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = create_test_s3_storage(
+            "test-bucket",
+            "us-east-1",
+            Some("http://localhost:9010".to_string()),
+            S3AuthMethod::Explicit,
+            "test_key",
+            "test_secret",
+        );
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await;
+        assert!(ducklake.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ducklake_configure_s3_explicit_auth() {
+        use std::fs;
+
+        let test_dir = "/tmp/ducklake_s3_auth_test";
+        fs::remove_dir_all(test_dir).ok();
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = create_test_s3_storage_with_session_token(
+            "test-bucket",
+            "us-west-2",
+            Some("https://s3.us-west-2.amazonaws.com".to_string()),
+            S3AuthMethod::Explicit,
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            Some("test-session-token".to_string()),
+        );
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await;
+        assert!(ducklake.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ducklake_configure_s3_credential_chain() {
+        use std::fs;
+
+        let test_dir = "/tmp/ducklake_s3_creds_test";
+        fs::remove_dir_all(test_dir).ok();
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+        let storage_config = StorageConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "eu-central-1".to_string(),
+            endpoint_url: None,
+            auth_method: S3AuthMethod::CredentialChain,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            session_token: None,
+        };
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await;
+        assert!(ducklake.is_ok());
+    }
+
+    #[test]
+    fn test_get_storage_path_local() {
+        let storage_config = StorageConfig::LocalFile {
+            path: "/tmp/test_storage".to_string(),
+        };
+        let catalog_config = CatalogConfig::Sqlite {
+            path: "/tmp/test.db".to_string(),
+        };
+
+        let ducklake = DuckLake {
+            catalog_config,
+            storage_config,
+            connection: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        };
+
+        assert_eq!(ducklake.get_storage_path(), "/tmp/test_storage");
+    }
+
+    #[test]
+    fn test_get_storage_path_s3() {
+        let storage_config = StorageConfig::S3 {
+            bucket: "my-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint_url: None,
+            auth_method: S3AuthMethod::Explicit,
+            access_key_id: "key".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: None,
+        };
+        let catalog_config = CatalogConfig::Sqlite {
+            path: "/tmp/test.db".to_string(),
+        };
+
+        let ducklake = DuckLake {
+            catalog_config,
+            storage_config,
+            connection: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        };
+
+        assert_eq!(ducklake.get_storage_path(), "s3://my-bucket/ducklake");
     }
 
     #[tokio::test]
@@ -474,12 +677,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ducklake_new_with_s3_connection() {
+    async fn test_ducklake_configure_s3_connection_explicit() {
         use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
 
-        let test_dir = "/tmp/ducklake_s3_test";
-        fs::remove_dir_all(test_dir).ok();
-        fs::create_dir_all(test_dir).unwrap();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_dir = format!("/tmp/ducklake_s3_test_{timestamp}");
+        fs::remove_dir_all(&test_dir).ok();
+        fs::create_dir_all(&test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
             path: format!("{test_dir}/test_catalog.sqlite"),
@@ -488,25 +696,22 @@ mod tests {
             path: format!("{test_dir}/test_storage"),
         };
 
-        let mut connections = HashMap::new();
-        connections.insert(
-            "s3_connection".to_string(),
-            ConnectionConfig::S3 {
-                bucket: "test-bucket".to_string(),
-                region: "us-east-1".to_string(),
-                endpoint_url: Some("https://s3.amazonaws.com".to_string()),
-                auth_method: S3AuthMethod::Explicit,
-                access_key_id: "test_access_key".to_string(),
-                secret_access_key: "test_secret_key".to_string(),
-                session_token: Some("test_session_token".to_string()),
-            },
-        );
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
 
-        let ducklake =
-            DuckLake::new_with_connections(catalog_config, storage_config, connections).await;
-        assert!(ducklake.is_ok());
+        let s3_connection = ConnectionConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint_url: Some("https://s3.amazonaws.com".to_string()),
+            auth_method: S3AuthMethod::Explicit,
+            access_key_id: "test_access_key".to_string(),
+            secret_access_key: "test_secret_key".to_string(),
+            session_token: Some("test_session_token".to_string()),
+            path_style_access: false,
+        };
 
-        let ducklake = ducklake.unwrap();
+        let configure_result = ducklake.configure_s3_connection(&s3_connection).await;
+        assert!(configure_result.is_ok());
+
         let result = ducklake.query("SELECT current_setting('s3_region')");
         assert!(
             result.is_ok(),
@@ -518,12 +723,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ducklake_new_with_mixed_connections() {
+    async fn test_ducklake_configure_s3_connection_with_endpoint() {
         use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
 
-        let test_dir = "/tmp/ducklake_mixed_test";
-        fs::remove_dir_all(test_dir).ok();
-        fs::create_dir_all(test_dir).unwrap();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_dir = format!("/tmp/ducklake_mixed_test_{timestamp}");
+        fs::remove_dir_all(&test_dir).ok();
+        fs::create_dir_all(&test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
             path: format!("{test_dir}/test_catalog.sqlite"),
@@ -532,31 +742,22 @@ mod tests {
             path: format!("{test_dir}/test_storage"),
         };
 
-        let mut connections = HashMap::new();
-        connections.insert(
-            "local_connection".to_string(),
-            ConnectionConfig::LocalFile {
-                base_path: "/tmp/local".to_string(),
-            },
-        );
-        connections.insert(
-            "s3_connection".to_string(),
-            ConnectionConfig::S3 {
-                bucket: "test-bucket".to_string(),
-                region: "us-west-2".to_string(),
-                endpoint_url: None,
-                auth_method: S3AuthMethod::Explicit,
-                access_key_id: "test_access_key".to_string(),
-                secret_access_key: "test_secret_key".to_string(),
-                session_token: None,
-            },
-        );
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
 
-        let ducklake =
-            DuckLake::new_with_connections(catalog_config, storage_config, connections).await;
-        assert!(ducklake.is_ok());
+        let s3_connection = ConnectionConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "us-west-2".to_string(),
+            endpoint_url: None,
+            auth_method: S3AuthMethod::Explicit,
+            access_key_id: "test_access_key".to_string(),
+            secret_access_key: "test_secret_key".to_string(),
+            session_token: None,
+            path_style_access: false,
+        };
 
-        let ducklake = ducklake.unwrap();
+        let configure_result = ducklake.configure_s3_connection(&s3_connection).await;
+        assert!(configure_result.is_ok());
+
         let result = ducklake.query("SELECT current_setting('s3_region')");
         assert!(
             result.is_ok(),
@@ -590,8 +791,7 @@ mod tests {
             },
         );
 
-        let ducklake =
-            DuckLake::new_with_connections(catalog_config, storage_config, connections).await;
+        let ducklake = DuckLake::new(catalog_config, storage_config).await;
         assert!(ducklake.is_ok());
 
         let ducklake = ducklake.unwrap();
@@ -611,12 +811,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ducklake_new_with_s3_credential_chain() {
+    async fn test_ducklake_configure_s3_connection_credential_chain() {
         use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
 
-        let test_dir = "/tmp/ducklake_credential_chain_test";
-        fs::remove_dir_all(test_dir).ok();
-        fs::create_dir_all(test_dir).unwrap();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_dir = format!("/tmp/ducklake_credential_chain_test_{timestamp}");
+        fs::remove_dir_all(&test_dir).ok();
+        fs::create_dir_all(&test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
             path: format!("{test_dir}/test_catalog.sqlite"),
@@ -625,23 +830,21 @@ mod tests {
             path: format!("{test_dir}/test_storage"),
         };
 
-        let mut connections = HashMap::new();
-        connections.insert(
-            "s3_connection".to_string(),
-            ConnectionConfig::S3 {
-                bucket: "test-bucket".to_string(),
-                region: "eu-west-1".to_string(),
-                endpoint_url: Some("https://s3.eu-west-1.amazonaws.com".to_string()),
-                auth_method: S3AuthMethod::CredentialChain,
-                access_key_id: String::new(),
-                secret_access_key: String::new(),
-                session_token: None,
-            },
-        );
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
 
-        let ducklake = DuckLake::new_with_connections(catalog_config, storage_config, connections)
-            .await
-            .unwrap();
+        let s3_connection = ConnectionConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "eu-west-1".to_string(),
+            endpoint_url: Some("https://s3.eu-west-1.amazonaws.com".to_string()),
+            auth_method: S3AuthMethod::CredentialChain,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            session_token: None,
+            path_style_access: false,
+        };
+
+        let configure_result = ducklake.configure_s3_connection(&s3_connection).await;
+        assert!(configure_result.is_ok());
 
         let result = ducklake.query("SELECT 1 as test_query");
         assert!(
@@ -651,12 +854,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ducklake_new_with_s3_credential_chain_basic() {
+    async fn test_ducklake_configure_s3_connection_credential_chain_basic() {
         use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
 
-        let test_dir = "/tmp/ducklake_credential_chain_basic_test";
-        fs::remove_dir_all(test_dir).ok();
-        fs::create_dir_all(test_dir).unwrap();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_dir = format!("/tmp/ducklake_credential_chain_basic_test_{timestamp}");
+        fs::remove_dir_all(&test_dir).ok();
+        fs::create_dir_all(&test_dir).unwrap();
 
         let catalog_config = CatalogConfig::Sqlite {
             path: format!("{test_dir}/test_catalog.sqlite"),
@@ -665,23 +873,21 @@ mod tests {
             path: format!("{test_dir}/test_storage"),
         };
 
-        let mut connections = HashMap::new();
-        connections.insert(
-            "s3_connection".to_string(),
-            ConnectionConfig::S3 {
-                bucket: "test-bucket".to_string(),
-                region: "us-west-2".to_string(),
-                endpoint_url: None,
-                auth_method: S3AuthMethod::CredentialChain,
-                access_key_id: String::new(),
-                secret_access_key: String::new(),
-                session_token: None,
-            },
-        );
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
 
-        let ducklake = DuckLake::new_with_connections(catalog_config, storage_config, connections)
-            .await
-            .unwrap();
+        let s3_connection = ConnectionConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "us-west-2".to_string(),
+            endpoint_url: None,
+            auth_method: S3AuthMethod::CredentialChain,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            session_token: None,
+            path_style_access: false,
+        };
+
+        let configure_result = ducklake.configure_s3_connection(&s3_connection).await;
+        assert!(configure_result.is_ok());
 
         let result = ducklake.query("SELECT 1 as test_query");
         assert!(result.is_ok(), "Basic query should work");
@@ -706,21 +912,21 @@ mod tests {
             path: format!("{test_dir}/test_storage"),
         };
 
-        let mut connections = HashMap::new();
-        connections.insert(
-            "s3_test".to_string(),
-            ConnectionConfig::S3 {
-                bucket: "featherbox-test-bucket".to_string(),
-                region: "us-east-1".to_string(),
-                endpoint_url: None,
-                auth_method: S3AuthMethod::CredentialChain,
-                access_key_id: String::new(),
-                secret_access_key: String::new(),
-                session_token: None,
-            },
-        );
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
 
-        let ducklake = DuckLake::new_with_connections(catalog_config, storage_config, connections)
+        let s3_connection = ConnectionConfig::S3 {
+            bucket: "featherbox-test-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint_url: None,
+            auth_method: S3AuthMethod::CredentialChain,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            session_token: None,
+            path_style_access: false,
+        };
+
+        ducklake
+            .configure_s3_connection(&s3_connection)
             .await
             .unwrap();
 
@@ -755,6 +961,7 @@ mod tests {
             access_key_id: String::new(),
             secret_access_key: String::new(),
             session_token: None,
+            path_style_access: false,
         };
 
         let s3_client = crate::s3_client::S3Client::new(&connection_config).await?;
@@ -956,5 +1163,123 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_ducklake_with_minio() {
+        use std::fs;
+        use std::process::Command;
+
+        let test_dir = "/tmp/ducklake_minio_test";
+        fs::remove_dir_all(test_dir).ok();
+        fs::create_dir_all(test_dir).unwrap();
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: format!("{test_dir}/test_catalog.sqlite"),
+        };
+
+        let unique_bucket = format!("test-bucket-{}", uuid::Uuid::new_v4().simple());
+        let storage_config = StorageConfig::S3 {
+            bucket: unique_bucket.clone(),
+            region: "us-east-1".to_string(),
+            endpoint_url: Some("http://localhost:9010".to_string()),
+            auth_method: S3AuthMethod::Explicit,
+            access_key_id: "user".to_string(),
+            secret_access_key: "password".to_string(),
+            session_token: None,
+        };
+
+        let check_minio = Command::new("docker")
+            .args(["compose", "exec", "minio", "ls", "/data"])
+            .output();
+
+        if check_minio.is_err() || !check_minio.unwrap().status.success() {
+            println!("Skipping MinIO test - MinIO container not available");
+            return;
+        }
+
+        let setup_result = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "minio",
+                "mc",
+                "alias",
+                "set",
+                "myminio",
+                "http://localhost:9000",
+                "user",
+                "password",
+            ])
+            .output();
+
+        if setup_result.is_err() || !setup_result.unwrap().status.success() {
+            println!("Skipping MinIO test - failed to set up mc alias");
+            return;
+        }
+
+        let create_bucket_result = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "minio",
+                "mc",
+                "mb",
+                "--ignore-existing",
+                &format!("myminio/{unique_bucket}"),
+            ])
+            .output();
+
+        if create_bucket_result.is_err() || !create_bucket_result.unwrap().status.success() {
+            println!("Skipping MinIO test - failed to create bucket");
+            return;
+        }
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await;
+        match ducklake {
+            Ok(dl) => {
+                let query_result = dl.query("SELECT 1 as test_query");
+                assert!(
+                    query_result.is_ok(),
+                    "Basic query should work with MinIO S3 storage"
+                );
+
+                let create_table_result =
+                    dl.create_table_from_query("test_table", "SELECT 1 as id, 'test' as name");
+
+                match create_table_result {
+                    Ok(_) => println!("MinIO S3 table creation successful"),
+                    Err(e) => {
+                        println!("MinIO S3 table creation failed: {e}");
+                        panic!("Table creation should work with MinIO: {e:#?}");
+                    }
+                }
+
+                let verify_result = dl.query("SELECT * FROM test_table");
+                assert!(verify_result.is_ok(), "Table query should work");
+                let results = verify_result.unwrap();
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0], vec!["1", "test"]);
+
+                println!("MinIO integration test completed successfully");
+            }
+            Err(e) => {
+                println!("MinIO test failed - DuckLake creation failed: {e}");
+                panic!("DuckLake creation with MinIO should work: {e:#?}");
+            }
+        }
+
+        let _cleanup = Command::new("docker")
+            .args([
+                "compose",
+                "exec",
+                "minio",
+                "mc",
+                "rm",
+                "--recursive",
+                "--force",
+                &format!("myminio/{unique_bucket}"),
+            ])
+            .output();
     }
 }

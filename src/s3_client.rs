@@ -20,6 +20,7 @@ impl S3Client {
                 access_key_id,
                 secret_access_key,
                 session_token,
+                path_style_access,
             } => {
                 let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .region(Region::new(region.clone()));
@@ -43,13 +44,21 @@ impl S3Client {
                     }
                 }
 
-                let config = config_loader.load().await;
-                (bucket.clone(), config)
+                let aws_config = config_loader.load().await;
+
+                let s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config);
+                let s3_config = if *path_style_access {
+                    s3_config_builder.force_path_style(true).build()
+                } else {
+                    s3_config_builder.build()
+                };
+
+                (bucket.clone(), s3_config)
             }
             _ => return Err(anyhow::anyhow!("Expected S3 connection")),
         };
 
-        let client = Client::new(&config);
+        let client = Client::from_conf(config);
 
         Ok(Self {
             client,
@@ -277,6 +286,7 @@ mod tests {
                 access_key_id: String::new(),
                 secret_access_key: String::new(),
                 session_token: None,
+                path_style_access: false,
             }
         } else {
             ConnectionConfig::S3 {
@@ -287,6 +297,7 @@ mod tests {
                 access_key_id: env::var("AWS_ACCESS_KEY_ID").unwrap_or_default(),
                 secret_access_key: env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default(),
                 session_token: env::var("AWS_SESSION_TOKEN").ok(),
+                path_style_access: false,
             }
         }
     }

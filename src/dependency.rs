@@ -206,7 +206,6 @@ mod tests {
     async fn setup_test_db() -> Result<sea_orm::DatabaseConnection> {
         use crate::config::project::{
             DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
-            StorageType,
         };
         use crate::database::connection::connect_app_db;
         use tempfile;
@@ -215,8 +214,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = ProjectConfig {
-            storage: StorageConfig {
-                ty: StorageType::Local,
+            name: None,
+            storage: StorageConfig::LocalFile {
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
             database: DatabaseConfig {

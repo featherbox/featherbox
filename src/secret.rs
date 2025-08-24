@@ -257,6 +257,8 @@ pub fn expand_secrets_in_hash_map(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::project::StorageConfig;
+
     use super::*;
     use tempfile::TempDir;
 
@@ -264,10 +266,11 @@ mod tests {
         secret_key_path: Option<String>,
     ) -> crate::config::project::ProjectConfig {
         crate::config::project::ProjectConfig {
-            storage: crate::config::project::StorageConfig {
-                ty: crate::config::project::StorageType::Local,
+            name: None,
+            storage: StorageConfig::LocalFile {
                 path: "./storage".to_string(),
             },
+
             database: crate::config::project::DatabaseConfig {
                 ty: crate::config::project::DatabaseType::Sqlite,
                 path: Some("./database.db".to_string()),

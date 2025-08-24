@@ -36,6 +36,8 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::project::StorageConfig;
+
     use super::*;
 
     fn create_test_model_config() -> ModelConfig {
@@ -48,7 +50,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_creation() {
-        use crate::pipeline::ducklake::{CatalogConfig, StorageConfig};
+        use crate::pipeline::ducklake::CatalogConfig;
 
         let config = create_test_model_config();
 

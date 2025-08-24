@@ -111,7 +111,7 @@ async fn ensure_migrations(db: &DatabaseConnection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::project::{DatabaseConfig, DatabaseType};
+    use crate::config::project::{DatabaseConfig, DatabaseType, StorageConfig};
 
     use tempfile;
 
@@ -121,8 +121,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = ProjectConfig {
-            storage: crate::config::project::StorageConfig {
-                ty: crate::config::project::StorageType::Local,
+            name: None,
+            storage: StorageConfig::LocalFile {
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
             database: DatabaseConfig {
@@ -151,8 +151,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = ProjectConfig {
-            storage: crate::config::project::StorageConfig {
-                ty: crate::config::project::StorageType::Local,
+            name: None,
+            storage: StorageConfig::LocalFile {
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
             database: DatabaseConfig {
@@ -178,8 +178,8 @@ mod tests {
     #[tokio::test]
     async fn test_connect_mysql_db() -> Result<()> {
         let project_config = ProjectConfig {
-            storage: crate::config::project::StorageConfig {
-                ty: crate::config::project::StorageType::Local,
+            name: None,
+            storage: StorageConfig::LocalFile {
                 path: "/tmp/test_storage".to_string(),
             },
             database: DatabaseConfig {
@@ -207,8 +207,8 @@ mod tests {
     #[tokio::test]
     async fn test_connect_postgresql_db() -> Result<()> {
         let project_config = ProjectConfig {
-            storage: crate::config::project::StorageConfig {
-                ty: crate::config::project::StorageType::Local,
+            name: None,
+            storage: StorageConfig::LocalFile {
                 path: "/tmp/test_storage".to_string(),
             },
             database: DatabaseConfig {

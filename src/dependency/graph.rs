@@ -204,7 +204,10 @@ fn collect_table_names(table_factor: &TableFactor, tables: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{model::ModelConfig, project::ProjectConfig};
+    use crate::config::{
+        model::ModelConfig,
+        project::{ProjectConfig, StorageConfig},
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -233,8 +236,8 @@ mod tests {
 
         let config = Config {
             project: ProjectConfig {
-                storage: crate::config::project::StorageConfig {
-                    ty: crate::config::project::StorageType::Local,
+                name: None,
+                storage: StorageConfig::LocalFile {
                     path: "/tmp".to_string(),
                 },
                 database: crate::config::project::DatabaseConfig {
@@ -286,8 +289,8 @@ mod tests {
 
         let config = Config {
             project: ProjectConfig {
-                storage: crate::config::project::StorageConfig {
-                    ty: crate::config::project::StorageType::Local,
+                name: None,
+                storage: StorageConfig::LocalFile {
                     path: "/tmp".to_string(),
                 },
                 database: crate::config::project::DatabaseConfig {

@@ -19,7 +19,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Init {
-        name: Option<String>,
+        project_name: String,
     },
     Adapter {
         #[command(subcommand)]
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
     let current_dir = std::env::current_dir()?;
 
     let result = match &cli.command {
-        Commands::Init { name } => commands::init::execute_init(name.as_deref(), &current_dir),
+        Commands::Init { project_name } => commands::init::execute_init(project_name, &current_dir),
         Commands::Adapter { action } => match action {
             AdapterAction::New => {
                 commands::adapter::execute_adapter_interactive(&current_dir).await

@@ -3,6 +3,7 @@ use std::env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
+    pub name: Option<String>,
     pub storage: StorageConfig,
     pub database: DatabaseConfig,
     pub deployments: DeploymentsConfig,
@@ -11,14 +12,19 @@ pub struct ProjectConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageConfig {
-    pub ty: StorageType,
-    pub path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StorageType {
-    Local,
+pub enum StorageConfig {
+    LocalFile {
+        path: String,
+    },
+    S3 {
+        bucket: String,
+        region: String,
+        endpoint_url: Option<String>,
+        auth_method: S3AuthMethod,
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +79,7 @@ pub enum ConnectionConfig {
         access_key_id: String,
         secret_access_key: String,
         session_token: Option<String>,
+        path_style_access: bool,
     },
     Sqlite {
         path: String,
@@ -81,6 +88,36 @@ pub enum ConnectionConfig {
         db_type: DatabaseType,
         config: RemoteDatabaseConfig,
     },
+}
+
+impl ConnectionConfig {
+    pub fn get_full_endpoint_url(&self) -> Option<String> {
+        match self {
+            ConnectionConfig::S3 { endpoint_url, .. } => endpoint_url.clone(),
+            _ => None,
+        }
+    }
+
+    pub fn get_clean_endpoint_url(&self) -> Option<String> {
+        match self {
+            ConnectionConfig::S3 { endpoint_url, .. } => endpoint_url.as_ref().map(|url| {
+                url.strip_prefix("https://")
+                    .or_else(|| url.strip_prefix("http://"))
+                    .unwrap_or(url)
+                    .to_string()
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn uses_ssl(&self) -> bool {
+        match self {
+            ConnectionConfig::S3 { endpoint_url, .. } => endpoint_url
+                .as_ref()
+                .is_none_or(|url| !url.starts_with("http://")),
+            _ => true,
+        }
+    }
 }
 
 fn expand_env_vars(value: &str) -> Result<String, String> {
@@ -144,6 +181,7 @@ fn parse_remote_database_config(
 }
 
 pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
+    let name = yaml["name"].as_str().map(|s| s.to_string());
     let storage = parse_storage(&yaml["storage"]);
     let database = parse_database(&yaml["database"]);
     let deployments = parse_deployments(&yaml["deployments"]);
@@ -151,6 +189,7 @@ pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
     let secret_key_path = yaml["secret_key_path"].as_str().map(|s| s.to_string());
 
     ProjectConfig {
+        name,
         storage,
         database,
         deployments,
@@ -159,21 +198,154 @@ pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
     }
 }
 
+fn parse_s3_config(
+    config: &yaml_rust2::Yaml,
+) -> Result<
+    (
+        String,
+        String,
+        Option<String>,
+        S3AuthMethod,
+        String,
+        String,
+        Option<String>,
+    ),
+    String,
+> {
+    let bucket = config["bucket"]
+        .as_str()
+        .ok_or("S3 bucket is required")?
+        .to_string();
+
+    let region = config["region"].as_str().unwrap_or("us-east-1").to_string();
+
+    let endpoint_url = config["endpoint_url"].as_str().map(|s| s.to_string());
+
+    let auth_method = match config["auth_method"].as_str() {
+        Some("credential_chain") => S3AuthMethod::CredentialChain,
+        Some("explicit") => S3AuthMethod::Explicit,
+        Some(unknown) => return Err(format!("Unknown S3 auth_method: {unknown}")),
+        None => S3AuthMethod::default(),
+    };
+
+    let (access_key_id, secret_access_key) = match auth_method {
+        S3AuthMethod::CredentialChain => (String::new(), String::new()),
+        S3AuthMethod::Explicit => {
+            let access_key_id_str = config["access_key_id"]
+                .as_str()
+                .ok_or("S3 access_key_id is required for explicit auth method")?;
+            let access_key_id = expand_env_vars(access_key_id_str)
+                .map_err(|e| format!("Failed to expand access_key_id: {e}"))?;
+
+            let secret_access_key_str = config["secret_access_key"]
+                .as_str()
+                .ok_or("S3 secret_access_key is required for explicit auth method")?;
+            let secret_access_key = expand_env_vars(secret_access_key_str)
+                .map_err(|e| format!("Failed to expand secret_access_key: {e}"))?;
+
+            (access_key_id, secret_access_key)
+        }
+    };
+
+    let session_token = config["session_token"]
+        .as_str()
+        .map(expand_env_vars)
+        .transpose()
+        .map_err(|e| format!("Failed to expand session_token: {e}"))?;
+
+    validate_s3_config(&bucket, &auth_method, &access_key_id, &secret_access_key)?;
+
+    Ok((
+        bucket,
+        region,
+        endpoint_url,
+        auth_method,
+        access_key_id,
+        secret_access_key,
+        session_token,
+    ))
+}
+
+fn validate_s3_config(
+    bucket: &str,
+    auth_method: &S3AuthMethod,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<(), String> {
+    if bucket.is_empty() {
+        return Err("S3 bucket cannot be empty".to_string());
+    }
+
+    if bucket.contains('/') || bucket.contains('\\') {
+        return Err("S3 bucket name cannot contain path separators".to_string());
+    }
+
+    match auth_method {
+        S3AuthMethod::Explicit => {
+            if access_key_id.is_empty() {
+                return Err("S3 access_key_id cannot be empty for explicit auth method".to_string());
+            }
+            if secret_access_key.is_empty() {
+                return Err(
+                    "S3 secret_access_key cannot be empty for explicit auth method".to_string(),
+                );
+            }
+        }
+        S3AuthMethod::CredentialChain => {
+            if !access_key_id.is_empty() {
+                return Err(
+                    "S3 access_key_id should not be specified for credential_chain auth method"
+                        .to_string(),
+                );
+            }
+            if !secret_access_key.is_empty() {
+                return Err(
+                    "S3 secret_access_key should not be specified for credential_chain auth method"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_storage(storage: &yaml_rust2::Yaml) -> StorageConfig {
     let ty = storage["type"]
         .as_str()
         .expect("Storage type is required")
         .to_string();
-    let ty = match ty.as_str() {
-        "local" => StorageType::Local,
-        _ => panic!("Unsupported storage type: {ty}"),
-    };
 
-    let path = storage["path"]
-        .as_str()
-        .expect("Storage path is required")
-        .to_string();
-    StorageConfig { ty, path }
+    match ty.as_str() {
+        "local" => StorageConfig::LocalFile {
+            path: storage["path"]
+                .as_str()
+                .expect("Storage path is required")
+                .to_string(),
+        },
+        "s3" => {
+            let (
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            ) = parse_s3_config(storage).expect("Failed to parse S3 storage configuration");
+
+            StorageConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            }
+        }
+        _ => panic!("Unsupported storage type: {ty}"),
+    }
 }
 
 fn parse_database(database: &yaml_rust2::Yaml) -> DatabaseConfig {
@@ -302,45 +474,17 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                 }
             }
             "s3" => {
-                let bucket = value["bucket"]
-                    .as_str()
-                    .expect("S3 bucket is required")
-                    .to_string();
+                let (
+                    bucket,
+                    region,
+                    endpoint_url,
+                    auth_method,
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                ) = parse_s3_config(value).expect("Failed to parse S3 connection configuration");
 
-                let region = value["region"].as_str().unwrap_or("us-east-1").to_string();
-
-                let endpoint_url = value["endpoint_url"].as_str().map(|s| s.to_string());
-
-                let auth_method = match value["auth_method"].as_str() {
-                    Some("credential_chain") => S3AuthMethod::CredentialChain,
-                    Some("explicit") => S3AuthMethod::Explicit,
-                    Some(unknown) => panic!("Unknown S3 auth_method: {unknown}"),
-                    None => S3AuthMethod::default(),
-                };
-
-                let (access_key_id, secret_access_key) = match auth_method {
-                    S3AuthMethod::CredentialChain => (String::new(), String::new()),
-                    S3AuthMethod::Explicit => {
-                        let access_key_id_str = value["access_key_id"]
-                            .as_str()
-                            .expect("S3 access_key_id is required for explicit auth method");
-                        let access_key_id = expand_env_vars(access_key_id_str)
-                            .unwrap_or_else(|e| panic!("Failed to expand access_key_id: {e}"));
-
-                        let secret_access_key_str = value["secret_access_key"]
-                            .as_str()
-                            .expect("S3 secret_access_key is required for explicit auth method");
-                        let secret_access_key = expand_env_vars(secret_access_key_str)
-                            .unwrap_or_else(|e| panic!("Failed to expand secret_access_key: {e}"));
-
-                        (access_key_id, secret_access_key)
-                    }
-                };
-
-                let session_token = value["session_token"].as_str().map(|token_str| {
-                    expand_env_vars(token_str)
-                        .unwrap_or_else(|e| panic!("Failed to expand session_token: {e}"))
-                });
+                let path_style_access = value["path_style_access"].as_bool().unwrap_or(false);
 
                 ConnectionConfig::S3 {
                     bucket,
@@ -350,6 +494,7 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                     access_key_id,
                     secret_access_key,
                     session_token,
+                    path_style_access,
                 }
             }
             _ => panic!("Unsupported connection type"),
@@ -368,14 +513,18 @@ mod tests {
     fn test_parse_storage() {
         let yaml_str = r#"
             type: local
-            path: /home/user/featherbox/storage
+            path: /tmp/foo/storage
         "#;
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
 
         let config = parse_storage(yaml);
-        assert_eq!(config.ty, StorageType::Local);
-        assert_eq!(config.path, "/home/user/featherbox/storage");
+        assert_eq!(
+            config,
+            StorageConfig::LocalFile {
+                path: "/tmp/foo/storage".to_string()
+            }
+        );
     }
 
     #[test]
@@ -403,11 +552,167 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unsupported storage type: s3")]
+    #[should_panic(expected = "Unsupported storage type: ftp")]
     fn test_parse_storage_unsupported_type() {
         let yaml_str = r#"
-            type: s3
+            type: ftp
             path: /some/path
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_storage(yaml);
+    }
+
+    #[test]
+    fn test_parse_storage_s3_basic() {
+        unsafe {
+            env::set_var("TEST_S3_STORAGE_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_S3_STORAGE_SECRET_KEY", "test_secret_key");
+        }
+
+        let yaml_str = r#"
+            type: s3
+            bucket: my-storage-bucket
+            region: us-west-2
+            access_key_id: ${TEST_S3_STORAGE_ACCESS_KEY}
+            secret_access_key: ${TEST_S3_STORAGE_SECRET_KEY}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_storage(yaml);
+        match config {
+            StorageConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                assert_eq!(bucket, "my-storage-bucket");
+                assert_eq!(region, "us-west-2");
+                assert_eq!(endpoint_url, None);
+                assert_eq!(auth_method, S3AuthMethod::Explicit);
+                assert_eq!(access_key_id, "test_access_key");
+                assert_eq!(secret_access_key, "test_secret_key");
+                assert_eq!(session_token, None);
+            }
+            _ => panic!("Expected S3 storage config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_S3_STORAGE_ACCESS_KEY");
+            env::remove_var("TEST_S3_STORAGE_SECRET_KEY");
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_s3_credential_chain() {
+        let yaml_str = r#"
+            type: s3
+            bucket: my-storage-bucket
+            region: eu-west-1
+            endpoint_url: https://s3.eu-west-1.amazonaws.com
+            auth_method: credential_chain
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_storage(yaml);
+        match config {
+            StorageConfig::S3 {
+                bucket,
+                region,
+                endpoint_url,
+                auth_method,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                assert_eq!(bucket, "my-storage-bucket");
+                assert_eq!(region, "eu-west-1");
+                assert_eq!(
+                    endpoint_url,
+                    Some("https://s3.eu-west-1.amazonaws.com".to_string())
+                );
+                assert_eq!(auth_method, S3AuthMethod::CredentialChain);
+                assert_eq!(access_key_id, "");
+                assert_eq!(secret_access_key, "");
+                assert_eq!(session_token, None);
+            }
+            _ => panic!("Expected S3 storage config"),
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_s3_default_region() {
+        unsafe {
+            env::set_var("TEST_S3_STORAGE_DEFAULT_ACCESS_KEY", "test_access_key");
+            env::set_var("TEST_S3_STORAGE_DEFAULT_SECRET_KEY", "test_secret_key");
+        }
+
+        let yaml_str = r#"
+            type: s3
+            bucket: my-storage-bucket
+            access_key_id: ${TEST_S3_STORAGE_DEFAULT_ACCESS_KEY}
+            secret_access_key: ${TEST_S3_STORAGE_DEFAULT_SECRET_KEY}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_storage(yaml);
+        match config {
+            StorageConfig::S3 { region, .. } => {
+                assert_eq!(region, "us-east-1");
+            }
+            _ => panic!("Expected S3 storage config"),
+        }
+
+        unsafe {
+            env::remove_var("TEST_S3_STORAGE_DEFAULT_ACCESS_KEY");
+            env::remove_var("TEST_S3_STORAGE_DEFAULT_SECRET_KEY");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "S3 bucket is required")]
+    fn test_parse_storage_s3_missing_bucket() {
+        let yaml_str = r#"
+            type: s3
+            region: us-east-1
+            access_key_id: test_key
+            secret_access_key: test_secret
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_storage(yaml);
+    }
+
+    #[test]
+    #[should_panic(expected = "S3 access_key_id is required for explicit auth method")]
+    fn test_parse_storage_s3_missing_access_key() {
+        let yaml_str = r#"
+            type: s3
+            bucket: my-bucket
+            secret_access_key: test_secret
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        parse_storage(yaml);
+    }
+
+    #[test]
+    #[should_panic(expected = "S3 secret_access_key is required for explicit auth method")]
+    fn test_parse_storage_s3_missing_secret_key() {
+        let yaml_str = r#"
+            type: s3
+            bucket: my-bucket
+            access_key_id: test_key
         "#;
         let docs = YamlLoader::load_from_str(yaml_str).unwrap();
         let yaml = &docs[0];
@@ -711,6 +1016,7 @@ mod tests {
                 access_key_id,
                 secret_access_key,
                 session_token,
+                path_style_access,
             } => {
                 assert_eq!(bucket, "my-data-bucket");
                 assert_eq!(region, "us-west-2");
@@ -719,6 +1025,7 @@ mod tests {
                 assert_eq!(access_key_id, "test_access_key");
                 assert_eq!(secret_access_key, "test_secret_key");
                 assert_eq!(session_token, &None);
+                assert!(!(*path_style_access));
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -761,6 +1068,7 @@ mod tests {
                 access_key_id,
                 secret_access_key,
                 session_token,
+                path_style_access,
             } => {
                 assert_eq!(bucket, "my-data-bucket");
                 assert_eq!(region, "eu-west-1");
@@ -772,6 +1080,7 @@ mod tests {
                 assert_eq!(access_key_id, "test_access_key");
                 assert_eq!(secret_access_key, "test_secret_key");
                 assert_eq!(session_token, &Some("test_session_token".to_string()));
+                assert!(!(*path_style_access));
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1134,6 +1443,7 @@ mod tests {
                 access_key_id,
                 secret_access_key,
                 session_token,
+                path_style_access,
             } => {
                 assert_eq!(bucket, "my-data-bucket");
                 assert_eq!(region, "us-west-2");
@@ -1142,6 +1452,7 @@ mod tests {
                 assert_eq!(access_key_id, "");
                 assert_eq!(secret_access_key, "");
                 assert_eq!(session_token, &None);
+                assert!(!(*path_style_access));
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1171,6 +1482,7 @@ mod tests {
                 access_key_id,
                 secret_access_key,
                 session_token,
+                path_style_access,
             } => {
                 assert_eq!(bucket, "my-data-bucket");
                 assert_eq!(region, "eu-central-1");
@@ -1182,6 +1494,7 @@ mod tests {
                 assert_eq!(access_key_id, "");
                 assert_eq!(secret_access_key, "");
                 assert_eq!(session_token, &None);
+                assert!(!(*path_style_access));
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1205,12 +1518,13 @@ mod tests {
     #[test]
     fn test_parse_project_config() {
         let yaml_str = r#"
+            name: test_project
             storage:
               type: local
-              path: /home/user/featherbox/storage
+              path: /tmp/foo/storage
             database:
               type: sqlite
-              path: /home/user/featherbox/database.db
+              path: /tmp/foo/database.db
             deployments:
               timeout: 600
             connections:
@@ -1223,13 +1537,18 @@ mod tests {
 
         let config = parse_project_config(yaml);
 
-        assert_eq!(config.storage.ty, StorageType::Local);
-        assert_eq!(config.storage.path, "/home/user/featherbox/storage");
+        assert_eq!(config.name, Some("test_project".to_string()));
+        assert_eq!(
+            config.storage,
+            StorageConfig::LocalFile {
+                path: "/tmp/foo/storage".to_string()
+            }
+        );
 
         assert_eq!(config.database.ty, DatabaseType::Sqlite);
         assert_eq!(
             config.database.path,
-            Some("/home/user/featherbox/database.db".to_string())
+            Some("/tmp/foo/database.db".to_string())
         );
 
         assert_eq!(config.deployments.timeout, 600);
@@ -1248,12 +1567,13 @@ mod tests {
     #[test]
     fn test_parse_project_config_with_secret_key_path() {
         let yaml_str = r#"
+            name: project_with_secret
             storage:
               type: local
-              path: /home/user/featherbox/storage
+              path: /tmp/foo/storage
             database:
               type: sqlite
-              path: /home/user/featherbox/database.db
+              path: /tmp/foo/database.db
             deployments:
               timeout: 600
             connections: {}
@@ -1264,9 +1584,90 @@ mod tests {
 
         let config = parse_project_config(yaml);
 
+        assert_eq!(config.name, Some("project_with_secret".to_string()));
         assert_eq!(
             config.secret_key_path,
             Some("/custom/path/secret.key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_connection_config_endpoint_url_methods() {
+        let s3_connection_with_https = ConnectionConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint_url: Some("https://example.com".to_string()),
+            auth_method: S3AuthMethod::Explicit,
+            access_key_id: "key".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: None,
+            path_style_access: false,
+        };
+
+        assert_eq!(
+            s3_connection_with_https.get_full_endpoint_url(),
+            Some("https://example.com".to_string())
+        );
+        assert_eq!(
+            s3_connection_with_https.get_clean_endpoint_url(),
+            Some("example.com".to_string())
+        );
+        assert!(s3_connection_with_https.uses_ssl());
+
+        let s3_connection_with_http = ConnectionConfig::S3 {
+            bucket: "test-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint_url: Some("http://localhost:9000".to_string()),
+            auth_method: S3AuthMethod::Explicit,
+            access_key_id: "key".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: None,
+            path_style_access: false,
+        };
+
+        assert_eq!(
+            s3_connection_with_http.get_full_endpoint_url(),
+            Some("http://localhost:9000".to_string())
+        );
+        assert_eq!(
+            s3_connection_with_http.get_clean_endpoint_url(),
+            Some("localhost:9000".to_string())
+        );
+        assert!(!s3_connection_with_http.uses_ssl());
+
+        let local_connection = ConnectionConfig::LocalFile {
+            base_path: "/tmp".to_string(),
+        };
+
+        assert_eq!(local_connection.get_full_endpoint_url(), None);
+        assert_eq!(local_connection.get_clean_endpoint_url(), None);
+        assert!(local_connection.uses_ssl());
+    }
+
+    #[test]
+    fn test_parse_project_config_without_name() {
+        let yaml_str = r#"
+            storage:
+              type: local
+              path: /tmp/foo/storage
+            database:
+              type: sqlite
+              path: /tmp/foo/database.db
+            deployments:
+              timeout: 600
+            connections: {}
+        "#;
+        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
+        let yaml = &docs[0];
+
+        let config = parse_project_config(yaml);
+
+        assert_eq!(config.name, None);
+        assert_eq!(
+            config.storage,
+            StorageConfig::LocalFile {
+                path: "/tmp/foo/storage".to_string()
+            }
         );
     }
 }

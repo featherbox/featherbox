@@ -47,6 +47,12 @@ impl Adapter {
     ) -> Result<()> {
         let filesystem = self.create_filesystem(connections).await?;
 
+        if let Some(connection) = self.get_connection_if_exists(connections) {
+            if matches!(connection, ConnectionConfig::S3 { .. }) {
+                self.ducklake.configure_s3_connection(connection).await?;
+            }
+        }
+
         let file_paths = FileProcessor::files_for_processing(&self.config, &filesystem).await?;
 
         if file_paths.is_empty() {
@@ -232,13 +238,21 @@ impl Adapter {
         }
         Ok(FileSystem::new_local(None))
     }
+
+    fn get_connection_if_exists<'a>(
+        &self,
+        connections: Option<&'a HashMap<String, ConnectionConfig>>,
+    ) -> Option<&'a ConnectionConfig> {
+        connections?.get(&self.config.connection)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::adapter::{FileConfig, FormatConfig};
-    use crate::pipeline::ducklake::{CatalogConfig, DuckLake, StorageConfig};
+    use crate::config::project::StorageConfig;
+    use crate::pipeline::ducklake::{CatalogConfig, DuckLake};
 
     fn create_test_adapter_config() -> AdapterConfig {
         AdapterConfig {

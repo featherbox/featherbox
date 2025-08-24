@@ -61,7 +61,7 @@ impl Logger {
         let escaped_error_msg = error_msg.replace("'", "''");
 
         let sql = format!(
-            r#"INSERT INTO db.__fbox_task_logs 
+            r#"INSERT INTO db.__fbox_task_logs
                (executed_at, pipeline_id, table_name, status, error_message, execution_time_ms)
                VALUES ('{executed_at}', {pipeline_id}, '{table_name}', '{status}', '{escaped_error_msg}', {execution_time_ms})"#
         );
@@ -87,7 +87,7 @@ impl Logger {
         let escaped_error_msg = error_msg.replace("'", "''");
 
         let sql = format!(
-            r#"INSERT INTO db.__fbox_pipeline_logs 
+            r#"INSERT INTO db.__fbox_pipeline_logs
                (executed_at, pipeline_id, event_type, message, error_details)
                VALUES ('{executed_at}', {pipeline_id}, '{event_type}', '{escaped_message}', '{escaped_error_msg}')"#
         );
@@ -107,7 +107,7 @@ impl Logger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::ducklake::{CatalogConfig, StorageConfig};
+    use crate::{config::project::StorageConfig, pipeline::ducklake::CatalogConfig};
 
     #[tokio::test]
     async fn test_logger_success_cases() {

@@ -4,18 +4,28 @@ use std::path::Path;
 
 use crate::secret::SecretManager;
 
-pub fn execute_init(project_name: Option<&str>, project_path: &Path) -> Result<()> {
-    if project_path.join("project.yml").exists() {
+pub fn execute_init(project_name: &str, current_dir: &Path) -> Result<()> {
+    let project_path = current_dir.join(project_name);
+
+    if project_path.exists() {
         return Err(anyhow::anyhow!(
-            "FeatherBox project already exists in this directory"
+            "Directory '{}' already exists",
+            project_name
         ));
     }
 
-    create_project_structure(project_path)?;
-    create_project_yml(project_path, project_name)?;
-    ensure_secret_key(project_path)?;
+    fs::create_dir_all(&project_path)
+        .with_context(|| format!("Failed to create project directory '{project_name}'"))?;
 
-    println!("FeatherBox project initialized successfully");
+    create_project_structure(&project_path)?;
+    create_project_yml(&project_path, project_name)?;
+    ensure_secret_key(&project_path)?;
+
+    println!(
+        "FeatherBox project '{}' initialized successfully at {}",
+        project_name,
+        project_path.display()
+    );
     Ok(())
 }
 
@@ -26,10 +36,12 @@ fn create_project_structure(project_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn create_project_yml(project_path: &Path, _project_name: Option<&str>) -> Result<()> {
+fn create_project_yml(project_path: &Path, project_name: &str) -> Result<()> {
     let secret_key_path = project_path.join("secret.key");
     let project_yml_content = format!(
-        r#"storage:
+        r#"name: {}
+
+storage:
   type: local
   path: ./storage
 
@@ -44,6 +56,7 @@ connections: {{}}
 
 secret_key_path: {}
 "#,
+        project_name,
         secret_key_path.to_string_lossy()
     );
 
@@ -72,16 +85,19 @@ mod tests {
     #[test]
     fn test_execute_init_success() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
+        let project_name = "test_project";
 
-        let result = execute_init(None, temp_dir.path());
+        let result = execute_init(project_name, temp_dir.path());
 
         assert!(result.is_ok());
 
-        assert!(temp_dir.path().join("project.yml").exists());
-        assert!(temp_dir.path().join("adapters").is_dir());
-        assert!(temp_dir.path().join("models").is_dir());
+        let project_path = temp_dir.path().join(project_name);
+        assert!(project_path.join("project.yml").exists());
+        assert!(project_path.join("adapters").is_dir());
+        assert!(project_path.join("models").is_dir());
 
-        let content = fs::read_to_string(temp_dir.path().join("project.yml"))?;
+        let content = fs::read_to_string(project_path.join("project.yml"))?;
+        assert!(content.contains(&format!("name: {project_name}")));
         assert!(content.contains("storage:"));
         assert!(content.contains("database:"));
         assert!(content.contains("deployments:"));
@@ -94,10 +110,11 @@ mod tests {
     #[test]
     fn test_execute_init_already_exists() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
+        let project_name = "existing_project";
 
-        fs::write(temp_dir.path().join("project.yml"), "existing")?;
+        fs::create_dir_all(temp_dir.path().join(project_name))?;
 
-        let result = execute_init(None, temp_dir.path());
+        let result = execute_init(project_name, temp_dir.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
@@ -120,14 +137,32 @@ mod tests {
     #[test]
     fn test_create_project_yml() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
+        let project_name = "test_yml_project";
 
-        create_project_yml(temp_dir.path(), None)?;
+        create_project_yml(temp_dir.path(), project_name)?;
 
         let content = fs::read_to_string(temp_dir.path().join("project.yml"))?;
+        assert!(content.contains(&format!("name: {project_name}")));
         assert!(content.contains("storage:"));
         assert!(content.contains("type: local"));
         assert!(content.contains("type: sqlite"));
         assert!(content.contains("secret_key_path:"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_name_in_yaml() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_name = "my_awesome_project";
+
+        let result = execute_init(project_name, temp_dir.path());
+        assert!(result.is_ok());
+
+        let project_path = temp_dir.path().join(project_name);
+        let content = fs::read_to_string(project_path.join("project.yml"))?;
+
+        assert!(content.starts_with(&format!("name: {project_name}")));
 
         Ok(())
     }

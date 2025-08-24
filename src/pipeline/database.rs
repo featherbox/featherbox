@@ -173,6 +173,8 @@ impl DatabaseSystem {
 mod tests {
     use tempfile::TempDir;
 
+    use crate::config::project::StorageConfig;
+
     use super::*;
 
     #[test]
@@ -477,7 +479,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_attach_with_real_database() {
-        use crate::pipeline::ducklake::{CatalogConfig, DuckLake, StorageConfig};
+        use crate::pipeline::ducklake::{CatalogConfig, DuckLake};
         use std::sync::Arc;
         use tempfile::tempdir;
 
@@ -558,7 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_attach_with_test_fixture() {
-        use crate::pipeline::ducklake::{CatalogConfig, DuckLake, StorageConfig};
+        use crate::pipeline::ducklake::{CatalogConfig, DuckLake};
         use std::sync::Arc;
         use tempfile::tempdir;
 

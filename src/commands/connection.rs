@@ -109,6 +109,7 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
                 access_key_id,
                 secret_access_key,
                 session_token: None,
+                path_style_access: false,
             }
         }
         ConnectionType::MySql => {

@@ -2,8 +2,7 @@
 use crate::config::Config;
 #[cfg(test)]
 use crate::config::project::{
-    ConnectionConfig, DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig,
-    StorageConfig, StorageType,
+    ConnectionConfig, DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
 };
 #[cfg(test)]
 use crate::database::connection::connect_app_db;
@@ -43,9 +42,9 @@ pub fn create_project_structure(project_path: &Path) -> Result<()> {
 #[cfg(test)]
 pub fn create_default_project_config() -> ProjectConfig {
     ProjectConfig {
-        storage: StorageConfig {
-            ty: StorageType::Local,
-            path: ".fbox".to_string(),
+        name: None,
+        storage: StorageConfig::LocalFile {
+            path: "/tmp/foo/storage".to_string(),
         },
         database: DatabaseConfig {
             ty: DatabaseType::Sqlite,
@@ -67,9 +66,9 @@ pub fn create_project_config_with_connections(
     connections: HashMap<String, ConnectionConfig>,
 ) -> ProjectConfig {
     ProjectConfig {
-        storage: StorageConfig {
-            ty: StorageType::Local,
-            path: ".fbox".to_string(),
+        name: None,
+        storage: StorageConfig::LocalFile {
+            path: "/tmp/foo/storage".to_string(),
         },
         database: DatabaseConfig {
             ty: DatabaseType::Sqlite,
@@ -148,8 +147,8 @@ pub async fn setup_test_db_connection() -> Result<DatabaseConnection> {
     let db_path = temp_dir.path().join("test.db");
 
     let project_config = ProjectConfig {
-        storage: StorageConfig {
-            ty: StorageType::Local,
+        name: None,
+        storage: StorageConfig::LocalFile {
             path: temp_dir.path().to_string_lossy().to_string(),
         },
         database: DatabaseConfig {
@@ -177,8 +176,8 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
     let db_path = temp_dir.path().join("test.db");
 
     let project_config = ProjectConfig {
-        storage: StorageConfig {
-            ty: StorageType::Local,
+        name: None,
+        storage: StorageConfig::LocalFile {
             path: temp_dir.path().to_string_lossy().to_string(),
         },
         database: DatabaseConfig {

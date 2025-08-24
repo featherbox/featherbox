@@ -11,7 +11,7 @@ use crate::{
     dependency::{Graph, latest_graph_id},
     pipeline::{
         build::Pipeline,
-        ducklake::{CatalogConfig, DuckLake, StorageConfig},
+        ducklake::{CatalogConfig, DuckLake},
     },
 };
 use anyhow::Result;
@@ -173,22 +173,7 @@ pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
         }
     };
 
-    let storage_config = match &config.project.storage.ty {
-        crate::config::project::StorageType::Local => StorageConfig::LocalFile {
-            path: config.project.storage.path.clone(),
-        },
-    };
-
-    if config.project.connections.is_empty() {
-        DuckLake::new(catalog_config, storage_config).await
-    } else {
-        DuckLake::new_with_connections(
-            catalog_config,
-            storage_config,
-            config.project.connections.clone(),
-        )
-        .await
-    }
+    DuckLake::new(catalog_config, config.project.storage.clone()).await
 }
 
 #[cfg(test)]
@@ -438,11 +423,16 @@ mod tests {
         let config = Config::load_from_directory(project_path)?;
         let ducklake = connect_ducklake(&config).await?;
 
-        let result = ducklake.query("SELECT current_setting('s3_region')");
-        assert!(result.is_ok(), "Failed to query s3_region setting");
-        let results = result.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0][0], "us-west-2");
+        if let Some(s3_connection) = config.project.connections.get("s3_data") {
+            ducklake.configure_s3_connection(s3_connection).await?;
+            let result = ducklake.query("SELECT current_setting('s3_region')");
+            assert!(result.is_ok(), "Failed to query s3_region setting");
+            let results = result.unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0][0], "us-west-2");
+        } else {
+            panic!("S3 connection not found in config");
+        }
 
         unsafe {
             env::remove_var("TEST_DUCKLAKE_S3_ACCESS_KEY");

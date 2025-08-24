@@ -1,4 +1,4 @@
-connection: s3_data
+connection: minio_datasource
 description: 'Sales data stored in S3'
 file:
   path: sales/2024-01-{DD}.json
