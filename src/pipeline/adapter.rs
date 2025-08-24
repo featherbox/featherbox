@@ -4,7 +4,6 @@ use crate::{
         project::ConnectionConfig,
     },
     pipeline::{
-        build::TimeRange,
         database::DatabaseSystem,
         ducklake::DuckLake,
         file_processor::{FileProcessor, FileSystem},
@@ -28,14 +27,10 @@ impl Adapter {
     pub async fn execute_import(
         &self,
         table_name: &str,
-        time_range: Option<TimeRange>,
         connections: Option<&HashMap<String, ConnectionConfig>>,
     ) -> Result<()> {
         match &self.config.source {
-            AdapterSource::File { .. } => {
-                self.execute_file_import(table_name, time_range, connections)
-                    .await
-            }
+            AdapterSource::File { .. } => self.execute_file_import(table_name, connections).await,
             AdapterSource::Database {
                 table_name: source_table,
             } => {
@@ -48,22 +43,16 @@ impl Adapter {
     async fn execute_file_import(
         &self,
         table_name: &str,
-        time_range: Option<TimeRange>,
         connections: Option<&HashMap<String, ConnectionConfig>>,
     ) -> Result<()> {
         let filesystem = self.create_filesystem(connections).await?;
 
-        let file_paths =
-            FileProcessor::files_for_processing(&self.config, time_range, &filesystem).await?;
+        let file_paths = FileProcessor::files_for_processing(&self.config, &filesystem).await?;
 
         if file_paths.is_empty() {
             return Ok(());
         }
 
-        // let delta_metadata = self
-        //     .delta_manager
-        //     .process_delta_for_adapter(&self.config, table_name, &file_paths, app_db, action_id)
-        //     .await?;
         let query = self.build_import_query_multiple(&self.config, &file_paths)?;
 
         self.ducklake.create_table_from_query(table_name, &query)?;
@@ -268,9 +257,7 @@ mod tests {
                     has_header: Some(true),
                 },
             },
-            update_strategy: None,
             columns: vec![],
-            limits: None,
         }
     }
 

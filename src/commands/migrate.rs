@@ -117,9 +117,7 @@ mod tests {
                         null_value: None,
                     },
                 },
-                update_strategy: None,
                 columns: vec![],
-                limits: None,
             },
         );
 

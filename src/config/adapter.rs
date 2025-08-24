@@ -1,13 +1,9 @@
-use crate::pipeline::build::TimeRange;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdapterConfig {
     pub connection: String,
     pub description: Option<String>,
     pub source: AdapterSource,
-    pub update_strategy: Option<UpdateStrategyConfig>,
     pub columns: Vec<ColumnConfig>,
-    pub limits: Option<LimitsConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,25 +22,6 @@ pub struct FileConfig {
     pub path: String,
     pub compression: Option<String>,
     pub max_batch_size: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct UpdateStrategyConfig {
-    pub detection: DetectionMethod,
-    pub timestamp_from: Option<String>,
-    pub range: TimeRange,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum DetectionMethod {
-    Filename,
-    Metadata,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LimitsConfig {
-    pub max_files: Option<u32>,
-    pub max_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,21 +59,13 @@ pub fn parse_adapter_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<AdapterCo
         ));
     };
 
-    let update_strategy = parse_update_strategy(&yaml["update_strategy"]);
     let columns = parse_columns(&yaml["columns"]);
-    let limits = if !yaml["limits"].is_badvalue() {
-        Some(parse_limits(&yaml["limits"]))
-    } else {
-        None
-    };
 
     Ok(AdapterConfig {
         connection,
         description,
         source,
-        update_strategy,
         columns,
-        limits,
     })
 }
 
@@ -135,95 +104,6 @@ fn parse_file_config(yaml: &yaml_rust2::Yaml) -> FileConfig {
         path,
         compression,
         max_batch_size,
-    }
-}
-
-fn parse_update_strategy(yaml: &yaml_rust2::Yaml) -> Option<UpdateStrategyConfig> {
-    let detection = if let Some(detection) = yaml["detection"].as_str() {
-        detection.to_string()
-    } else {
-        return None;
-    };
-
-    let detection = match detection.as_str() {
-        "filename" => DetectionMethod::Filename,
-        "metadata" => DetectionMethod::Metadata,
-        _ => {
-            panic!("Unsupported detection method: {detection}");
-        }
-    };
-
-    let timestamp_from = yaml["timestamp_from"].as_str().map(|s| s.to_string());
-    let range = if !yaml["range"].is_badvalue() {
-        parse_range(&yaml["range"])
-    } else {
-        TimeRange {
-            since: None,
-            until: None,
-        }
-    };
-
-    Some(UpdateStrategyConfig {
-        detection,
-        timestamp_from,
-        range,
-    })
-}
-
-fn parse_range(yaml: &yaml_rust2::Yaml) -> TimeRange {
-    let since = yaml["since"].as_str().map(|s| s.to_string());
-    let until = yaml["until"].as_str().map(|s| s.to_string());
-
-    let since = since.as_ref().and_then(|s| {
-        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-            .or_else(|_| {
-                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
-            })
-            .ok()
-            .map(|naive| naive.and_utc())
-    });
-
-    let until = until.as_ref().and_then(|s| {
-        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-            .or_else(|_| {
-                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map(|date| date.and_hms_opt(23, 59, 59).unwrap())
-            })
-            .ok()
-            .map(|naive| naive.and_utc())
-    });
-
-    TimeRange { since, until }
-}
-
-fn parse_limits(yaml: &yaml_rust2::Yaml) -> LimitsConfig {
-    let max_files = yaml["max_files"].as_i64().map(|i| i as u32);
-    let max_size_bytes = yaml["max_size"]
-        .as_str()
-        .and_then(|s| parse_size_to_bytes(s).ok());
-
-    LimitsConfig {
-        max_files,
-        max_size_bytes,
-    }
-}
-
-fn parse_size_to_bytes(size_str: &str) -> anyhow::Result<u64> {
-    let size_str = size_str.to_uppercase();
-    if size_str.ends_with("GB") {
-        let num: u64 = size_str[..size_str.len() - 2].parse()?;
-        Ok(num * 1024 * 1024 * 1024)
-    } else if size_str.ends_with("MB") {
-        let num: u64 = size_str[..size_str.len() - 2].parse()?;
-        Ok(num * 1024 * 1024)
-    } else if size_str.ends_with("KB") {
-        let num: u64 = size_str[..size_str.len() - 2].parse()?;
-        Ok(num * 1024)
-    } else {
-        size_str
-            .parse::<u64>()
-            .map_err(|e| anyhow::anyhow!("Invalid size format: {}", e))
     }
 }
 
@@ -274,7 +154,6 @@ fn parse_columns(yaml: &yaml_rust2::Yaml) -> Vec<ColumnConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, Timelike};
     use yaml_rust2::YamlLoader;
 
     #[test]
@@ -286,11 +165,6 @@ mod tests {
               path: <YYYY>/<MM>/<DD>/*_<YYYY><MM><DD>T<HH><MM>.log.gz
               compression: gzip
               max_batch_size: 100MB
-            update_strategy:
-              detection: filename
-              timestamp_from: path
-              range:
-                since: 2023-01-01 00:00:00
             format:
               type: 'json'
             columns:
@@ -324,12 +198,6 @@ mod tests {
             }
             _ => panic!("Expected File source"),
         }
-
-        assert!(config.update_strategy.is_some());
-        let update_strategy = config.update_strategy.as_ref().unwrap();
-        assert_eq!(update_strategy.detection, DetectionMethod::Filename);
-        assert_eq!(update_strategy.timestamp_from, Some("path".to_string()));
-        assert!(update_strategy.range.since.is_some());
 
         assert_eq!(config.columns.len(), 2);
         assert_eq!(config.columns[0].name, "timestamp");
@@ -391,45 +259,6 @@ mod tests {
         assert_eq!(config.path, "/logs/<YYYY>/<MM>/<DD>/app.log");
         assert_eq!(config.compression, Some("gzip".to_string()));
         assert_eq!(config.max_batch_size, Some("50MB".to_string()));
-    }
-
-    #[test]
-    fn test_parse_update_strategy() {
-        let yaml_str = r#"
-            detection: metadata
-            timestamp_from: timestamp_column
-            range:
-              since: 2024-01-01
-              until: 2024-12-31
-        "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
-
-        let config = parse_update_strategy(yaml);
-        assert!(config.is_some());
-        let config = config.unwrap();
-        assert_eq!(config.detection, DetectionMethod::Metadata);
-        assert_eq!(config.timestamp_from, Some("timestamp_column".to_string()));
-        let range = &config.range;
-        assert!(range.since.is_some());
-        assert!(range.until.is_some());
-
-        let since = range.since.unwrap();
-        let until = range.until.unwrap();
-
-        assert_eq!(since.year(), 2024);
-        assert_eq!(since.month(), 1);
-        assert_eq!(since.day(), 1);
-        assert_eq!(since.hour(), 0);
-        assert_eq!(since.minute(), 0);
-        assert_eq!(since.second(), 0);
-
-        assert_eq!(until.year(), 2024);
-        assert_eq!(until.month(), 12);
-        assert_eq!(until.day(), 31);
-        assert_eq!(until.hour(), 23);
-        assert_eq!(until.minute(), 59);
-        assert_eq!(until.second(), 59);
     }
 
     #[test]
@@ -544,80 +373,5 @@ mod tests {
         let yaml = &docs[0];
 
         parse_file_config(yaml);
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_gigabytes() {
-        assert_eq!(parse_size_to_bytes("1GB").unwrap(), 1024 * 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("2gb").unwrap(), 2 * 1024 * 1024 * 1024);
-        assert_eq!(
-            parse_size_to_bytes("10GB").unwrap(),
-            10 * 1024 * 1024 * 1024
-        );
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_megabytes() {
-        assert_eq!(parse_size_to_bytes("1MB").unwrap(), 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("5mb").unwrap(), 5 * 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("100MB").unwrap(), 100 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_kilobytes() {
-        assert_eq!(parse_size_to_bytes("1KB").unwrap(), 1024);
-        assert_eq!(parse_size_to_bytes("10kb").unwrap(), 10 * 1024);
-        assert_eq!(parse_size_to_bytes("512KB").unwrap(), 512 * 1024);
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_raw_bytes() {
-        assert_eq!(parse_size_to_bytes("1024").unwrap(), 1024);
-        assert_eq!(parse_size_to_bytes("0").unwrap(), 0);
-        assert_eq!(parse_size_to_bytes("999999").unwrap(), 999999);
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_case_insensitive() {
-        assert_eq!(parse_size_to_bytes("1gb").unwrap(), 1024 * 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("1Gb").unwrap(), 1024 * 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("1GB").unwrap(), 1024 * 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("1mb").unwrap(), 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("1Mb").unwrap(), 1024 * 1024);
-        assert_eq!(parse_size_to_bytes("1MB").unwrap(), 1024 * 1024);
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_invalid_format() {
-        assert!(parse_size_to_bytes("invalid").is_err());
-        assert!(parse_size_to_bytes("1TB").is_err());
-        assert!(parse_size_to_bytes("1.5GB").is_err());
-        assert!(parse_size_to_bytes("-1MB").is_err());
-        assert!(parse_size_to_bytes("").is_err());
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_non_numeric_prefix() {
-        assert!(parse_size_to_bytes("abcGB").is_err());
-        assert!(parse_size_to_bytes("GB").is_err());
-        assert!(parse_size_to_bytes("xyzMB").is_err());
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_edge_cases() {
-        assert_eq!(parse_size_to_bytes("0GB").unwrap(), 0);
-        assert_eq!(parse_size_to_bytes("0MB").unwrap(), 0);
-        assert_eq!(parse_size_to_bytes("0KB").unwrap(), 0);
-
-        let max_gb = u64::MAX / (1024 * 1024 * 1024);
-        let valid_gb = format!("{max_gb}GB");
-        assert!(parse_size_to_bytes(&valid_gb).is_ok());
-    }
-
-    #[test]
-    fn test_parse_size_to_bytes_whitespace() {
-        assert!(parse_size_to_bytes(" 1GB").is_err());
-        assert!(parse_size_to_bytes("1GB ").is_err());
-        assert!(parse_size_to_bytes("1 GB").is_err());
     }
 }

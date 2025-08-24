@@ -5,12 +5,12 @@ pub use graph::*;
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, NotSet, QueryFilter,
-    QueryOrder, QuerySelect, RelationTrait, Set,
+    QueryOrder, Set,
 };
 use std::collections::HashSet;
 
 use crate::database::entities::{edges, graphs, nodes, pipeline_actions, pipelines};
-use crate::pipeline::build::{Pipeline, TimeRange};
+use crate::pipeline::build::Pipeline;
 
 pub async fn detect_changes(
     db: &DatabaseConnection,
@@ -123,16 +123,6 @@ pub async fn save_execution_history(
             pipeline_id: Set(saved_pipeline.id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(order as i32),
-            since: Set(action
-                .time_range
-                .as_ref()
-                .and_then(|tr| tr.since)
-                .map(|dt| dt.naive_utc())),
-            until: Set(action
-                .time_range
-                .as_ref()
-                .and_then(|tr| tr.until)
-                .map(|dt| dt.naive_utc())),
         };
         action_model.insert(db).await?;
     }
@@ -200,52 +190,11 @@ pub async fn save_pipeline_execution(
             pipeline_id: Set(saved_pipeline.id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(order as i32),
-            since: Set(action
-                .time_range
-                .as_ref()
-                .and_then(|tr| tr.since)
-                .map(|dt| dt.naive_utc())),
-            until: Set(action
-                .time_range
-                .as_ref()
-                .and_then(|tr| tr.until)
-                .map(|dt| dt.naive_utc())),
         };
         action_model.insert(db).await?;
     }
 
     Ok(())
-}
-
-pub async fn get_executed_ranges_for_graph(
-    db: &DatabaseConnection,
-    graph_id: i32,
-    table_name: &str,
-) -> Result<Vec<TimeRange>> {
-    use sea_orm::JoinType;
-
-    let pipeline_actions = pipeline_actions::Entity::find()
-        .filter(pipeline_actions::Column::TableName.eq(table_name))
-        .join(
-            JoinType::InnerJoin,
-            pipeline_actions::Relation::Pipeline.def(),
-        )
-        .filter(pipelines::Column::GraphId.eq(graph_id))
-        .all(db)
-        .await?;
-
-    let mut ranges = Vec::new();
-    for action in pipeline_actions {
-        let since = action
-            .since
-            .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
-        let until = action
-            .until
-            .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
-        ranges.push(TimeRange { since, until });
-    }
-
-    Ok(ranges)
 }
 
 #[cfg(test)]
@@ -326,10 +275,6 @@ mod tests {
         let pipeline = Pipeline {
             levels: vec![vec![Action {
                 table_name: "users".to_string(),
-                time_range: Some(TimeRange {
-                    since: None,
-                    until: None,
-                }),
             }]],
         };
 
@@ -355,10 +300,6 @@ mod tests {
         let pipeline = Pipeline {
             levels: vec![vec![Action {
                 table_name: "users".to_string(),
-                time_range: Some(TimeRange {
-                    since: None,
-                    until: None,
-                }),
             }]],
         };
 
@@ -408,17 +349,9 @@ mod tests {
             levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
                 Action {
                     table_name: "orders".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
             ]],
         };
@@ -466,17 +399,9 @@ mod tests {
             levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
                 Action {
                     table_name: "user_stats".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
             ]],
         };
@@ -538,17 +463,9 @@ mod tests {
             levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
                 Action {
                     table_name: "user_stats".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
             ]],
         };
@@ -607,17 +524,9 @@ mod tests {
             levels: vec![vec![
                 Action {
                     table_name: "users".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
                 Action {
                     table_name: "old_table".to_string(),
-                    time_range: Some(TimeRange {
-                        since: None,
-                        until: None,
-                    }),
                 },
             ]],
         };

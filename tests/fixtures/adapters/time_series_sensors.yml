@@ -2,15 +2,6 @@ connection: test_data
 description: 'Time series sensor data with date patterns'
 file:
   path: time_series/{YYYY}-{MM}-{DD}T{HH}{mm}.json
-update_strategy:
-  detection: filename
-  timestamp_from: path
-  range:
-    since: "2024-01-15 10:00:00"
-    until: "2024-01-15 10:02:59"
-  limits:
-    max_files: 10
-    max_size: "10MB"
 format:
   type: json
 columns:

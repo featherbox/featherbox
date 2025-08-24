@@ -2,6 +2,7 @@ use sea_orm_migration::prelude::*;
 
 mod m20240101_000001_create_metadata_tables;
 mod m20240102_000001_add_range_to_pipeline_actions;
+mod m20240103_000001_remove_range_from_pipeline_actions;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20240101_000001_create_metadata_tables::Migration),
             Box::new(m20240102_000001_add_range_to_pipeline_actions::Migration),
+            Box::new(m20240103_000001_remove_range_from_pipeline_actions::Migration),
         ]
     }
 }

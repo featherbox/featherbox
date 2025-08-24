@@ -303,14 +303,13 @@ impl Pipeline {
         context: &ExecutionContext,
     ) -> Result<JoinHandle<TaskResult>> {
         let table_name = action.table_name.clone();
-        let time_range = action.time_range.clone();
         let connections = context.config.project.connections.clone();
 
         if let Some(adapter) = context.adapters.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
                 match adapter
-                    .execute_import(&table_name, time_range, Some(&connections))
+                    .execute_import(&table_name, Some(&connections))
                     .await
                 {
                     Ok(_) => TaskResult::Success {

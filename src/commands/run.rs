@@ -47,8 +47,7 @@ pub async fn run(project_path: &Path) -> Result<()> {
 
     let ducklake = connect_ducklake(&config).await?;
 
-    let pipeline =
-        Pipeline::from_graph_with_ranges(&current_graph, &config, &app_db, graph_id).await?;
+    let pipeline = Pipeline::from_graph(&current_graph);
     save_pipeline(&app_db, graph_id, &pipeline).await?;
 
     pipeline
@@ -79,16 +78,6 @@ async fn save_pipeline(
             pipeline_id: Set(pipeline_id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(execution_order as i32),
-            since: Set(action
-                .time_range
-                .as_ref()
-                .and_then(|tr| tr.since)
-                .map(|dt| dt.naive_utc())),
-            until: Set(action
-                .time_range
-                .as_ref()
-                .and_then(|tr| tr.until)
-                .map(|dt| dt.naive_utc())),
         };
         let saved_action = action_model.insert(app_db).await?;
         action_ids.push(saved_action.id);
@@ -376,10 +365,6 @@ mod tests {
         let initial_pipeline = Pipeline {
             levels: vec![vec![Action {
                 table_name: "users".to_string(),
-                time_range: Some(crate::pipeline::build::TimeRange {
-                    since: None,
-                    until: None,
-                }),
             }]],
         };
 

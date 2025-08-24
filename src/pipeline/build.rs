@@ -1,21 +1,9 @@
-use crate::{
-    config::Config,
-    dependency::{get_executed_ranges_for_graph, graph::Graph},
-};
-use anyhow::Result;
-use sea_orm::DatabaseConnection;
+use crate::dependency::graph::Graph;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
     pub table_name: String,
-    pub time_range: Option<TimeRange>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TimeRange {
-    pub since: Option<chrono::DateTime<chrono::Utc>>,
-    pub until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug)]
@@ -33,10 +21,6 @@ impl Pipeline {
             let level = level_map.get(&node_name).unwrap_or(&0);
             let action = Action {
                 table_name: node_name,
-                time_range: Some(TimeRange {
-                    since: None,
-                    until: None,
-                }),
             };
             levels_actions.entry(*level).or_default().push(action);
         }
@@ -49,58 +33,6 @@ impl Pipeline {
         }
 
         Pipeline { levels }
-    }
-
-    pub async fn from_graph_with_ranges(
-        graph: &Graph,
-        config: &Config,
-        app_db: &DatabaseConnection,
-        graph_id: i32,
-    ) -> Result<Self> {
-        let sorted_nodes = topological_sort(graph);
-        let level_map = calculate_execution_levels(graph);
-        let mut levels_actions: HashMap<usize, Vec<Action>> = HashMap::new();
-
-        for node_name in sorted_nodes {
-            let time_range = if let Some(adapter) = config.adapters.get(&node_name) {
-                if let Some(strategy) = &adapter.update_strategy {
-                    let executed_ranges_raw =
-                        get_executed_ranges_for_graph(app_db, graph_id, &node_name).await?;
-
-                    let executed_ranges: Vec<ExecutedRange> = executed_ranges_raw
-                        .into_iter()
-                        .map(|range| ExecutedRange {
-                            since: range.since.expect("Expected since to be present"),
-                            until: range.until.expect("Expected until to be present"),
-                        })
-                        .collect();
-
-                    let config_range = &strategy.range;
-
-                    calculate_remaining_range(config_range, &executed_ranges)?
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            let level = level_map.get(&node_name).unwrap_or(&0);
-            let action = Action {
-                table_name: node_name,
-                time_range,
-            };
-            levels_actions.entry(*level).or_default().push(action);
-        }
-
-        let max_level = levels_actions.keys().max().unwrap_or(&0);
-        let mut levels: Vec<Vec<Action>> = vec![Vec::new(); max_level + 1];
-
-        for (level, actions) in levels_actions {
-            levels[level] = actions;
-        }
-
-        Ok(Pipeline { levels })
     }
 
     pub fn all_actions(&self) -> Vec<&Action> {
@@ -228,72 +160,6 @@ pub fn create_subgraph(graph: &Graph, affected_nodes: &[String]) -> Graph {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ExecutedRange {
-    pub since: chrono::DateTime<chrono::Utc>,
-    pub until: chrono::DateTime<chrono::Utc>,
-}
-
-pub fn calculate_remaining_range(
-    config_range: &TimeRange,
-    executed_ranges: &[ExecutedRange],
-) -> Result<Option<TimeRange>> {
-    let Some(config_since) = config_range.since else {
-        return Ok(None);
-    };
-    let Some(config_until) = config_range.until else {
-        return Ok(None);
-    };
-
-    if executed_ranges.is_empty() {
-        return Ok(Some(TimeRange {
-            since: Some(config_since),
-            until: Some(config_until),
-        }));
-    }
-
-    let mut sorted_ranges = executed_ranges.to_vec();
-    sorted_ranges.sort_by(|a, b| a.since.cmp(&b.since));
-
-    let mut merged_ranges = Vec::new();
-    let mut current_start = sorted_ranges[0].since;
-    let mut current_end = sorted_ranges[0].until;
-
-    for range in sorted_ranges.iter().skip(1) {
-        if range.since <= current_end {
-            current_end = current_end.max(range.until);
-        } else {
-            merged_ranges.push(ExecutedRange {
-                since: current_start,
-                until: current_end,
-            });
-            current_start = range.since;
-            current_end = range.until;
-        }
-    }
-    merged_ranges.push(ExecutedRange {
-        since: current_start,
-        until: current_end,
-    });
-
-    let last_executed = merged_ranges.last().unwrap();
-
-    if last_executed.until >= config_until {
-        return Ok(None);
-    }
-
-    let start_time = if last_executed.until >= config_since {
-        last_executed.until
-    } else {
-        config_since
-    };
-
-    Ok(Some(TimeRange {
-        since: Some(start_time),
-        until: Some(config_until),
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,43 +282,6 @@ mod tests {
         assert!(node_names.contains("D"));
 
         assert_eq!(subgraph.edges.len(), 3);
-    }
-
-    #[test]
-    fn test_calculate_remaining_range_empty_executed() {
-        let config_range = TimeRange {
-            since: Some(
-                chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc(),
-            ),
-            until: Some(
-                chrono::NaiveDate::from_ymd_opt(2024, 12, 31)
-                    .unwrap()
-                    .and_hms_opt(23, 59, 59)
-                    .unwrap()
-                    .and_utc(),
-            ),
-        };
-
-        let executed_ranges = vec![];
-
-        let result = calculate_remaining_range(&config_range, &executed_ranges).unwrap();
-
-        assert!(result.is_some());
-        let time_range = result.unwrap();
-        assert!(time_range.since.is_some());
-        assert!(time_range.until.is_some());
-        assert_eq!(
-            time_range.since.unwrap().date_naive(),
-            chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
-        );
-        assert_eq!(
-            time_range.until.unwrap().date_naive(),
-            chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
-        );
     }
 
     #[test]

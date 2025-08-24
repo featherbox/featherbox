@@ -2,15 +2,6 @@ connection: s3_data
 description: 'Sales data stored in S3'
 file:
   path: sales/2024-01-{DD}.json
-update_strategy:
-  detection: filename
-  timestamp_from: path
-  range:
-    since: "2024-01-20"
-    until: "2024-01-22"
-  limits:
-    max_files: 10
-    max_size: "10MB"
 format:
   type: json
 columns:
