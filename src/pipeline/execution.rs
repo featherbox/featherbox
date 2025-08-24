@@ -4,7 +4,6 @@ use crate::{
     pipeline::{
         adapter::Adapter,
         build::{Action, Pipeline},
-        delta::DeltaManager,
         ducklake::DuckLake,
         logger::Logger,
         model::Model,
@@ -21,11 +20,9 @@ struct ExecutionContext {
     pipeline_id: i32,
     graph: Arc<Graph>,
     config: Arc<Config>,
-    app_db: sea_orm::DatabaseConnection,
     logger: Arc<Logger>,
     adapters: Arc<HashMap<String, Adapter>>,
     models: Arc<HashMap<String, Model>>,
-    action_id_map: Arc<HashMap<String, i32>>,
 }
 
 enum TaskResult {
@@ -54,40 +51,6 @@ impl Pipeline {
         Ok(latest_pipeline.id)
     }
 
-    async fn get_latest_pipeline_action_ids(
-        &self,
-        app_db: &sea_orm::DatabaseConnection,
-    ) -> Result<Vec<i32>> {
-        use crate::database::entities::{pipeline_actions, pipelines};
-        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
-
-        let latest_pipeline = pipelines::Entity::find()
-            .order_by_desc(pipelines::Column::CreatedAt)
-            .one(app_db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("No pipeline found in database"))?;
-
-        let mut action_ids = Vec::new();
-
-        for action in self.all_actions() {
-            let pipeline_action = pipeline_actions::Entity::find()
-                .filter(pipeline_actions::Column::PipelineId.eq(latest_pipeline.id))
-                .filter(pipeline_actions::Column::TableName.eq(&action.table_name))
-                .one(app_db)
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Action for table '{}' not found in latest pipeline",
-                        action.table_name
-                    )
-                })?;
-
-            action_ids.push(pipeline_action.id);
-        }
-
-        Ok(action_ids)
-    }
-
     pub async fn execute(
         &self,
         graph: &Graph,
@@ -97,35 +60,20 @@ impl Pipeline {
     ) -> Result<()> {
         let shared_ducklake = Arc::new(ducklake.clone());
         let shared_logger = Arc::new(Logger::new(Arc::clone(&shared_ducklake)).await?);
-        let shared_delta_manager = Arc::new(DeltaManager::new(
-            &config.project_root,
-            Arc::clone(&shared_ducklake),
-        )?);
 
         let mut adapters = HashMap::new();
         for (table_name, adapter_config) in &config.adapters {
-            let adapter = Adapter::new(adapter_config.clone(), Arc::clone(&shared_delta_manager));
+            let adapter = Adapter::new(adapter_config.clone(), Arc::clone(&shared_ducklake));
             adapters.insert(table_name.clone(), adapter);
         }
         let shared_adapters = Arc::new(adapters);
 
         let mut models = HashMap::new();
         for (table_name, model_config) in &config.models {
-            let model = Model::new(
-                model_config.clone(),
-                Arc::clone(&shared_ducklake),
-                Arc::clone(&shared_delta_manager),
-            );
+            let model = Model::new(model_config.clone(), Arc::clone(&shared_ducklake));
             models.insert(table_name.clone(), model);
         }
         let shared_models = Arc::new(models);
-
-        let action_ids = self.get_latest_pipeline_action_ids(app_db).await?;
-        let mut action_id_map = HashMap::new();
-        let all_actions = self.all_actions();
-        for (idx, action) in all_actions.iter().enumerate() {
-            action_id_map.insert(action.table_name.clone(), action_ids[idx]);
-        }
 
         let pipeline_id = self.get_latest_pipeline_id(app_db).await?;
 
@@ -133,11 +81,9 @@ impl Pipeline {
             pipeline_id,
             graph: Arc::new(graph.clone()),
             config: Arc::new(config.clone()),
-            app_db: app_db.clone(),
             logger: shared_logger.clone(),
             adapters: shared_adapters,
             models: shared_models,
-            action_id_map: Arc::new(action_id_map),
         };
 
         context
@@ -356,24 +302,15 @@ impl Pipeline {
         action: &Action,
         context: &ExecutionContext,
     ) -> Result<JoinHandle<TaskResult>> {
-        let action_id = *context.action_id_map.get(&action.table_name).unwrap();
         let table_name = action.table_name.clone();
         let time_range = action.time_range.clone();
-        let app_db = context.app_db.clone();
         let connections = context.config.project.connections.clone();
-        let config = context.config.clone();
 
         if let Some(adapter) = context.adapters.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
                 match adapter
-                    .execute_import(
-                        &table_name,
-                        time_range,
-                        &app_db,
-                        action_id,
-                        Some(&connections),
-                    )
+                    .execute_import(&table_name, time_range, Some(&connections))
                     .await
                 {
                     Ok(_) => TaskResult::Success {
@@ -390,10 +327,7 @@ impl Pipeline {
         } else if let Some(model) = context.models.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
-                match model
-                    .execute_transform(&table_name, &app_db, action_id, &config)
-                    .await
-                {
+                match model.execute_transform(&table_name).await {
                     Ok(_) => TaskResult::Success {
                         table_name,
                         execution_time_ms: start_time.elapsed().as_millis() as u64,

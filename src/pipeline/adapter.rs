@@ -6,53 +6,41 @@ use crate::{
     pipeline::{
         build::TimeRange,
         database::DatabaseSystem,
-        delta::{DeltaManager, DeltaMetadata},
+        ducklake::DuckLake,
         file_processor::{FileProcessor, FileSystem},
     },
 };
-use anyhow::Result;
-use sea_orm::DatabaseConnection;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Adapter {
     config: AdapterConfig,
-    delta_manager: Arc<DeltaManager>,
+    ducklake: Arc<DuckLake>,
 }
 
 impl Adapter {
-    pub fn new(config: AdapterConfig, delta_manager: Arc<DeltaManager>) -> Self {
-        Self {
-            config,
-            delta_manager,
-        }
+    pub fn new(config: AdapterConfig, ducklake: Arc<DuckLake>) -> Self {
+        Self { config, ducklake }
     }
 
     pub async fn execute_import(
         &self,
         table_name: &str,
         time_range: Option<TimeRange>,
-        app_db: &DatabaseConnection,
-        action_id: i32,
         connections: Option<&HashMap<String, ConnectionConfig>>,
-    ) -> Result<Option<DeltaMetadata>> {
+    ) -> Result<()> {
         match &self.config.source {
             AdapterSource::File { .. } => {
-                self.execute_file_import(table_name, time_range, app_db, action_id, connections)
+                self.execute_file_import(table_name, time_range, connections)
                     .await
             }
             AdapterSource::Database {
                 table_name: source_table,
             } => {
-                self.execute_database_import(
-                    source_table,
-                    table_name,
-                    app_db,
-                    action_id,
-                    connections,
-                )
-                .await
+                self.execute_database_import(source_table, table_name, connections)
+                    .await
             }
         }
     }
@@ -61,44 +49,169 @@ impl Adapter {
         &self,
         table_name: &str,
         time_range: Option<TimeRange>,
-        app_db: &DatabaseConnection,
-        action_id: i32,
         connections: Option<&HashMap<String, ConnectionConfig>>,
-    ) -> Result<Option<DeltaMetadata>> {
+    ) -> Result<()> {
         let filesystem = self.create_filesystem(connections).await?;
 
         let file_paths =
             FileProcessor::files_for_processing(&self.config, time_range, &filesystem).await?;
 
         if file_paths.is_empty() {
-            return Ok(None);
+            return Ok(());
         }
 
-        let delta_metadata = self
-            .delta_manager
-            .process_delta_for_adapter(&self.config, table_name, &file_paths, app_db, action_id)
-            .await?;
+        // let delta_metadata = self
+        //     .delta_manager
+        //     .process_delta_for_adapter(&self.config, table_name, &file_paths, app_db, action_id)
+        //     .await?;
+        let query = self.build_import_query_multiple(&self.config, &file_paths)?;
 
-        Ok(Some(delta_metadata))
+        self.ducklake.create_table_from_query(table_name, &query)?;
+
+        Ok(())
+    }
+
+    fn build_import_query_multiple(
+        &self,
+        adapter: &AdapterConfig,
+        file_paths: &[String],
+    ) -> Result<String> {
+        if file_paths.is_empty() {
+            return Err(anyhow::anyhow!("No files to load"));
+        }
+
+        if file_paths.len() == 1 {
+            let file_path = &file_paths[0];
+            return self.build_import_query_single(adapter, file_path);
+        }
+
+        let file_paths_str = file_paths
+            .iter()
+            .map(|p| format!("'{p}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        match &adapter.source {
+            crate::config::adapter::AdapterSource::File { format, .. } => {
+                match format.ty.as_str() {
+                    "csv" => {
+                        let has_header = format.has_header.unwrap_or(true);
+                        let query = format!(
+                            "SELECT * FROM read_csv_auto([{file_paths_str}], header={has_header})"
+                        );
+                        Ok(query)
+                    }
+                    "parquet" => {
+                        let query = format!("SELECT * FROM read_parquet([{file_paths_str}])");
+                        Ok(query)
+                    }
+                    "json" => {
+                        let query = format!("SELECT * FROM read_json_auto([{file_paths_str}])");
+                        Ok(query)
+                    }
+                    _ => Err(anyhow::anyhow!("Unsupported format: {}", format.ty)),
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "Only file sources are supported in delta processing"
+            )),
+        }
+    }
+
+    fn build_import_query_single(
+        &self,
+        adapter: &AdapterConfig,
+        file_path: &str,
+    ) -> Result<String> {
+        match &adapter.source {
+            crate::config::adapter::AdapterSource::File { format, .. } => {
+                match format.ty.as_str() {
+                    "csv" => {
+                        let has_header = format.has_header.unwrap_or(true);
+                        let query = format!(
+                            "SELECT * FROM read_csv_auto('{file_path}', header={has_header})"
+                        );
+                        Ok(query)
+                    }
+                    "parquet" => {
+                        let query = format!("SELECT * FROM read_parquet('{file_path}')");
+                        Ok(query)
+                    }
+                    "json" => {
+                        let query = format!("SELECT * FROM read_json_auto('{file_path}')");
+                        Ok(query)
+                    }
+                    _ => Err(anyhow::anyhow!("Unsupported format: {}", format.ty)),
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "Only file sources are supported in delta processing"
+            )),
+        }
     }
 
     async fn execute_database_import(
         &self,
         source_table: &str,
         target_table: &str,
-        app_db: &DatabaseConnection,
-        action_id: i32,
         connections: Option<&HashMap<String, ConnectionConfig>>,
-    ) -> Result<Option<DeltaMetadata>> {
+    ) -> Result<()> {
         let connection = self.get_connection(connections)?;
         let db_system = DatabaseSystem::from_connection(connection)?;
 
-        let delta_metadata = self
-            .delta_manager
-            .process_delta_for_database(&db_system, source_table, target_table, app_db, action_id)
-            .await?;
+        let db_alias = &db_system.generate_alias();
+        let attach_result = self.attach_and_validate_database(db_alias, &db_system, source_table);
+        if let Err(e) = attach_result {
+            if let Err(detach_err) = self.detach_database(db_alias, &db_system) {
+                eprintln!("Warning: Failed to detach database during cleanup: {detach_err}");
+            }
+            return Err(e);
+        }
 
-        Ok(Some(delta_metadata))
+        let query = db_system.build_read_query(db_alias, source_table);
+
+        self.ducklake
+            .create_table_from_query(target_table, &query)?;
+
+        Ok(())
+    }
+
+    fn detach_database(&self, db_alias: &str, db_system: &DatabaseSystem) -> Result<()> {
+        self.ducklake
+            .execute_batch(&db_system.build_detach_query(db_alias)?)
+            .with_context(|| format!("Failed to detach SQLite database: {db_alias}"))
+    }
+
+    fn attach_and_validate_database(
+        &self,
+        db_alias: &str,
+        db_system: &DatabaseSystem,
+        source_table: &str,
+    ) -> Result<()> {
+        let attach_query = db_system.build_attach_query(db_alias)?;
+
+        self.ducklake
+            .execute_batch(&attach_query)
+            .with_context(|| format!("Failed to attach SQLite database. Query: {attach_query}"))?;
+
+        let validation_query = db_system.validate_table_exists(db_alias, source_table)?;
+        let validation_result = self
+            .ducklake
+            .query(&validation_query)
+            .with_context(|| format!("Failed to validate table existence for: {source_table}"))?;
+
+        let table_exists = !validation_result.is_empty()
+            && !validation_result[0].is_empty()
+            && validation_result[0][0] != "0";
+
+        if !table_exists {
+            return Err(anyhow::anyhow!(
+                "Table '{}' does not exist in the source database",
+                source_table
+            ));
+        }
+
+        Ok(())
     }
 
     fn get_connection<'a>(
@@ -136,9 +249,7 @@ impl Adapter {
 mod tests {
     use super::*;
     use crate::config::adapter::{FileConfig, FormatConfig};
-    use crate::pipeline::delta::DeltaManager;
     use crate::pipeline::ducklake::{CatalogConfig, DuckLake, StorageConfig};
-    use std::path::Path;
 
     fn create_test_adapter_config() -> AdapterConfig {
         AdapterConfig {
@@ -175,10 +286,8 @@ mod tests {
         };
 
         let ducklake = Arc::new(DuckLake::new(catalog_config, storage_config).await.unwrap());
-        let delta_manager =
-            Arc::new(DeltaManager::new(Path::new("/tmp"), ducklake.clone()).unwrap());
 
-        let adapter = Adapter::new(config, delta_manager);
+        let adapter = Adapter::new(config, ducklake);
         assert_eq!(adapter.config.connection, "local");
     }
 }

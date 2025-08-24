@@ -48,6 +48,11 @@ impl DatabaseSystem {
     pub fn build_attach_query(&self, alias: &str) -> Result<String> {
         match self {
             Self::Sqlite { path } => {
+                if !std::path::Path::new(path).exists() {
+                    return Err(anyhow::anyhow!(
+                        "SQLite database file does not exist: {path}"
+                    ));
+                }
                 let query = format!("ATTACH '{path}' AS {alias} (TYPE sqlite);");
                 Ok(query)
             }
@@ -83,9 +88,65 @@ impl DatabaseSystem {
         Ok(query)
     }
 
-    pub fn build_read_query(&self, alias: &str, table_name: &str) -> Result<String> {
-        let query = format!("SELECT * FROM {alias}.{table_name}");
-        Ok(query)
+    pub fn build_extension_install_query(&self) -> Option<String> {
+        match self {
+            Self::Sqlite { .. } => None,
+            Self::RemoteDatabase { db_type, .. } => {
+                let extension_name = match db_type {
+                    DatabaseType::Mysql => "mysql",
+                    DatabaseType::Postgresql => "postgres",
+                    DatabaseType::Sqlite => {
+                        unreachable!("SQLite should not use RemoteDatabase variant")
+                    }
+                };
+                Some(format!("INSTALL {extension_name}; LOAD {extension_name};"))
+            }
+        }
+    }
+
+    pub fn build_attach_only_query(&self, alias: &str) -> Result<String> {
+        match self {
+            Self::Sqlite { path } => {
+                if !std::path::Path::new(path).exists() {
+                    return Err(anyhow::anyhow!(
+                        "SQLite database file does not exist: {path}"
+                    ));
+                }
+                let query = format!("ATTACH '{path}' AS {alias} (TYPE sqlite);");
+                Ok(query)
+            }
+            Self::RemoteDatabase { db_type, config } => {
+                let db_type_str = match db_type {
+                    DatabaseType::Mysql => "mysql",
+                    DatabaseType::Postgresql => "postgres",
+                    DatabaseType::Sqlite => {
+                        unreachable!("SQLite should not use RemoteDatabase variant")
+                    }
+                };
+                let connection_string = match db_type {
+                    DatabaseType::Mysql => format!(
+                        "host={} port={} database={} user={} password={}",
+                        config.host, config.port, config.database, config.username, config.password
+                    ),
+                    DatabaseType::Postgresql => format!(
+                        "host={} port={} dbname={} user={} password={}",
+                        config.host, config.port, config.database, config.username, config.password
+                    ),
+                    DatabaseType::Sqlite => unreachable!(),
+                };
+                let query =
+                    format!("ATTACH '{connection_string}' AS {alias} (TYPE {db_type_str});");
+                Ok(query)
+            }
+        }
+    }
+
+    pub fn build_read_query(&self, alias: &str, table_name: &str) -> String {
+        format!("SELECT * FROM {alias}.{table_name}")
+    }
+
+    pub fn select_all_query(&self, table_name: &str) -> String {
+        format!("SELECT * FROM {table_name}")
     }
 
     pub fn validate_table_exists(&self, alias: &str, table_name: &str) -> Result<String> {
@@ -110,6 +171,8 @@ impl DatabaseSystem {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
 
     #[test]
@@ -158,15 +221,18 @@ mod tests {
 
     #[test]
     fn test_sqlite_attach_detach_queries() {
+        let tmpdir = TempDir::new().unwrap();
+        let db_path = tmpdir.path().join("test.db").to_string_lossy().to_string();
+        std::fs::File::create(&db_path).unwrap();
         let db_system = DatabaseSystem::Sqlite {
-            path: "/tmp/test.db".to_string(),
+            path: db_path.clone(),
         };
 
         let alias = "test_db";
         let attach_query = db_system.build_attach_query(alias).unwrap();
         assert_eq!(
             attach_query,
-            "ATTACH '/tmp/test.db' AS test_db (TYPE sqlite);"
+            format!("ATTACH '{db_path}' AS test_db (TYPE sqlite);")
         );
 
         let detach_query = db_system.build_detach_query(alias).unwrap();
@@ -204,7 +270,7 @@ mod tests {
         };
 
         let alias = "test_db";
-        let query = db_system.build_read_query(alias, "users").unwrap();
+        let query = db_system.build_read_query(alias, "users");
         assert_eq!(query, "SELECT * FROM test_db.users");
     }
 
@@ -222,7 +288,7 @@ mod tests {
         };
 
         let alias = "mysql_db";
-        let query = db_system.build_read_query(alias, "users").unwrap();
+        let query = db_system.build_read_query(alias, "users");
         assert_eq!(query, "SELECT * FROM mysql_db.users");
     }
 
@@ -327,7 +393,7 @@ mod tests {
         };
 
         let alias = "postgres_db";
-        let query = db_system.build_read_query(alias, "users").unwrap();
+        let query = db_system.build_read_query(alias, "users");
         assert_eq!(query, "SELECT * FROM postgres_db.users");
     }
 
@@ -433,7 +499,7 @@ mod tests {
 
         connection
             .execute(
-                "INSERT INTO users (name, email, created_at) VALUES 
+                "INSERT INTO users (name, email, created_at) VALUES
                  ('Alice', 'alice@example.com', '2024-01-01T10:00:00Z'),
                  ('Bob', 'bob@example.com', '2024-01-01T11:00:00Z')",
                 [],
@@ -480,7 +546,7 @@ mod tests {
         assert!(!validation_result.is_empty());
         assert_eq!(validation_result[0][0], "1");
 
-        let read_query = db_system.build_read_query(&alias, "users").unwrap();
+        let read_query = db_system.build_read_query(&alias, "users");
         let results = ducklake.query(&read_query).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0][1], "Alice");
@@ -538,7 +604,7 @@ mod tests {
         assert!(!validation_result.is_empty());
         assert_eq!(validation_result[0][0], "1");
 
-        let read_query = db_system.build_read_query(&alias, "users").unwrap();
+        let read_query = db_system.build_read_query(&alias, "users");
         println!("Read query: {read_query}");
         let results = ducklake.query(&read_query).unwrap();
         println!("Query results: {results:?}");
