@@ -160,7 +160,7 @@ async fn configure_source_with_test(
     connection_config: &ConnectionConfig,
 ) -> Result<(AdapterSource, FormatConfig)> {
     let source_type = match connection_config {
-        ConnectionConfig::LocalFile { .. } | ConnectionConfig::S3 { .. } => SourceType::File,
+        ConnectionConfig::LocalFile { .. } | ConnectionConfig::S3(_) => SourceType::File,
         ConnectionConfig::Sqlite { .. } | ConnectionConfig::RemoteDatabase { .. } => {
             SourceType::Database
         }
@@ -555,8 +555,8 @@ async fn test_connection_simple(connection_config: &ConnectionConfig) -> Result<
                 }
             }
         }
-        ConnectionConfig::S3 { bucket, .. } => {
-            println!("✓ S3 bucket configuration: {bucket}");
+        ConnectionConfig::S3(s3_config) => {
+            println!("✓ S3 bucket configuration: {}", s3_config.bucket);
         }
         ConnectionConfig::RemoteDatabase { db_type, config } => {
             println!(

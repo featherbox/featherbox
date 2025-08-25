@@ -8,7 +8,9 @@ use std::path::Path;
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader, yaml::Hash};
 
 use crate::commands::workspace::find_project_root;
-use crate::config::project::{ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod};
+use crate::config::project::{
+    ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod, S3Config,
+};
 
 #[derive(Debug, Clone)]
 enum ConnectionType {
@@ -101,7 +103,7 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
                 _ => unreachable!(),
             };
 
-            ConnectionConfig::S3 {
+            ConnectionConfig::S3(S3Config {
                 bucket,
                 region,
                 endpoint_url: None,
@@ -110,7 +112,7 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
                 secret_access_key,
                 session_token: None,
                 path_style_access: false,
-            }
+            })
         }
         ConnectionType::MySql => {
             let host = Text::new("Host:").prompt()?;
@@ -185,22 +187,14 @@ async fn test_connection(config: &ConnectionConfig) -> Result<String> {
                 Err(anyhow::anyhow!("Parent directory does not exist"))
             }
         }
-        ConnectionConfig::S3 {
-            bucket,
-            region,
-            auth_method,
-            access_key_id,
-            secret_access_key,
-            endpoint_url,
-            ..
-        } => {
+        ConnectionConfig::S3(s3_config) => {
             test_s3_connection(
-                bucket,
-                region,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                endpoint_url,
+                &s3_config.bucket,
+                &s3_config.region,
+                &s3_config.auth_method,
+                &s3_config.access_key_id,
+                &s3_config.secret_access_key,
+                &s3_config.endpoint_url,
             )
             .await
         }
@@ -293,28 +287,21 @@ fn create_connection_yaml(config: &ConnectionConfig) -> Yaml {
             );
             connection.insert(Yaml::String("path".to_string()), Yaml::String(path.clone()));
         }
-        ConnectionConfig::S3 {
-            bucket,
-            region,
-            auth_method,
-            access_key_id,
-            secret_access_key,
-            ..
-        } => {
+        ConnectionConfig::S3(s3_config) => {
             connection.insert(
                 Yaml::String("type".to_string()),
                 Yaml::String("s3".to_string()),
             );
             connection.insert(
                 Yaml::String("bucket".to_string()),
-                Yaml::String(bucket.clone()),
+                Yaml::String(s3_config.bucket.clone()),
             );
             connection.insert(
                 Yaml::String("region".to_string()),
-                Yaml::String(region.clone()),
+                Yaml::String(s3_config.region.clone()),
             );
 
-            let auth_method_str = match auth_method {
+            let auth_method_str = match &s3_config.auth_method {
                 S3AuthMethod::CredentialChain => "credential_chain",
                 S3AuthMethod::Explicit => "explicit",
             };
@@ -323,14 +310,14 @@ fn create_connection_yaml(config: &ConnectionConfig) -> Yaml {
                 Yaml::String(auth_method_str.to_string()),
             );
 
-            if matches!(auth_method, S3AuthMethod::Explicit) {
+            if matches!(s3_config.auth_method, S3AuthMethod::Explicit) {
                 connection.insert(
                     Yaml::String("access_key_id".to_string()),
-                    Yaml::String(access_key_id.clone()),
+                    Yaml::String(s3_config.access_key_id.clone()),
                 );
                 connection.insert(
                     Yaml::String("secret_access_key".to_string()),
-                    Yaml::String(secret_access_key.clone()),
+                    Yaml::String(s3_config.secret_access_key.clone()),
                 );
             }
         }

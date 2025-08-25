@@ -12,31 +12,22 @@ pub struct S3Client {
 impl S3Client {
     pub async fn new(connection: &ConnectionConfig) -> Result<Self> {
         let (bucket, config) = match connection {
-            ConnectionConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-                path_style_access,
-            } => {
+            ConnectionConfig::S3(s3_config) => {
                 let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(Region::new(region.clone()));
+                    .region(Region::new(s3_config.region.clone()));
 
-                if let Some(endpoint) = endpoint_url {
+                if let Some(endpoint) = &s3_config.endpoint_url {
                     config_loader = config_loader.endpoint_url(endpoint);
                 }
 
-                match auth_method {
+                match &s3_config.auth_method {
                     S3AuthMethod::CredentialChain => {}
                     S3AuthMethod::Explicit => {
                         config_loader = config_loader.credentials_provider(
                             aws_sdk_s3::config::Credentials::new(
-                                access_key_id,
-                                secret_access_key,
-                                session_token.clone(),
+                                &s3_config.access_key_id,
+                                &s3_config.secret_access_key,
+                                s3_config.session_token.clone(),
                                 None,
                                 "featherbox-explicit",
                             ),
@@ -47,13 +38,13 @@ impl S3Client {
                 let aws_config = config_loader.load().await;
 
                 let s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config);
-                let s3_config = if *path_style_access {
+                let aws_s3_config = if s3_config.path_style_access {
                     s3_config_builder.force_path_style(true).build()
                 } else {
                     s3_config_builder.build()
                 };
 
-                (bucket.clone(), s3_config)
+                (s3_config.bucket.clone(), aws_s3_config)
             }
             _ => return Err(anyhow::anyhow!("Expected S3 connection")),
         };
@@ -208,7 +199,7 @@ fn matches_pattern(pattern: &str, key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::project::S3AuthMethod;
+    use crate::config::project::{S3AuthMethod, S3Config};
     use std::{env, panic, sync::Arc, sync::Mutex};
 
     #[test]
@@ -278,7 +269,7 @@ mod tests {
 
     fn create_s3_connection_config() -> ConnectionConfig {
         if env::var("AWS_PROFILE").is_ok() {
-            ConnectionConfig::S3 {
+            ConnectionConfig::S3(S3Config {
                 bucket: env::var("S3_TEST_BUCKET").unwrap_or_else(|_| "test-bucket".to_string()),
                 region: env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
                 endpoint_url: env::var("S3_ENDPOINT_URL").ok(),
@@ -287,9 +278,9 @@ mod tests {
                 secret_access_key: String::new(),
                 session_token: None,
                 path_style_access: false,
-            }
+            })
         } else {
-            ConnectionConfig::S3 {
+            ConnectionConfig::S3(S3Config {
                 bucket: env::var("S3_TEST_BUCKET").unwrap_or_else(|_| "test-bucket".to_string()),
                 region: env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
                 endpoint_url: env::var("S3_ENDPOINT_URL").ok(),
@@ -298,7 +289,7 @@ mod tests {
                 secret_access_key: env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default(),
                 session_token: env::var("AWS_SESSION_TOKEN").ok(),
                 path_style_access: false,
-            }
+            })
         }
     }
 
@@ -393,8 +384,8 @@ mod tests {
         let unique_bucket = format!("featherbox-test-{}", chrono::Utc::now().timestamp());
 
         match &mut connection_config {
-            ConnectionConfig::S3 { bucket, .. } => {
-                *bucket = unique_bucket;
+            ConnectionConfig::S3(s3_config) => {
+                s3_config.bucket = unique_bucket;
             }
             _ => unreachable!(),
         }

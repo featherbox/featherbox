@@ -48,7 +48,7 @@ impl Adapter {
         let filesystem = self.create_filesystem(connections).await?;
 
         if let Some(connection) = self.get_connection_if_exists(connections) {
-            if matches!(connection, ConnectionConfig::S3 { .. }) {
+            if matches!(connection, ConnectionConfig::S3(_)) {
                 self.ducklake.configure_s3_connection(connection).await?;
             }
         }

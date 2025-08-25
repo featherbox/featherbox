@@ -26,7 +26,7 @@ impl FileSystem {
             ConnectionConfig::LocalFile { base_path } => {
                 Ok(Self::new_local(Some(base_path.clone())))
             }
-            ConnectionConfig::S3 { .. } => Self::new_s3(connection).await,
+            ConnectionConfig::S3(_) => Self::new_s3(connection).await,
             ConnectionConfig::Sqlite { .. } => Err(anyhow::anyhow!(
                 "SQLite connections are not supported by FileSystem. Use database adapter instead."
             )),

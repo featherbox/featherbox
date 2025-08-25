@@ -13,18 +13,20 @@ pub struct ProjectConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageConfig {
-    LocalFile {
-        path: String,
-    },
-    S3 {
-        bucket: String,
-        region: String,
-        endpoint_url: Option<String>,
-        auth_method: S3AuthMethod,
-        access_key_id: String,
-        secret_access_key: String,
-        session_token: Option<String>,
-    },
+    LocalFile { path: String },
+    S3(S3Config),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3Config {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint_url: Option<String>,
+    pub auth_method: S3AuthMethod,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
+    pub path_style_access: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,16 +73,7 @@ pub enum ConnectionConfig {
     LocalFile {
         base_path: String,
     },
-    S3 {
-        bucket: String,
-        region: String,
-        endpoint_url: Option<String>,
-        auth_method: S3AuthMethod,
-        access_key_id: String,
-        secret_access_key: String,
-        session_token: Option<String>,
-        path_style_access: bool,
-    },
+    S3(S3Config),
     Sqlite {
         path: String,
     },
@@ -93,14 +86,14 @@ pub enum ConnectionConfig {
 impl ConnectionConfig {
     pub fn get_full_endpoint_url(&self) -> Option<String> {
         match self {
-            ConnectionConfig::S3 { endpoint_url, .. } => endpoint_url.clone(),
+            ConnectionConfig::S3(config) => config.endpoint_url.clone(),
             _ => None,
         }
     }
 
     pub fn get_clean_endpoint_url(&self) -> Option<String> {
         match self {
-            ConnectionConfig::S3 { endpoint_url, .. } => endpoint_url.as_ref().map(|url| {
+            ConnectionConfig::S3(config) => config.endpoint_url.as_ref().map(|url| {
                 url.strip_prefix("https://")
                     .or_else(|| url.strip_prefix("http://"))
                     .unwrap_or(url)
@@ -112,7 +105,8 @@ impl ConnectionConfig {
 
     pub fn uses_ssl(&self) -> bool {
         match self {
-            ConnectionConfig::S3 { endpoint_url, .. } => endpoint_url
+            ConnectionConfig::S3(config) => config
+                .endpoint_url
                 .as_ref()
                 .is_none_or(|url| !url.starts_with("http://")),
             _ => true,
@@ -334,7 +328,7 @@ fn parse_storage(storage: &yaml_rust2::Yaml) -> StorageConfig {
                 session_token,
             ) = parse_s3_config(storage).expect("Failed to parse S3 storage configuration");
 
-            StorageConfig::S3 {
+            StorageConfig::S3(S3Config {
                 bucket,
                 region,
                 endpoint_url,
@@ -342,7 +336,8 @@ fn parse_storage(storage: &yaml_rust2::Yaml) -> StorageConfig {
                 access_key_id,
                 secret_access_key,
                 session_token,
-            }
+                path_style_access: false,
+            })
         }
         _ => panic!("Unsupported storage type: {ty}"),
     }
@@ -486,7 +481,7 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
 
                 let path_style_access = value["path_style_access"].as_bool().unwrap_or(false);
 
-                ConnectionConfig::S3 {
+                ConnectionConfig::S3(S3Config {
                     bucket,
                     region,
                     endpoint_url,
@@ -495,7 +490,7 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                     secret_access_key,
                     session_token,
                     path_style_access,
-                }
+                })
             }
             _ => panic!("Unsupported connection type"),
         };
@@ -583,22 +578,14 @@ mod tests {
 
         let config = parse_storage(yaml);
         match config {
-            StorageConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-            } => {
-                assert_eq!(bucket, "my-storage-bucket");
-                assert_eq!(region, "us-west-2");
-                assert_eq!(endpoint_url, None);
-                assert_eq!(auth_method, S3AuthMethod::Explicit);
-                assert_eq!(access_key_id, "test_access_key");
-                assert_eq!(secret_access_key, "test_secret_key");
-                assert_eq!(session_token, None);
+            StorageConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-storage-bucket");
+                assert_eq!(s3_config.region, "us-west-2");
+                assert_eq!(s3_config.endpoint_url, None);
+                assert_eq!(s3_config.auth_method, S3AuthMethod::Explicit);
+                assert_eq!(s3_config.access_key_id, "test_access_key");
+                assert_eq!(s3_config.secret_access_key, "test_secret_key");
+                assert_eq!(s3_config.session_token, None);
             }
             _ => panic!("Expected S3 storage config"),
         }
@@ -623,25 +610,17 @@ mod tests {
 
         let config = parse_storage(yaml);
         match config {
-            StorageConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-            } => {
-                assert_eq!(bucket, "my-storage-bucket");
-                assert_eq!(region, "eu-west-1");
+            StorageConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-storage-bucket");
+                assert_eq!(s3_config.region, "eu-west-1");
                 assert_eq!(
-                    endpoint_url,
+                    s3_config.endpoint_url,
                     Some("https://s3.eu-west-1.amazonaws.com".to_string())
                 );
-                assert_eq!(auth_method, S3AuthMethod::CredentialChain);
-                assert_eq!(access_key_id, "");
-                assert_eq!(secret_access_key, "");
-                assert_eq!(session_token, None);
+                assert_eq!(s3_config.auth_method, S3AuthMethod::CredentialChain);
+                assert_eq!(s3_config.access_key_id, "");
+                assert_eq!(s3_config.secret_access_key, "");
+                assert_eq!(s3_config.session_token, None);
             }
             _ => panic!("Expected S3 storage config"),
         }
@@ -665,8 +644,8 @@ mod tests {
 
         let config = parse_storage(yaml);
         match config {
-            StorageConfig::S3 { region, .. } => {
-                assert_eq!(region, "us-east-1");
+            StorageConfig::S3(s3_config) => {
+                assert_eq!(s3_config.region, "us-east-1");
             }
             _ => panic!("Expected S3 storage config"),
         }
@@ -1008,24 +987,15 @@ mod tests {
         assert_eq!(connections.len(), 1);
 
         match connections.get("my_s3_data").unwrap() {
-            ConnectionConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-                path_style_access,
-            } => {
-                assert_eq!(bucket, "my-data-bucket");
-                assert_eq!(region, "us-west-2");
-                assert_eq!(endpoint_url, &None);
-                assert_eq!(auth_method, &S3AuthMethod::Explicit);
-                assert_eq!(access_key_id, "test_access_key");
-                assert_eq!(secret_access_key, "test_secret_key");
-                assert_eq!(session_token, &None);
-                assert!(!(*path_style_access));
+            ConnectionConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-data-bucket");
+                assert_eq!(s3_config.region, "us-west-2");
+                assert_eq!(s3_config.endpoint_url, None);
+                assert_eq!(s3_config.auth_method, S3AuthMethod::Explicit);
+                assert_eq!(s3_config.access_key_id, "test_access_key");
+                assert_eq!(s3_config.secret_access_key, "test_secret_key");
+                assert_eq!(s3_config.session_token, None);
+                assert!(!s3_config.path_style_access);
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1060,27 +1030,21 @@ mod tests {
         let connections = parse_connections(yaml);
 
         match connections.get("my_s3_data").unwrap() {
-            ConnectionConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-                path_style_access,
-            } => {
-                assert_eq!(bucket, "my-data-bucket");
-                assert_eq!(region, "eu-west-1");
+            ConnectionConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-data-bucket");
+                assert_eq!(s3_config.region, "eu-west-1");
                 assert_eq!(
-                    endpoint_url,
-                    &Some("https://s3.eu-west-1.amazonaws.com".to_string())
+                    s3_config.endpoint_url,
+                    Some("https://s3.eu-west-1.amazonaws.com".to_string())
                 );
-                assert_eq!(auth_method, &S3AuthMethod::Explicit);
-                assert_eq!(access_key_id, "test_access_key");
-                assert_eq!(secret_access_key, "test_secret_key");
-                assert_eq!(session_token, &Some("test_session_token".to_string()));
-                assert!(!(*path_style_access));
+                assert_eq!(s3_config.auth_method, S3AuthMethod::Explicit);
+                assert_eq!(s3_config.access_key_id, "test_access_key");
+                assert_eq!(s3_config.secret_access_key, "test_secret_key");
+                assert_eq!(
+                    s3_config.session_token,
+                    Some("test_session_token".to_string())
+                );
+                assert!(!s3_config.path_style_access);
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1112,13 +1076,9 @@ mod tests {
         let connections = parse_connections(yaml);
 
         match connections.get("my_s3_data").unwrap() {
-            ConnectionConfig::S3 {
-                region,
-                auth_method,
-                ..
-            } => {
-                assert_eq!(region, "us-east-1");
-                assert_eq!(auth_method, &S3AuthMethod::Explicit);
+            ConnectionConfig::S3(s3_config) => {
+                assert_eq!(s3_config.region, "us-east-1");
+                assert_eq!(s3_config.auth_method, S3AuthMethod::Explicit);
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1387,13 +1347,9 @@ mod tests {
         }
 
         match connections.get("s3_data").unwrap() {
-            ConnectionConfig::S3 {
-                bucket,
-                auth_method,
-                ..
-            } => {
-                assert_eq!(bucket, "my-bucket");
-                assert_eq!(auth_method, &S3AuthMethod::Explicit);
+            ConnectionConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-bucket");
+                assert_eq!(s3_config.auth_method, S3AuthMethod::Explicit);
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1435,24 +1391,15 @@ mod tests {
         assert_eq!(connections.len(), 1);
 
         match connections.get("my_s3_data").unwrap() {
-            ConnectionConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-                path_style_access,
-            } => {
-                assert_eq!(bucket, "my-data-bucket");
-                assert_eq!(region, "us-west-2");
-                assert_eq!(endpoint_url, &None);
-                assert_eq!(auth_method, &S3AuthMethod::CredentialChain);
-                assert_eq!(access_key_id, "");
-                assert_eq!(secret_access_key, "");
-                assert_eq!(session_token, &None);
-                assert!(!(*path_style_access));
+            ConnectionConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-data-bucket");
+                assert_eq!(s3_config.region, "us-west-2");
+                assert_eq!(s3_config.endpoint_url, None);
+                assert_eq!(s3_config.auth_method, S3AuthMethod::CredentialChain);
+                assert_eq!(s3_config.access_key_id, "");
+                assert_eq!(s3_config.secret_access_key, "");
+                assert_eq!(s3_config.session_token, None);
+                assert!(!s3_config.path_style_access);
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1474,27 +1421,18 @@ mod tests {
         let connections = parse_connections(yaml);
 
         match connections.get("my_s3_data").unwrap() {
-            ConnectionConfig::S3 {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-                path_style_access,
-            } => {
-                assert_eq!(bucket, "my-data-bucket");
-                assert_eq!(region, "eu-central-1");
+            ConnectionConfig::S3(s3_config) => {
+                assert_eq!(s3_config.bucket, "my-data-bucket");
+                assert_eq!(s3_config.region, "eu-central-1");
                 assert_eq!(
-                    endpoint_url,
-                    &Some("https://s3.eu-central-1.amazonaws.com".to_string())
+                    s3_config.endpoint_url,
+                    Some("https://s3.eu-central-1.amazonaws.com".to_string())
                 );
-                assert_eq!(auth_method, &S3AuthMethod::CredentialChain);
-                assert_eq!(access_key_id, "");
-                assert_eq!(secret_access_key, "");
-                assert_eq!(session_token, &None);
-                assert!(!(*path_style_access));
+                assert_eq!(s3_config.auth_method, S3AuthMethod::CredentialChain);
+                assert_eq!(s3_config.access_key_id, "");
+                assert_eq!(s3_config.secret_access_key, "");
+                assert_eq!(s3_config.session_token, None);
+                assert!(!s3_config.path_style_access);
             }
             _ => panic!("Expected S3 connection config"),
         }
@@ -1593,7 +1531,7 @@ mod tests {
 
     #[test]
     fn test_connection_config_endpoint_url_methods() {
-        let s3_connection_with_https = ConnectionConfig::S3 {
+        let s3_connection_with_https = ConnectionConfig::S3(S3Config {
             bucket: "test-bucket".to_string(),
             region: "us-east-1".to_string(),
             endpoint_url: Some("https://example.com".to_string()),
@@ -1602,7 +1540,7 @@ mod tests {
             secret_access_key: "secret".to_string(),
             session_token: None,
             path_style_access: false,
-        };
+        });
 
         assert_eq!(
             s3_connection_with_https.get_full_endpoint_url(),
@@ -1614,7 +1552,7 @@ mod tests {
         );
         assert!(s3_connection_with_https.uses_ssl());
 
-        let s3_connection_with_http = ConnectionConfig::S3 {
+        let s3_connection_with_http = ConnectionConfig::S3(S3Config {
             bucket: "test-bucket".to_string(),
             region: "us-east-1".to_string(),
             endpoint_url: Some("http://localhost:9000".to_string()),
@@ -1623,7 +1561,7 @@ mod tests {
             secret_access_key: "secret".to_string(),
             session_token: None,
             path_style_access: false,
-        };
+        });
 
         assert_eq!(
             s3_connection_with_http.get_full_endpoint_url(),
