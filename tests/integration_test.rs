@@ -1,9 +1,66 @@
 use anyhow::{Context, Result};
+use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::{env, fs};
 use tempfile::TempDir;
 use uuid::Uuid;
+use yaml_rust2::YamlLoader;
+
+fn create_sqlite_from_yaml(yaml_path: &Path, db_path: &Path) -> Result<()> {
+    let yaml_content = fs::read_to_string(yaml_path)?;
+    let docs = YamlLoader::load_from_str(&yaml_content)?;
+    let doc = &docs[0];
+
+    let conn = Connection::open(db_path)?;
+
+    if let Some(users) = doc["users"].as_vec() {
+        conn.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, age INTEGER, created_at TEXT)",
+            [],
+        )?;
+
+        for user in users {
+            let id = user["id"].as_i64().unwrap() as i32;
+            let name = user["name"].as_str().unwrap();
+            let email = user["email"].as_str().unwrap();
+            let age = user["age"].as_i64().unwrap() as i32;
+            let created_at = user["created_at"].as_str().unwrap();
+
+            conn.execute(
+                "INSERT INTO users (id, name, email, age, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                [
+                    &id as &dyn rusqlite::ToSql,
+                    &name,
+                    &email,
+                    &age,
+                    &created_at,
+                ],
+            )?;
+        }
+    }
+
+    if let Some(products) = doc["products"].as_vec() {
+        conn.execute(
+            "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price DECIMAL(10,2), category TEXT)",
+            [],
+        )?;
+
+        for product in products {
+            let id = product["id"].as_i64().unwrap() as i32;
+            let name = product["name"].as_str().unwrap();
+            let price = product["price"].as_f64().unwrap();
+            let category = product["category"].as_str().unwrap();
+
+            conn.execute(
+                "INSERT INTO products (id, name, price, category) VALUES (?1, ?2, ?3, ?4)",
+                [&id as &dyn rusqlite::ToSql, &name, &price, &category],
+            )?;
+        }
+    }
+
+    Ok(())
+}
 
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
     fs::create_dir_all(&dst)?;
@@ -631,12 +688,11 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
     )?;
 
     let sqlite_db_name = format!("source_{}.db", Uuid::new_v4().simple());
-    let original_sqlite = project_dir.join("test_data/source.db");
     let sqlite_db_path = project_dir.join(format!("test_data/{sqlite_db_name}"));
+    let yaml_data_path = project_dir.join("test_data/test_data.yml");
 
-    if original_sqlite.exists() {
-        fs::copy(&original_sqlite, &sqlite_db_path)?;
-        fs::remove_file(&original_sqlite)?;
+    if yaml_data_path.exists() {
+        create_sqlite_from_yaml(&yaml_data_path, &sqlite_db_path)?;
 
         let verify_output = Command::new("sqlite3")
             .arg(&sqlite_db_path)
@@ -654,6 +710,11 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
         } else {
             return Err(anyhow::anyhow!("Failed to verify SQLite database"));
         }
+    } else {
+        return Err(anyhow::anyhow!(
+            "Test data YAML file not found: {:?}",
+            yaml_data_path
+        ));
     }
 
     let project_config = create_project_config_with_storage(
@@ -737,6 +798,21 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
         sensors_count.contains("6"),
         "Expected 6 sensor entries for {storage_type}-{catalog_type}, got: {sensors_count}"
     );
+
+    if let Ok(entries) = fs::read_dir(project_dir.join("test_data")) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "db")
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("source_"))
+                {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+    }
 
     Ok(())
 }

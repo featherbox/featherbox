@@ -558,6 +558,12 @@ mod tests {
         ducklake.execute_batch(&detach_query).unwrap();
     }
 
+    fn create_empty_sqlite_db(db_path: &std::path::Path) -> anyhow::Result<()> {
+        use rusqlite::Connection;
+        let _conn = Connection::open(db_path)?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_sqlite_attach_with_test_fixture() {
         use crate::pipeline::ducklake::{CatalogConfig, DuckLake};
@@ -584,10 +590,8 @@ mod tests {
 
         ducklake.execute_batch("LOAD sqlite;").unwrap();
 
-        let test_db_path = std::path::Path::new("tests/fixtures/test_data/source.db");
-        if !test_db_path.exists() {
-            panic!("Test fixture SQLite database not found at: {test_db_path:?}");
-        }
+        let test_db_path = temp_dir.path().join("test_source.db");
+        create_empty_sqlite_db(&test_db_path).unwrap();
 
         let db_system = DatabaseSystem::Sqlite {
             path: test_db_path.to_string_lossy().to_string(),
@@ -598,6 +602,20 @@ mod tests {
         let attach_query = db_system.build_attach_query(&alias).unwrap();
         println!("Attach query: {attach_query}");
         ducklake.execute_batch(&attach_query).unwrap();
+
+        ducklake.execute_batch(&format!(
+            "CREATE TABLE {alias}.users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, age INTEGER, created_at TEXT)"
+        )).unwrap();
+
+        ducklake
+            .execute_batch(&format!(
+                "INSERT INTO {alias}.users VALUES
+            (1, 'Alice Johnson', 'alice@example.com', 30, '2023-01-15 10:30:00'),
+            (2, 'Bob Smith', 'bob@example.com', 25, '2023-02-20 14:45:00'),
+            (3, 'Charlie Brown', 'charlie@example.com', 35, '2023-03-10 09:15:00'),
+            (4, 'Diana Prince', 'diana@example.com', 28, '2023-04-05 16:20:00')"
+            ))
+            .unwrap();
 
         let validation_query = db_system.validate_table_exists(&alias, "users").unwrap();
         println!("Validation query: {validation_query}");
