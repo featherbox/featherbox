@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_pattern_without_update_strategy() {
+    async fn test_process_pattern_with_nonexistent_files() {
         let filesystem = FileSystem::new_local(None);
         let result = FileProcessor::process_pattern_with_filesystem("data/*.csv", &filesystem)
             .await

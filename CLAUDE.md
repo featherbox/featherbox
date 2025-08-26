@@ -19,7 +19,7 @@ target/debug/fbox init <project>          # Initialize new project
 target/debug/fbox adapter new <name>      # Create adapter configuration
 target/debug/fbox model new <name>        # Create model configuration
 target/debug/fbox migrate                 # Run database migrations and save graph
-target/debug/fbox run                     # Execute pipeline with incremental imports
+target/debug/fbox run                     # Execute pipeline with differential execution
 target/debug/fbox query "<sql>"           # Execute SQL query for verification
 ```
 
@@ -40,13 +40,13 @@ FeatherBox follows domain-driven design principles with clear separation of conc
    - `model.rs`: SQL transformation configuration structures
 
 3. **Pipeline Execution Domain (`src/pipeline/`)**: Data processing pipeline
-   - `execution.rs`: Pipeline orchestration with topological sorting and incremental imports
-   - `ducklake.rs`: DuckDB integration for ELT operations with time-based file filtering
+   - `execution.rs`: Pipeline orchestration with topological sorting
+   - `ducklake.rs`: DuckDB integration for ELT operations
 
 4. **Dependency Resolution Domain (`src/dependency/`)**: Graph analysis and change detection
    - `graph.rs`: Dependency analysis and DAG generation from SQL parsing
    - `impact_analysis.rs`: Change impact analysis for differential execution  
-   - `metadata.rs`: Change detection, execution history management, and incremental import tracking
+   - `impact_analysis.rs`: Change impact analysis for differential execution
 
 5. **Database Layer (`src/database/`)**: Persistence and migrations
    - `connection.rs`: Database connection management with automatic migrations
@@ -74,7 +74,7 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 - `__fbox_nodes`: Node (table) information  
 - `__fbox_edges`: Edge (dependency) relationships
 - `__fbox_pipelines`: Pipeline execution records
-- `__fbox_pipeline_actions`: Action execution details with time range tracking (`since`, `until`)
+- `__fbox_pipeline_actions`: Action execution details
 
 ## Development Patterns
 
@@ -118,15 +118,6 @@ Implemented across the Dependency Resolution Domain:
 - `src/dependency/impact_analysis.rs`: Calculates downstream impact of changes  
 - Only executes affected parts of the pipeline when changes are detected
 
-### Incremental Data Import
-High-water mark pattern implementation for efficient data processing:
-- `Action` struct with `since`/`until` fields tracks execution time ranges
-- `ExecutedRange` struct provides clean abstraction for time range handling
-- `get_executed_ranges_for_graph()` retrieves previous execution history
-- `calculate_remaining_range()` determines new data to process
-- File filtering based on filename patterns and time ranges
-- Only processes new files since last successful execution
-- Supports period extension by updating adapter range configuration
 
 ### Async Architecture
 Uses Tokio runtime throughout with proper async/await patterns. Database operations and file I/O are async.
@@ -160,15 +151,7 @@ models/              # Transformation definitions
 ```
 
 ### Adapter Configuration
-Defines data sources with connection details, file formats, and schema information. Supports incremental import via `update_strategy` with time range configuration:
-
-```yaml
-update_strategy:
-  detection: filename  # Extract timestamp from filename patterns
-  range:
-    since: "2024-01-01"
-    until: "2024-01-31"
-```
+Defines data sources with connection details, file formats, and schema information.
 
 ### Model Configuration  
 Contains SQL transformations with dependency resolution and caching settings (`max_age`).
@@ -244,6 +227,4 @@ src/
 - Configuration changes trigger full dependency graph recalculation
 - All user data operations go through DuckDB for performance
 - Metadata operations use SQLite via Sea-ORM for reliability
-- Incremental imports require adapters to have `update_strategy.range` configuration
 - Graph migration (`fbox migrate`) must be run before pipeline execution (`fbox run`)
-- Time range calculations support both date (`2024-01-01`) and datetime (`2024-01-01 12:00:00`) formats

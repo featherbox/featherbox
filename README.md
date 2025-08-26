@@ -85,12 +85,6 @@ file:
   compression: gzip
   max_batch_size: 100MB
 
-update_strategy:
-  detection: filename
-  timestamp_from: path
-  range:
-    since: 2023-01-01 00:00:00
-
 format:
   type: csv
   delimiter: ' '
@@ -430,11 +424,6 @@ file:
   path: <YYYY>/<MM>/<DD>/*_<YYYY><MM><DD>T<HH><MM>.log.gz
   compression: gzip
   max_batch_size: 100MB
-update_strategy:
-  detection: filename
-  timestamp_from: path
-  range:
-    since: 2023-01-01 00:00:00
 format:
   type: 'json'
 columns:
