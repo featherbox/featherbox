@@ -45,7 +45,8 @@ pub async fn detect_changes(
         .map(|n| (n.name, n.config_json))
         .collect();
 
-    let last_nodes: HashSet<String> = last_nodes_with_config.iter()
+    let last_nodes: HashSet<String> = last_nodes_with_config
+        .iter()
         .map(|(name, _)| name.clone())
         .collect();
 
@@ -73,10 +74,11 @@ pub async fn detect_changes(
         last_edges.difference(&current_edges).cloned().collect();
 
     let mut config_changed_nodes = Vec::new();
-    
+
     for (node_name, last_config_json) in last_nodes_with_config {
         if current_nodes.contains(&node_name) {
-            let current_config_json = if let Some(adapter_config) = config.adapters.get(&node_name) {
+            let current_config_json = if let Some(adapter_config) = config.adapters.get(&node_name)
+            {
                 Some(serde_json::to_string(adapter_config)?)
             } else if let Some(model_config) = config.models.get(&node_name) {
                 Some(serde_json::to_string(model_config)?)
@@ -88,14 +90,14 @@ pub async fn detect_changes(
                 (Some(last_json), Some(current_json)) => {
                     if let (Ok(last_adapter), Ok(current_adapter)) = (
                         serde_json::from_str::<AdapterConfig>(last_json),
-                        serde_json::from_str::<AdapterConfig>(current_json)
+                        serde_json::from_str::<AdapterConfig>(current_json),
                     ) {
                         if last_adapter.has_changed(&current_adapter) {
                             config_changed_nodes.push(node_name.clone());
                         }
                     } else if let (Ok(last_model), Ok(current_model)) = (
                         serde_json::from_str::<ModelConfig>(last_json),
-                        serde_json::from_str::<ModelConfig>(current_json)
+                        serde_json::from_str::<ModelConfig>(current_json),
                     ) {
                         if last_model.has_changed(&current_model) {
                             config_changed_nodes.push(node_name.clone());
@@ -105,8 +107,7 @@ pub async fn detect_changes(
                 (None, Some(_)) | (Some(_), None) => {
                     config_changed_nodes.push(node_name.clone());
                 }
-                (None, None) => {
-                }
+                (None, None) => {}
             }
         }
     }
@@ -287,9 +288,7 @@ mod tests {
                     username: None,
                     password: None,
                 },
-                deployments: crate::config::project::DeploymentsConfig {
-                    timeout: 600,
-                },
+                deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
                 connections: HashMap::new(),
                 secret_key_path: None,
             },
@@ -688,7 +687,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_config_changes_adapter() -> Result<()> {
-        use crate::config::adapter::{AdapterConfig, AdapterSource, FileConfig, FormatConfig, ColumnConfig};
+        use crate::config::adapter::{
+            AdapterConfig, AdapterSource, ColumnConfig, FileConfig, FormatConfig,
+        };
 
         let db = setup_test_db().await?;
 
@@ -903,7 +904,7 @@ mod tests {
         };
 
         let affected = calculate_affected_nodes(&graph, &changes);
-        
+
         assert_eq!(affected.len(), 3);
         assert!(affected.contains(&"users".to_string()));
         assert!(affected.contains(&"user_stats".to_string()));

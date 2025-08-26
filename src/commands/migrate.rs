@@ -44,7 +44,9 @@ pub async fn migrate_from_config(
         return Ok(None);
     }
 
-    Ok(Some(save_graph_if_changed(app_db, &current_graph, config).await?))
+    Ok(Some(
+        save_graph_if_changed(app_db, &current_graph, config).await?,
+    ))
 }
 
 #[cfg(test)]

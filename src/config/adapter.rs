@@ -393,13 +393,11 @@ mod tests {
             source: AdapterSource::Database {
                 table_name: "users".to_string(),
             },
-            columns: vec![
-                ColumnConfig {
-                    name: "id".to_string(),
-                    ty: "INTEGER".to_string(),
-                    description: None,
-                },
-            ],
+            columns: vec![ColumnConfig {
+                name: "id".to_string(),
+                ty: "INTEGER".to_string(),
+                description: None,
+            }],
         };
 
         let config2 = config1.clone();
@@ -435,5 +433,4 @@ mod tests {
         config8.columns[0].description = Some("Primary key".to_string());
         assert!(config1.has_changed(&config8));
     }
-
 }

@@ -10,11 +10,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(FboxNodes::Table)
-                    .add_column(
-                        ColumnDef::new(FboxNodes::ConfigJson)
-                            .text()
-                            .null()
-                    )
+                    .add_column(ColumnDef::new(FboxNodes::ConfigJson).text().null())
                     .to_owned(),
             )
             .await

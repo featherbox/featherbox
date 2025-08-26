@@ -362,12 +362,8 @@ mod tests {
         fs::write(project_path.join("models/user_stats.yml"), model_yml)?;
 
         let new_config = Config::load_from_directory(project_path)?;
-        let changes = detect_changes(
-            &app_db,
-            &Graph::from_config(&new_config)?,
-            &new_config
-        )
-        .await?;
+        let changes =
+            detect_changes(&app_db, &Graph::from_config(&new_config)?, &new_config).await?;
         assert!(changes.is_some());
 
         let changes = changes.unwrap();

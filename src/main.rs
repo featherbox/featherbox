@@ -20,6 +20,8 @@ struct Cli {
 enum Commands {
     Init {
         project_name: String,
+        #[arg(long, help = "Path to secret key file")]
+        secret_key_path: Option<String>,
     },
     Adapter {
         #[command(subcommand)]
@@ -81,7 +83,14 @@ async fn main() -> Result<()> {
     let current_dir = std::env::current_dir()?;
 
     let result = match &cli.command {
-        Commands::Init { project_name } => commands::init::execute_init(project_name, &current_dir),
+        Commands::Init {
+            project_name,
+            secret_key_path,
+        } => commands::init::create_new_project(
+            project_name,
+            &current_dir,
+            secret_key_path.as_deref(),
+        ),
         Commands::Adapter { action } => match action {
             AdapterAction::New => {
                 commands::adapter::execute_adapter_interactive(&current_dir).await
