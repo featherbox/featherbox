@@ -219,7 +219,6 @@ mod tests {
             "users".to_string(),
             ModelConfig {
                 description: None,
-                max_age: None,
                 sql: "SELECT * FROM raw_users WHERE active = true".to_string(),
             },
         );
@@ -228,7 +227,6 @@ mod tests {
             "orders".to_string(),
             ModelConfig {
                 description: None,
-                max_age: None,
                 sql: "SELECT o.*, u.name FROM order_items o JOIN users u ON o.user_id = u.id"
                     .to_string(),
             },
@@ -282,7 +280,6 @@ mod tests {
             "recursive_model".to_string(),
             ModelConfig {
                 description: None,
-                max_age: None,
                 sql: "SELECT * FROM recursive_model WHERE id > 10".to_string(),
             },
         );

@@ -154,7 +154,7 @@ models/              # Transformation definitions
 Defines data sources with connection details, file formats, and schema information.
 
 ### Model Configuration  
-Contains SQL transformations with dependency resolution and caching settings (`max_age`).
+Contains SQL transformations with dependency resolution.
 
 ## Testing Guidelines
 

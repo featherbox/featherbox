@@ -95,7 +95,6 @@ mod tests {
         let result = render_model_template("analytics");
         assert!(result.contains("sql: |"));
         assert!(result.contains("SELECT COUNT(*) FROM source_table"));
-        assert!(result.contains("max_age: 3600"));
         assert!(result.contains("Generated model for analytics"));
     }
 

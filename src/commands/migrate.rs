@@ -147,7 +147,6 @@ mod tests {
             ModelConfig {
                 description: Some("User statistics".to_string()),
                 sql: "SELECT * FROM test".to_string(),
-                max_age: Some(3600),
             },
         );
 

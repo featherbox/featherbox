@@ -365,7 +365,10 @@ fn check_mysql() {
         ],
     )
     .expect("Failed to run MySQL check command");
-    assert!(output.status.success(), "MySQL check command failed");
+    assert!(
+        output.status.success(),
+        "MySQL check command failed. Please run 'docker compose up -d' to start the required database services."
+    );
 }
 
 fn check_postgres() {
@@ -383,13 +386,19 @@ fn check_postgres() {
     )
     .expect("Failed to run PostgreSQL check command");
 
-    assert!(output.status.success(), "PostgreSQL check command failed");
+    assert!(
+        output.status.success(),
+        "PostgreSQL check command failed. Please run 'docker compose up -d' to start the required database services."
+    );
 }
 
 fn check_minio() {
     let output = run_command_in_container("minio", &["ls", "/data"])
         .expect("Failed to run MinIO check command");
-    assert!(output.status.success(), "MinIO check command failed");
+    assert!(
+        output.status.success(),
+        "MinIO check command failed. Please run 'docker compose up -d' to start the required database services."
+    );
 }
 
 fn setup_minio_test_data(bucket_name: &str) -> Result<()> {

@@ -1,24 +1,18 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelConfig {
     pub description: Option<String>,
-    pub max_age: Option<u64>,
     pub sql: String,
 }
 
 pub fn parse_model_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<ModelConfig> {
     let description = yaml["description"].as_str().map(|s| s.to_string());
-    let max_age = yaml["max_age"].as_i64().map(|v| v as u64);
 
     let sql = yaml["sql"]
         .as_str()
         .expect("Model SQL is required")
         .to_string();
 
-    Ok(ModelConfig {
-        description,
-        max_age,
-        sql,
-    })
+    Ok(ModelConfig { description, sql })
 }
 
 #[cfg(test)]
@@ -30,7 +24,6 @@ mod tests {
     fn test_parse_model_config() {
         let yaml_str = r#"
             description: Logs for user analysis
-            max_age: 86400
             sql: |
               SELECT
                 timestamp,
@@ -51,7 +44,6 @@ mod tests {
             config.description,
             Some("Logs for user analysis".to_string())
         );
-        assert_eq!(config.max_age, Some(86400));
         assert!(config.sql.contains("SELECT"));
         assert!(config.sql.contains("timestamp"));
         assert!(config.sql.contains("FROM"));
@@ -69,7 +61,6 @@ mod tests {
         let config = parse_model_config(yaml).unwrap();
 
         assert_eq!(config.description, None);
-        assert_eq!(config.max_age, None);
         assert_eq!(config.sql, "SELECT * FROM users");
     }
 
@@ -77,7 +68,6 @@ mod tests {
     fn test_parse_model_config_with_complex_sql() {
         let yaml_str = r#"
             description: Daily aggregated statistics
-            max_age: 21600
             sql: |
               WITH daily_counts AS (
                 SELECT
@@ -101,7 +91,6 @@ mod tests {
             config.description,
             Some("Daily aggregated statistics".to_string())
         );
-        assert_eq!(config.max_age, Some(21600));
         assert!(config.sql.contains("WITH daily_counts AS"));
         assert!(config.sql.contains("AVG(response_time)"));
         assert!(config.sql.contains("LIMIT 30"));

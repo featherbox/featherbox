@@ -20,14 +20,6 @@ pub async fn execute_model_new(project_path: &Path) -> Result<()> {
 
     let description = Text::new("Description:").with_default("").prompt()?;
 
-    let max_age_input = Text::new("Max age (seconds):")
-        .with_default("3600")
-        .prompt()?;
-
-    let max_age: u32 = max_age_input
-        .parse()
-        .with_context(|| "Max age must be a positive integer")?;
-
     let model_file = project_root
         .join("models")
         .join(format!("{model_name}.yml"));
@@ -45,7 +37,7 @@ pub async fn execute_model_new(project_path: &Path) -> Result<()> {
         }
     }
 
-    let template = create_model_template(&model_name, &description, max_age);
+    let template = create_model_template(&model_name, &description);
     fs::write(&model_file, template)
         .with_context(|| format!("Failed to create model file: {model_file:?}"))?;
 
@@ -146,7 +138,7 @@ fn find_model_file_path(models_dir: &Path, selected_model: &str) -> Result<std::
     }
 }
 
-fn create_model_template(name: &str, description: &str, max_age: u32) -> String {
+fn create_model_template(name: &str, description: &str) -> String {
     let description = if description.is_empty() {
         format!("Generated model for {name}")
     } else {
@@ -157,7 +149,6 @@ fn create_model_template(name: &str, description: &str, max_age: u32) -> String 
         r#"description: '{description}'
 sql: |
   SELECT COUNT(*) FROM source_table
-max_age: {max_age}
 "#
     )
 }
@@ -170,43 +161,33 @@ mod tests {
 
     #[test]
     fn test_create_model_template_with_description() {
-        let template = create_model_template("test_model", "A test model", 7200);
+        let template = create_model_template("test_model", "A test model");
 
         assert!(template.contains("description: 'A test model'"));
         assert!(template.contains("SELECT COUNT(*) FROM source_table"));
-        assert!(template.contains("max_age: 7200"));
     }
 
     #[test]
     fn test_create_model_template_without_description() {
-        let template = create_model_template("test_model", "", 3600);
+        let template = create_model_template("test_model", "");
 
         assert!(template.contains("description: 'Generated model for test_model'"));
         assert!(template.contains("SELECT COUNT(*) FROM source_table"));
-        assert!(template.contains("max_age: 3600"));
     }
 
     #[test]
     fn test_create_model_template_edge_cases() {
-        let template_special_chars = create_model_template("test_model", "Test with 'quotes'", 300);
+        let template_special_chars = create_model_template("test_model", "Test with 'quotes'");
         assert!(template_special_chars.contains("description: 'Test with 'quotes''"));
-        assert!(template_special_chars.contains("max_age: 300"));
-
-        let template_zero_age = create_model_template("test", "Zero age test", 0);
-        assert!(template_zero_age.contains("max_age: 0"));
-
-        let template_large_age = create_model_template("test", "Large age", 86400);
-        assert!(template_large_age.contains("max_age: 86400"));
     }
 
     #[test]
     fn test_template_consistency() {
-        let template = create_model_template("test_model", "", 3600);
+        let template = create_model_template("test_model", "");
 
         assert!(template.contains("description: 'Generated model for test_model'"));
         assert!(template.contains("SELECT COUNT(*) FROM source_table"));
         assert!(template.contains("sql: |"));
-        assert!(template.contains("max_age: 3600"));
     }
 
     #[test]

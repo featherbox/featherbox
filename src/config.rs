@@ -233,8 +233,7 @@ mod tests {
 
         let model_yml = r#"
             description: "Test model"
-            sql: "SELECT * FROM test_adapter"
-            max_age: 3600"#;
+            sql: "SELECT * FROM test_adapter""#;
         fs::write(project_path.join("models/test_model.yml"), model_yml)?;
 
         let config = Config::load_from_directory(project_path)?;

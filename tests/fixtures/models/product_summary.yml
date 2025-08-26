@@ -9,4 +9,3 @@ sql: |
   FROM sqlite_products
   GROUP BY category
   ORDER BY category
-max_age: 3600

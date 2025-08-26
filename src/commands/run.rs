@@ -357,8 +357,7 @@ mod tests {
 
         let model_yml = r#"
             description: "User statistics model"
-            sql: "SELECT id, name FROM users WHERE active = true"
-            max_age: 3600"#;
+            sql: "SELECT id, name FROM users WHERE active = true""#;
         fs::write(project_path.join("models/user_stats.yml"), model_yml)?;
 
         let changes = detect_changes(

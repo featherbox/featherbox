@@ -128,7 +128,6 @@ sql: |
   WHERE last_login >= NOW() - INTERVAL '30 days'
   GROUP BY DATE(created_at)
   ORDER BY DATE(created_at) DESC
-max_age: 1d
 ```
 
 ## Architecture
@@ -384,13 +383,7 @@ fbox run
      - `update` actions for all models to refresh data
 
 3. **Sync Pipeline** (Git hash unchanged)
-   - **Freshness Check**:
-     - Evaluates each model's `max_age` setting
-     - Identifies stale data based on last execution time
-
-   - **Generate Update Actions**:
-     - Creates `update` actions only for stale models
-     - Propagates updates through dependency chain
+   - Runs all models when no configuration changes are detected
 
 4. **Deployment Execution**
    - **Action Scheduling**:

@@ -44,7 +44,6 @@ mod tests {
         ModelConfig {
             sql: "SELECT * FROM test_table".to_string(),
             description: None,
-            max_age: Some(3600),
         }
     }
 
