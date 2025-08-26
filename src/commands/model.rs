@@ -113,10 +113,7 @@ fn collect_yml_files_recursive(
                 let relative_path = path
                     .strip_prefix(base_dir)
                     .with_context(|| "Failed to create relative path")?;
-                let display_name = relative_path
-                    .with_extension("")
-                    .to_string_lossy()
-                    .replace('\\', "/");
+                let display_name = crate::config::generate_node_name_from_path(relative_path);
                 model_files.push(display_name);
             }
         }
@@ -208,7 +205,7 @@ mod tests {
         assert_eq!(files.len(), 3);
         assert!(files.contains(&"model1".to_string()));
         assert!(files.contains(&"model2".to_string()));
-        assert!(files.contains(&"staging/staging_model".to_string()));
+        assert!(files.contains(&"staging_staging_model".to_string()));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -62,33 +62,6 @@ fn load_project_config(project_path: &Path) -> Result<ProjectConfig> {
     Ok(project::parse_project_config(expanded_yaml))
 }
 
-fn load_config_files<T>(
-    config_dir: &Path,
-    file_type: &str,
-    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
-    project_config: &ProjectConfig,
-    project_path: &Path,
-) -> Result<HashMap<String, T>> {
-    let mut configs = HashMap::new();
-
-    if !config_dir.exists() {
-        return Ok(configs);
-    }
-
-    for entry in fs::read_dir(config_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.extension().and_then(|s| s.to_str()) == Some("yml") {
-            let name = extract_config_name(&path, file_type)?;
-            let config = parse_config_file(&path, parse_fn, project_config, project_path)?;
-            configs.insert(name, config);
-        }
-    }
-
-    Ok(configs)
-}
-
 fn load_config_files_recursive<T>(
     config_dir: &Path,
     file_type: &str,
@@ -104,6 +77,7 @@ fn load_config_files_recursive<T>(
 
     collect_config_files_recursive(
         config_dir,
+        config_dir,
         file_type,
         parse_fn,
         project_config,
@@ -116,6 +90,7 @@ fn load_config_files_recursive<T>(
 
 fn collect_config_files_recursive<T>(
     dir: &Path,
+    base_dir: &Path,
     file_type: &str,
     parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
     project_config: &ProjectConfig,
@@ -129,6 +104,7 @@ fn collect_config_files_recursive<T>(
         if path.is_dir() {
             collect_config_files_recursive(
                 &path,
+                base_dir,
                 file_type,
                 parse_fn,
                 project_config,
@@ -136,7 +112,7 @@ fn collect_config_files_recursive<T>(
                 configs,
             )?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("yml") {
-            let name = extract_config_name(&path, file_type)?;
+            let name = extract_config_name(&path, base_dir, file_type)?;
             let config = parse_config_file(&path, parse_fn, project_config, project_path)?;
             configs.insert(name, config);
         }
@@ -145,11 +121,18 @@ fn collect_config_files_recursive<T>(
     Ok(())
 }
 
-fn extract_config_name(path: &Path, file_type: &str) -> Result<String> {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| anyhow::anyhow!("Invalid {} filename: {:?}", file_type, path))
-        .map(|s| s.to_string())
+pub fn generate_node_name_from_path(relative_path: &Path) -> String {
+    relative_path
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['/', '\\'], "_")
+}
+
+fn extract_config_name(path: &Path, base_dir: &Path, file_type: &str) -> Result<String> {
+    let relative_path = path
+        .strip_prefix(base_dir)
+        .with_context(|| format!("Failed to create relative path for {file_type}: {path:?}"))?;
+    Ok(generate_node_name_from_path(relative_path))
 }
 
 fn parse_config_file<T>(
@@ -169,7 +152,7 @@ fn load_adapters(
     project_config: &ProjectConfig,
     project_path: &Path,
 ) -> Result<HashMap<String, AdapterConfig>> {
-    load_config_files(
+    load_config_files_recursive(
         &project_path.join("adapters"),
         "adapter",
         adapter::parse_adapter_config,
@@ -261,4 +244,84 @@ mod tests {
                 .contains("project.yml not found")
         );
     }
+
+    #[test]
+    fn test_extract_config_name_with_subdirectories() -> Result<()> {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir()?;
+        let base_dir = temp_dir.path();
+
+        let staging_users_path = base_dir.join("staging").join("users.yml");
+        let marts_orders_path = base_dir.join("marts").join("orders.yml");
+        let production_api_path = base_dir.join("production").join("api.yml");
+
+        assert_eq!(
+            extract_config_name(&staging_users_path, base_dir, "model")?,
+            "staging_users"
+        );
+        assert_eq!(
+            extract_config_name(&marts_orders_path, base_dir, "model")?,
+            "marts_orders"
+        );
+        assert_eq!(
+            extract_config_name(&production_api_path, base_dir, "adapter")?,
+            "production_api"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_same_filename_models() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_path = temp_dir.path();
+
+        let project_yml = r#"
+            storage:
+              type: local
+              path: ./storage
+            database:
+              type: sqlite
+              path: ./database.db
+            deployments:
+              timeout: 600
+            connections: {}"#;
+        fs::write(project_path.join("project.yml"), project_yml)?;
+
+        fs::create_dir_all(project_path.join("models/staging"))?;
+        fs::create_dir_all(project_path.join("models/marts"))?;
+
+        let staging_users_yml = r#"
+            description: "Staging users model"
+            sql: "SELECT * FROM raw_users""#;
+        fs::write(
+            project_path.join("models/staging/users.yml"),
+            staging_users_yml,
+        )?;
+
+        let marts_users_yml = r#"
+            description: "Marts users model"
+            sql: "SELECT * FROM staging_users""#;
+        fs::write(project_path.join("models/marts/users.yml"), marts_users_yml)?;
+
+        let config = Config::load_from_directory(project_path)?;
+
+        assert_eq!(config.models.len(), 2);
+        assert!(config.models.contains_key("staging_users"));
+        assert!(config.models.contains_key("marts_users"));
+
+        assert_eq!(
+            config.models["staging_users"].description.as_ref().unwrap(),
+            "Staging users model"
+        );
+        assert_eq!(
+            config.models["marts_users"].description.as_ref().unwrap(),
+            "Marts users model"
+        );
+
+        Ok(())
+    }
+
+
 }
