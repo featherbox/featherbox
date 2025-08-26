@@ -7,6 +7,7 @@ pub struct Model {
     pub id: i32,
     pub graph_id: i32,
     pub name: String,
+    pub config_json: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

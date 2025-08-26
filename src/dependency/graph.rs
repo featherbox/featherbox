@@ -45,6 +45,7 @@ pub struct GraphChanges {
     pub removed_nodes: Vec<String>,
     pub added_edges: Vec<(String, String)>,
     pub removed_edges: Vec<(String, String)>,
+    pub config_changed_nodes: Vec<String>,
 }
 
 impl GraphChanges {
@@ -53,12 +54,14 @@ impl GraphChanges {
             || !self.removed_nodes.is_empty()
             || !self.added_edges.is_empty()
             || !self.removed_edges.is_empty()
+            || !self.config_changed_nodes.is_empty()
     }
 
     pub fn get_all_affected_nodes(&self) -> Vec<String> {
         let mut nodes = Vec::new();
         nodes.extend(self.added_nodes.clone());
         nodes.extend(self.removed_nodes.clone());
+        nodes.extend(self.config_changed_nodes.clone());
 
         for (_, to) in &self.added_edges {
             if !nodes.contains(to) {
@@ -80,6 +83,7 @@ pub fn calculate_affected_nodes(graph: &Graph, changes: &GraphChanges) -> Vec<St
 
     affected_nodes.extend(changes.added_nodes.iter().cloned());
     affected_nodes.extend(changes.removed_nodes.iter().cloned());
+    affected_nodes.extend(changes.config_changed_nodes.iter().cloned());
 
     for (_, to) in &changes.added_edges {
         affected_nodes.insert(to.clone());
@@ -338,6 +342,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
 
         let affected_nodes = calculate_affected_nodes(&graph, &changes);
@@ -392,6 +397,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
 
         let affected_nodes = calculate_affected_nodes(&graph, &changes);
@@ -435,6 +441,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![("users".to_string(), "user_stats".to_string())],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
 
         let affected_nodes = calculate_affected_nodes(&graph, &changes);
@@ -467,6 +474,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
 
         let affected_nodes = calculate_affected_nodes(&graph, &changes);
@@ -528,6 +536,7 @@ mod tests {
             removed_nodes: vec!["users".to_string()],
             added_edges: vec![],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
 
         let affected_nodes = calculate_affected_nodes(&graph, &changes);
@@ -544,6 +553,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
         assert!(!changes_empty.has_changes());
 
@@ -552,6 +562,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
         assert!(changes_with_added_node.has_changes());
 
@@ -560,6 +571,7 @@ mod tests {
             removed_nodes: vec![],
             added_edges: vec![("users".to_string(), "stats".to_string())],
             removed_edges: vec![],
+            config_changed_nodes: vec![],
         };
         assert!(changes_with_edge.has_changes());
     }
@@ -571,6 +583,7 @@ mod tests {
             removed_nodes: vec!["old_table".to_string()],
             added_edges: vec![("users".to_string(), "user_stats".to_string())],
             removed_edges: vec![("orders".to_string(), "old_stats".to_string())],
+            config_changed_nodes: vec![],
         };
 
         let affected_nodes = changes.get_all_affected_nodes();

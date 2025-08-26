@@ -353,16 +353,19 @@ mod tests {
             }]],
         };
 
-        save_execution_history(&app_db, &initial_graph, &initial_pipeline).await?;
+        let config = Config::load_from_directory(project_path)?;
+        save_execution_history(&app_db, &initial_graph, &initial_pipeline, &config).await?;
 
         let model_yml = r#"
             description: "User statistics model"
             sql: "SELECT id, name FROM users WHERE active = true""#;
         fs::write(project_path.join("models/user_stats.yml"), model_yml)?;
 
+        let new_config = Config::load_from_directory(project_path)?;
         let changes = detect_changes(
             &app_db,
-            &Graph::from_config(&Config::load_from_directory(project_path)?)?,
+            &Graph::from_config(&new_config)?,
+            &new_config
         )
         .await?;
         assert!(changes.is_some());

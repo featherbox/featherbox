@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdapterConfig {
     pub connection: String,
     pub description: Option<String>,
@@ -6,7 +8,15 @@ pub struct AdapterConfig {
     pub columns: Vec<ColumnConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl AdapterConfig {
+    pub fn has_changed(&self, other: &Self) -> bool {
+        self.connection != other.connection
+            || self.source != other.source
+            || self.columns != other.columns
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AdapterSource {
     File {
         file: FileConfig,
@@ -17,14 +27,14 @@ pub enum AdapterSource {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileConfig {
     pub path: String,
     pub compression: Option<String>,
     pub max_batch_size: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormatConfig {
     pub ty: String,
     pub delimiter: Option<String>,
@@ -32,7 +42,7 @@ pub struct FormatConfig {
     pub has_header: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnConfig {
     pub name: String,
     pub ty: String,
@@ -374,4 +384,56 @@ mod tests {
 
         parse_file_config(yaml);
     }
+
+    #[test]
+    fn test_adapter_config_has_changed() {
+        let config1 = AdapterConfig {
+            connection: "test_db".to_string(),
+            description: Some("Test adapter".to_string()),
+            source: AdapterSource::Database {
+                table_name: "users".to_string(),
+            },
+            columns: vec![
+                ColumnConfig {
+                    name: "id".to_string(),
+                    ty: "INTEGER".to_string(),
+                    description: None,
+                },
+            ],
+        };
+
+        let config2 = config1.clone();
+        assert!(!config1.has_changed(&config2));
+
+        let mut config3 = config1.clone();
+        config3.description = Some("Modified description".to_string());
+        assert!(!config1.has_changed(&config3));
+
+        let mut config4 = config1.clone();
+        config4.connection = "other_db".to_string();
+        assert!(config1.has_changed(&config4));
+
+        let mut config5 = config1.clone();
+        config5.source = AdapterSource::Database {
+            table_name: "products".to_string(),
+        };
+        assert!(config1.has_changed(&config5));
+
+        let mut config6 = config1.clone();
+        config6.columns.push(ColumnConfig {
+            name: "name".to_string(),
+            ty: "STRING".to_string(),
+            description: None,
+        });
+        assert!(config1.has_changed(&config6));
+
+        let mut config7 = config1.clone();
+        config7.columns[0].ty = "BIGINT".to_string();
+        assert!(config1.has_changed(&config7));
+
+        let mut config8 = config1.clone();
+        config8.columns[0].description = Some("Primary key".to_string());
+        assert!(config1.has_changed(&config8));
+    }
+
 }

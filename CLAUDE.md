@@ -16,8 +16,10 @@ cargo test                     # DO NOT use this directly - may fail due to miss
 
 # CLI Usage
 target/debug/fbox init <project>          # Initialize new project
+target/debug/fbox connection new <name>   # Create connection configuration
 target/debug/fbox adapter new <name>      # Create adapter configuration
 target/debug/fbox model new <name>        # Create model configuration
+target/debug/fbox secret set <key> <value> # Manage encrypted secrets
 target/debug/fbox migrate                 # Run database migrations and save graph
 target/debug/fbox run                     # Execute pipeline with differential execution
 target/debug/fbox query "<sql>"           # Execute SQL query for verification
@@ -31,7 +33,7 @@ FeatherBox follows domain-driven design principles with clear separation of conc
 
 1. **CLI Commands Domain (`src/commands/`)**: Command interface and workspace management
    - `workspace.rs`: Project directory detection and workspace management
-   - `init.rs`, `adapter.rs`, `model.rs`, `run.rs`, `migrate.rs`: Individual command implementations
+   - `init.rs`, `adapter.rs`, `model.rs`, `run.rs`, `migrate.rs`, `connection.rs`, `secret.rs`, `query.rs`: Individual command implementations
    - `templates/`: YAML templates for configuration generation
 
 2. **Configuration Domain (`src/config/`)**: YAML-based configuration management
@@ -42,16 +44,23 @@ FeatherBox follows domain-driven design principles with clear separation of conc
 3. **Pipeline Execution Domain (`src/pipeline/`)**: Data processing pipeline
    - `execution.rs`: Pipeline orchestration with topological sorting
    - `ducklake.rs`: DuckDB integration for ELT operations
+   - `adapter.rs`, `model.rs`: Type-specific pipeline execution
+   - `build.rs`: Build pipeline management
+   - `database.rs`: Database operations
+   - `file_processor.rs`: File processing utilities
+   - `logger.rs`: Pipeline logging
 
 4. **Dependency Resolution Domain (`src/dependency/`)**: Graph analysis and change detection
    - `graph.rs`: Dependency analysis and DAG generation from SQL parsing
-   - `impact_analysis.rs`: Change impact analysis for differential execution  
-   - `impact_analysis.rs`: Change impact analysis for differential execution
 
 5. **Database Layer (`src/database/`)**: Persistence and migrations
    - `connection.rs`: Database connection management with automatic migrations
    - `entities/`: Sea-ORM entity definitions for metadata storage
    - `migration/`: Database schema migrations
+
+6. **Supporting Infrastructure**:
+   - `s3_client.rs`: AWS S3 integration for remote storage
+   - `secret.rs`: Encrypted secret management using age encryption
 
 ### Data Flow
 
@@ -61,11 +70,6 @@ Data Sources → Configuration → Dependency Resolution → Pipeline Execution 
   Adapters    →  Graph Analysis  →  Impact Analysis  →  DuckDB Processing
 ```
 
-The system follows a domain-driven approach:
-1. **Configuration Domain** loads and validates YAML settings
-2. **Dependency Resolution Domain** builds dependency graphs from SQL analysis and detects changes
-3. **Pipeline Execution Domain** performs topological sorting and executes ELT operations
-4. **Database Layer** handles metadata persistence and change tracking for differential execution
 
 ### Database Schema
 
@@ -113,10 +117,10 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 Implemented in `src/dependency/graph.rs` using `sqlparser` crate to extract table references and build dependency graphs. Circular dependency detection prevents invalid configurations.
 
 ### Differential Execution
-Implemented across the Dependency Resolution Domain:
-- `src/dependency/metadata.rs`: Compares current graph structure with previously executed graphs
-- `src/dependency/impact_analysis.rs`: Calculates downstream impact of changes  
+Implemented in the Dependency Resolution Domain:
+- Graph structure comparison with previously executed graphs stored in database
 - Only executes affected parts of the pipeline when changes are detected
+- Uses database entities to track execution history and changes
 
 
 ### Async Architecture
@@ -128,12 +132,6 @@ All functionality is embedded in a single binary including:
 - Database migrations (`src/database/migration/`)
 - All dependencies statically linked
 
-### Domain Interaction Patterns
-- **Commands Domain** coordinates with all other domains for CLI operations
-- **Configuration Domain** provides validated settings to Pipeline and Dependency domains
-- **Dependency Resolution Domain** informs Pipeline Domain about what needs execution
-- **Database Layer** serves all domains for persistence needs
-- **Pipeline Execution Domain** focuses solely on data processing execution
 
 ## Configuration Structure
 
@@ -150,11 +148,6 @@ models/              # Transformation definitions
     └── aggregated.yml
 ```
 
-### Adapter Configuration
-Defines data sources with connection details, file formats, and schema information.
-
-### Model Configuration  
-Contains SQL transformations with dependency resolution.
 
 ## Testing Guidelines
 
@@ -201,15 +194,21 @@ src/
 │   └── [type].rs              # Configuration structure definitions
 ├── pipeline/                    # Pipeline Execution Domain
 │   ├── execution.rs           # Pipeline orchestration
-│   └── ducklake.rs           # Data processing engine
+│   ├── ducklake.rs           # Data processing engine
+│   ├── adapter.rs            # Adapter-specific execution
+│   ├── model.rs              # Model-specific execution
+│   ├── build.rs              # Build pipeline management
+│   ├── database.rs           # Database operations
+│   ├── file_processor.rs     # File processing utilities
+│   └── logger.rs             # Pipeline logging
 ├── dependency/                  # Dependency Resolution Domain
-│   ├── graph.rs              # Dependency graph construction
-│   ├── impact_analysis.rs    # Change impact analysis
-│   └── metadata.rs           # Change detection & execution history
-└── database/                    # Database Layer
-    ├── connection.rs         # Database connection management
-    ├── entities/             # ORM entity definitions  
-    └── migration/            # Schema migrations
+│   └── graph.rs              # Dependency graph construction
+├── database/                    # Database Layer
+│   ├── connection.rs         # Database connection management
+│   ├── entities/             # ORM entity definitions  
+│   └── migration/            # Schema migrations
+├── s3_client.rs              # AWS S3 integration
+└── secret.rs                 # Encrypted secret management
 ```
 
 ### Module Naming Conventions

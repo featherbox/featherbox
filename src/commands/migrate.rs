@@ -38,13 +38,13 @@ pub async fn migrate_from_config(
 ) -> Result<Option<i32>> {
     let current_graph = Graph::from_config(config)?;
 
-    let changes = detect_changes(app_db, &current_graph).await?;
+    let changes = detect_changes(app_db, &current_graph, config).await?;
 
     if changes.is_none() {
         return Ok(None);
     }
 
-    Ok(Some(save_graph_if_changed(app_db, &current_graph).await?))
+    Ok(Some(save_graph_if_changed(app_db, &current_graph, config).await?))
 }
 
 #[cfg(test)]

@@ -1,7 +1,15 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub description: Option<String>,
     pub sql: String,
+}
+
+impl ModelConfig {
+    pub fn has_changed(&self, other: &Self) -> bool {
+        self.sql != other.sql
+    }
 }
 
 pub fn parse_model_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<ModelConfig> {
@@ -106,5 +114,55 @@ mod tests {
         let yaml = &docs[0];
 
         parse_model_config(yaml).unwrap();
+    }
+
+    #[test]
+    fn test_model_config_has_changed() {
+        let config1 = ModelConfig {
+            description: Some("Test model".to_string()),
+            sql: "SELECT * FROM users".to_string(),
+        };
+
+        let config2 = config1.clone();
+        assert!(!config1.has_changed(&config2));
+
+        let mut config3 = config1.clone();
+        config3.description = Some("Modified description".to_string());
+        assert!(!config1.has_changed(&config3));
+
+        let mut config4 = config1.clone();
+        config4.sql = "SELECT id, name FROM users".to_string();
+        assert!(config1.has_changed(&config4));
+
+        let mut config5 = config1.clone();
+        config5.sql = "SELECT * FROM users WHERE active = true".to_string();
+        assert!(config1.has_changed(&config5));
+
+        let config6 = ModelConfig {
+            description: None,
+            sql: "SELECT * FROM users".to_string(),
+        };
+        assert!(!config1.has_changed(&config6));
+    }
+
+    #[test]
+    fn test_model_config_serde() {
+        let config = ModelConfig {
+            description: Some("Test model for analysis".to_string()),
+            sql: r#"SELECT 
+                id,
+                name,
+                email
+              FROM users
+              WHERE created_at > '2024-01-01'"#.to_string(),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ModelConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+
+        assert!(json.contains("\"description\":\"Test model for analysis\""));
+        assert!(json.contains("\"sql\":"));
+        assert!(json.contains("WHERE created_at"));
     }
 }
