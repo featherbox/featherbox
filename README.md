@@ -1,6 +1,6 @@
-# FeatherBox
+# FeatherBox Core
 
-FeatherBox is a lightweight, easy-to-use data pipeline framework designed for developers.
+FeatherBox Core is a lightweight, easy-to-use data pipeline framework designed for developers.
 
 ## Features and Benefits
 
@@ -17,7 +17,7 @@ FeatherBox is a lightweight, easy-to-use data pipeline framework designed for de
 ## Command
 
 ```bash
-fbox init [project_name]   # Initialize a new FeatherBox project
+fbox init [project_name]   # Initialize a new FeatherBox Core project
 fbox adapter new <name>    # Create a new adapter
 fbox adapter delete <name> # Delete an adapter
 fbox model new <name>      # Create a new model
@@ -139,7 +139,7 @@ max_age: 1d
 
 ## Architecture
 
-FeatherBox adopts a delta-based update architecture to achieve efficient data pipeline processing.
+FeatherBox Core adopts a delta-based update architecture to achieve efficient data pipeline processing.
 
 ### Core Components
 
@@ -274,7 +274,7 @@ CREATE TABLE IF NOT EXISTS "__fbox_pipeline_actions" (
 
 ### Initialization
 
-Creates a new FeatherBox project structure.
+Creates a new FeatherBox Core project structure.
 
 ```bash
 fbox init
