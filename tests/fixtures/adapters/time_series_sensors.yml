@@ -1,9 +1,11 @@
 connection: test_data
 description: 'Time series sensor data with date patterns'
-file:
-  path: time_series/{YYYY}-{MM}-{DD}T{HH}{mm}.json
-format:
-  type: json
+source:
+  type: file
+  file:
+    path: time_series/{YYYY}-{MM}-{DD}T{HH}{mm}.json
+  format:
+    type: json
 columns:
   - name: timestamp
     type: DATETIME

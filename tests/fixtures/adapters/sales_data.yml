@@ -1,9 +1,11 @@
 connection: minio_datasource
 description: 'Sales data stored in S3'
-file:
-  path: sales/2024-01-{DD}.json
-format:
-  type: json
+source:
+  type: file
+  file:
+    path: sales/2024-01-{DD}.json
+  format:
+    type: json
 columns:
   - name: sale_id
     type: INTEGER

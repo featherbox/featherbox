@@ -5,12 +5,13 @@ use inquire::{Confirm, Select, Text};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use yaml_rust2::{Yaml, YamlEmitter, yaml::Hash};
 
 use super::{render_adapter_template, validate_name};
 use crate::commands::workspace::{ensure_project_directory, find_project_root};
-use crate::config::adapter::{AdapterSource, ColumnConfig, FileConfig, FormatConfig};
-use crate::config::project::{ConnectionConfig, ProjectConfig, parse_project_config};
+use crate::config::adapter::{
+    AdapterConfig, AdapterSource, ColumnConfig, FileConfig, FormatConfig,
+};
+use crate::config::project::{ConnectionConfig, ProjectConfig};
 
 pub fn execute_adapter_new(name: &str, project_path: &std::path::Path) -> Result<()> {
     validate_name(name)?;
@@ -83,14 +84,21 @@ pub async fn execute_adapter_interactive(current_dir: &Path) -> Result<()> {
         println!();
     }
 
-    save_adapter_config(
-        &adapter_file,
-        &adapter_name,
-        &connection_name,
-        &source_config,
-        &format_config,
-        &columns,
-    )?;
+    let adapter_config = AdapterConfig {
+        connection: connection_name,
+        description: Some(format!("Generated adapter for {adapter_name}")),
+        source: source_config,
+        columns,
+    };
+
+    let yaml_content = serde_yml::to_string(&adapter_config)?;
+
+    if let Some(parent) = adapter_file.parent() {
+        fs::create_dir_all(parent).with_context(|| "Failed to create adapters directory")?;
+    }
+
+    fs::write(&adapter_file, yaml_content)
+        .with_context(|| format!("Failed to save adapter file: {adapter_file:?}"))?;
 
     println!("✓ Adapter '{adapter_name}' created successfully");
     Ok(())
@@ -135,12 +143,7 @@ fn load_project_config(project_root: &Path) -> Result<ProjectConfig> {
     let content = fs::read_to_string(&project_yml)
         .with_context(|| "Failed to read project.yml. Run 'fbox init' first.")?;
 
-    let docs = yaml_rust2::YamlLoader::load_from_str(&content)?;
-    if docs.is_empty() {
-        return Err(anyhow::anyhow!("Invalid project.yml"));
-    }
-
-    Ok(parse_project_config(&docs[0]))
+    crate::config::project::parse_project_config(&content)
 }
 
 fn select_connection(connections: &HashMap<String, ConnectionConfig>) -> Result<String> {
@@ -161,9 +164,9 @@ async fn configure_source_with_test(
 ) -> Result<(AdapterSource, FormatConfig)> {
     let source_type = match connection_config {
         ConnectionConfig::LocalFile { .. } | ConnectionConfig::S3(_) => SourceType::File,
-        ConnectionConfig::Sqlite { .. } | ConnectionConfig::RemoteDatabase { .. } => {
-            SourceType::Database
-        }
+        ConnectionConfig::Sqlite { .. }
+        | ConnectionConfig::MySql { .. }
+        | ConnectionConfig::PostgreSql { .. } => SourceType::Database,
     };
 
     match source_type {
@@ -454,10 +457,12 @@ async fn generate_database_schema(
         ConnectionConfig::Sqlite { .. } => {
             generate_sqlite_schema(table_name, connection_config).await
         }
-        ConnectionConfig::RemoteDatabase { .. } => Err(anyhow::anyhow!(
-            "Remote database schema generation is not yet implemented. Please manually define the schema for table '{}'.",
-            table_name
-        )),
+        ConnectionConfig::MySql { .. } | ConnectionConfig::PostgreSql { .. } => {
+            Err(anyhow::anyhow!(
+                "Remote database schema generation is not yet implemented. Please manually define the schema for table '{}'.",
+                table_name
+            ))
+        }
         _ => Err(anyhow::anyhow!(
             "Unsupported connection type for database schema generation"
         )),
@@ -558,119 +563,19 @@ async fn test_connection_simple(connection_config: &ConnectionConfig) -> Result<
         ConnectionConfig::S3(s3_config) => {
             println!("✓ S3 bucket configuration: {}", s3_config.bucket);
         }
-        ConnectionConfig::RemoteDatabase { db_type, config } => {
+        ConnectionConfig::MySql { config } => {
             println!(
-                "✓ Database connection configured: {:?} at {}:{}",
-                db_type, config.host, config.port
+                "✓ MySQL connection configured at {}:{}",
+                config.host, config.port
+            );
+        }
+        ConnectionConfig::PostgreSql { config } => {
+            println!(
+                "✓ PostgreSQL connection configured at {}:{}",
+                config.host, config.port
             );
         }
     }
-    Ok(())
-}
-
-fn save_adapter_config(
-    adapter_file: &Path,
-    adapter_name: &str,
-    connection_name: &str,
-    source_config: &AdapterSource,
-    format_config: &FormatConfig,
-    columns: &[ColumnConfig],
-) -> Result<()> {
-    let mut yaml_hash = Hash::new();
-
-    yaml_hash.insert(
-        Yaml::String("connection".to_string()),
-        Yaml::String(connection_name.to_string()),
-    );
-
-    yaml_hash.insert(
-        Yaml::String("description".to_string()),
-        Yaml::String(format!("Generated adapter for {adapter_name}")),
-    );
-
-    match source_config {
-        AdapterSource::File { file, .. } => {
-            let mut file_hash = Hash::new();
-            file_hash.insert(
-                Yaml::String("path".to_string()),
-                Yaml::String(file.path.clone()),
-            );
-            yaml_hash.insert(Yaml::String("file".to_string()), Yaml::Hash(file_hash));
-
-            let mut format_hash = Hash::new();
-            format_hash.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String(format_config.ty.clone()),
-            );
-            if let Some(ref delimiter) = format_config.delimiter {
-                format_hash.insert(
-                    Yaml::String("delimiter".to_string()),
-                    Yaml::String(delimiter.clone()),
-                );
-            }
-            if let Some(has_header) = format_config.has_header {
-                format_hash.insert(
-                    Yaml::String("has_header".to_string()),
-                    Yaml::Boolean(has_header),
-                );
-            } else if format_config.ty == "csv" {
-                format_hash.insert(Yaml::String("has_header".to_string()), Yaml::Boolean(true));
-            }
-            yaml_hash.insert(Yaml::String("format".to_string()), Yaml::Hash(format_hash));
-        }
-        AdapterSource::Database { table_name } => {
-            let mut source_hash = Hash::new();
-            source_hash.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String("database".to_string()),
-            );
-            source_hash.insert(
-                Yaml::String("table_name".to_string()),
-                Yaml::String(table_name.clone()),
-            );
-            yaml_hash.insert(Yaml::String("source".to_string()), Yaml::Hash(source_hash));
-        }
-    }
-
-    let columns_yaml: Vec<Yaml> = columns
-        .iter()
-        .map(|col| {
-            let mut col_hash = Hash::new();
-            col_hash.insert(
-                Yaml::String("name".to_string()),
-                Yaml::String(col.name.clone()),
-            );
-            col_hash.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String(col.ty.clone()),
-            );
-            if let Some(ref desc) = col.description {
-                col_hash.insert(
-                    Yaml::String("description".to_string()),
-                    Yaml::String(desc.clone()),
-                );
-            }
-            Yaml::Hash(col_hash)
-        })
-        .collect();
-
-    yaml_hash.insert(
-        Yaml::String("columns".to_string()),
-        Yaml::Array(columns_yaml),
-    );
-
-    let yaml = Yaml::Hash(yaml_hash);
-    let mut out_str = String::new();
-    let mut emitter = YamlEmitter::new(&mut out_str);
-    emitter.dump(&yaml)?;
-
-    if let Some(parent) = adapter_file.parent() {
-        fs::create_dir_all(parent).with_context(|| "Failed to create adapters directory")?;
-    }
-
-    fs::write(adapter_file, out_str)
-        .with_context(|| format!("Failed to save adapter file: {adapter_file:?}"))?;
-
     Ok(())
 }
 

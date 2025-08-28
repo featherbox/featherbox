@@ -30,17 +30,12 @@ impl FileSystem {
             ConnectionConfig::Sqlite { .. } => Err(anyhow::anyhow!(
                 "SQLite connections are not supported by FileSystem. Use database adapter instead."
             )),
-            ConnectionConfig::RemoteDatabase { db_type, .. } => match db_type {
-                crate::config::project::DatabaseType::Mysql => Err(anyhow::anyhow!(
-                    "MySQL connections are not supported by FileSystem. Use database adapter instead."
-                )),
-                crate::config::project::DatabaseType::Postgresql => Err(anyhow::anyhow!(
-                    "PostgreSQL connections are not supported by FileSystem. Use database adapter instead."
-                )),
-                crate::config::project::DatabaseType::Sqlite => Err(anyhow::anyhow!(
-                    "SQLite connections are not supported by FileSystem. Use database adapter instead."
-                )),
-            },
+            ConnectionConfig::MySql { .. } => Err(anyhow::anyhow!(
+                "MySQL connections are not supported by FileSystem. Use database adapter instead."
+            )),
+            ConnectionConfig::PostgreSql { .. } => Err(anyhow::anyhow!(
+                "PostgreSQL connections are not supported by FileSystem. Use database adapter instead."
+            )),
         }
     }
 

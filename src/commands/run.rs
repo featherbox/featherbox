@@ -255,12 +255,14 @@ mod tests {
             r#"
             connection: test_connection
             description: "Test adapter"
-            file:
-              path: {}
-              compression: none
-            format:
-              type: csv
-              has_header: true
+            source:
+              type: file
+              file:
+                path: {}
+                compression: none
+              format:
+                type: csv
+                has_header: true
             columns: []"#,
             users_csv.to_string_lossy()
         );
@@ -326,12 +328,14 @@ mod tests {
             r#"
             connection: test_connection
             description: "Test adapter"
-            file:
-              path: {}
-              compression: none
-            format:
-              type: csv
-              has_header: true
+            source:
+              type: file
+              file:
+                path: {}
+                compression: none
+              format:
+                type: csv
+                has_header: true
             columns: []"#,
             users_csv.to_string_lossy()
         );
@@ -411,8 +415,10 @@ mod tests {
                 type: s3
                 bucket: test-bucket
                 region: us-west-2
+                auth_method: Explicit
                 access_key_id: ${{TEST_DUCKLAKE_S3_ACCESS_KEY}}
-                secret_access_key: ${{TEST_DUCKLAKE_S3_SECRET_KEY}}"#,
+                secret_access_key: ${{TEST_DUCKLAKE_S3_SECRET_KEY}}
+                path_style_access: false"#,
             project_path.display(),
             project_path.display()
         );

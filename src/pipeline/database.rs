@@ -16,8 +16,12 @@ impl DatabaseSystem {
     pub fn from_connection(connection: &ConnectionConfig) -> Result<Self> {
         match connection {
             ConnectionConfig::Sqlite { path } => Ok(Self::Sqlite { path: path.clone() }),
-            ConnectionConfig::RemoteDatabase { db_type, config } => Ok(Self::RemoteDatabase {
-                db_type: db_type.clone(),
+            ConnectionConfig::MySql { config } => Ok(Self::RemoteDatabase {
+                db_type: DatabaseType::Mysql,
+                config: config.clone(),
+            }),
+            ConnectionConfig::PostgreSql { config } => Ok(Self::RemoteDatabase {
+                db_type: DatabaseType::Postgresql,
                 config: config.clone(),
             }),
             _ => Err(anyhow::anyhow!(
@@ -195,8 +199,7 @@ mod tests {
 
     #[test]
     fn test_mysql_system_creation() {
-        let connection = ConnectionConfig::RemoteDatabase {
-            db_type: DatabaseType::Mysql,
+        let connection = ConnectionConfig::MySql {
             config: RemoteDatabaseConfig {
                 host: "localhost".to_string(),
                 port: 3307,
@@ -331,8 +334,7 @@ mod tests {
 
     #[test]
     fn test_postgres_system_creation() {
-        let connection = ConnectionConfig::RemoteDatabase {
-            db_type: DatabaseType::Postgresql,
+        let connection = ConnectionConfig::PostgreSql {
             config: RemoteDatabaseConfig {
                 host: "localhost".to_string(),
                 port: 5433,

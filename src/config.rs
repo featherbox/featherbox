@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use yaml_rust2::YamlLoader;
 
 use crate::secret::expand_secrets_in_text;
 
@@ -50,22 +49,17 @@ fn load_project_config(project_path: &Path) -> Result<ProjectConfig> {
     }
 
     let content = fs::read_to_string(&project_yml_path)?;
-    let docs = YamlLoader::load_from_str(&content)?;
-    let yaml = &docs[0];
-
-    let project_config = project::parse_project_config(yaml);
+    let project_config: ProjectConfig = project::parse_project_config(&content)?;
 
     let expanded_content = expand_secrets_in_text(&content, &project_config, project_path)?;
-    let expanded_docs = YamlLoader::load_from_str(&expanded_content)?;
-    let expanded_yaml = &expanded_docs[0];
 
-    Ok(project::parse_project_config(expanded_yaml))
+    project::parse_project_config(&expanded_content)
 }
 
 fn load_config_files_recursive<T>(
     config_dir: &Path,
     file_type: &str,
-    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    parse_fn: fn(&str) -> Result<T>,
     project_config: &ProjectConfig,
     project_path: &Path,
 ) -> Result<HashMap<String, T>> {
@@ -92,7 +86,7 @@ fn collect_config_files_recursive<T>(
     dir: &Path,
     base_dir: &Path,
     file_type: &str,
-    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    parse_fn: fn(&str) -> Result<T>,
     project_config: &ProjectConfig,
     project_path: &Path,
     configs: &mut HashMap<String, T>,
@@ -137,15 +131,13 @@ fn extract_config_name(path: &Path, base_dir: &Path, file_type: &str) -> Result<
 
 fn parse_config_file<T>(
     path: &Path,
-    parse_fn: fn(&yaml_rust2::Yaml) -> Result<T>,
+    parse_fn: fn(&str) -> Result<T>,
     project_config: &ProjectConfig,
     project_path: &Path,
 ) -> Result<T> {
     let content = fs::read_to_string(path)?;
     let expanded_content = expand_secrets_in_text(&content, project_config, project_path)?;
-    let docs = YamlLoader::load_from_str(&expanded_content)?;
-    let yaml = &docs[0];
-    parse_fn(yaml)
+    parse_fn(&expanded_content)
 }
 
 fn load_adapters(
@@ -204,13 +196,15 @@ mod tests {
         let adapter_yml = r#"
             connection: test_connection
             description: "Test adapter"
-            file:
-              path: test.csv
-              compression: none
-              max_batch_size: 100MB
-            format:
-              type: csv
-              has_header: true
+            source:
+              type: file
+              file:
+                path: test.csv
+                compression: none
+                max_batch_size: 100MB
+              format:
+                type: csv
+                has_header: true
             columns: []"#;
         fs::write(project_path.join("adapters/test_adapter.yml"), adapter_yml)?;
 

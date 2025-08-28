@@ -5,7 +5,6 @@ use aws_sdk_s3::config::Credentials;
 use inquire::{Select, Text};
 use sea_orm::{Database, DbErr};
 use std::path::Path;
-use yaml_rust2::{Yaml, YamlEmitter, YamlLoader, yaml::Hash};
 
 use crate::commands::workspace::find_project_root;
 use crate::config::project::{
@@ -120,8 +119,7 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
             let database = Text::new("Database:").prompt()?;
             let username = Text::new("Username:").prompt()?;
             let password = Text::new("Password:").prompt()?;
-            ConnectionConfig::RemoteDatabase {
-                db_type: DatabaseType::Mysql,
+            ConnectionConfig::MySql {
                 config: RemoteDatabaseConfig {
                     host,
                     port: port.parse()?,
@@ -137,8 +135,7 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
             let database = Text::new("Database:").prompt()?;
             let username = Text::new("Username:").prompt()?;
             let password = Text::new("Password:").prompt()?;
-            ConnectionConfig::RemoteDatabase {
-                db_type: DatabaseType::Postgresql,
+            ConnectionConfig::PostgreSql {
                 config: RemoteDatabaseConfig {
                     host,
                     port: port.parse()?,
@@ -198,8 +195,11 @@ async fn test_connection(config: &ConnectionConfig) -> Result<String> {
             )
             .await
         }
-        ConnectionConfig::RemoteDatabase { db_type, config } => {
-            test_database_connection(db_type, config).await
+        ConnectionConfig::MySql { config } => {
+            test_database_connection(&DatabaseType::Mysql, config).await
+        }
+        ConnectionConfig::PostgreSql { config } => {
+            test_database_connection(&DatabaseType::Postgresql, config).await
         }
     }
 }
@@ -235,126 +235,16 @@ fn save_connection(project_root: &Path, name: &str, config: &ConnectionConfig) -
     let project_yml_path = project_root.join("project.yml");
     let content = std::fs::read_to_string(&project_yml_path)?;
 
-    let docs = YamlLoader::load_from_str(&content)?;
-    let mut yaml = docs[0].clone();
+    let mut project_config: crate::config::ProjectConfig = serde_yml::from_str(&content)?;
 
-    let connection_yaml = create_connection_yaml(config);
+    project_config
+        .connections
+        .insert(name.to_string(), config.clone());
 
-    if let Yaml::Hash(ref mut root_hash) = yaml {
-        match root_hash.get_mut(&Yaml::String("connections".to_string())) {
-            Some(Yaml::Hash(connections)) => {
-                connections.insert(Yaml::String(name.to_string()), connection_yaml);
-            }
-            _ => {
-                let mut connections = Hash::new();
-                connections.insert(Yaml::String(name.to_string()), connection_yaml);
-                root_hash.insert(
-                    Yaml::String("connections".to_string()),
-                    Yaml::Hash(connections),
-                );
-            }
-        }
-    } else {
-        return Err(anyhow::anyhow!("project.yml must be a YAML object"));
-    }
+    let updated_content = serde_yml::to_string(&project_config)?;
+    std::fs::write(&project_yml_path, updated_content)?;
 
-    let mut out_str = String::new();
-    let mut emitter = YamlEmitter::new(&mut out_str);
-    emitter.dump(&yaml)?;
-
-    std::fs::write(&project_yml_path, out_str)?;
     Ok(())
-}
-
-fn create_connection_yaml(config: &ConnectionConfig) -> Yaml {
-    let mut connection = Hash::new();
-
-    match config {
-        ConnectionConfig::LocalFile { base_path } => {
-            connection.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String("localfile".to_string()),
-            );
-            connection.insert(
-                Yaml::String("base_path".to_string()),
-                Yaml::String(base_path.clone()),
-            );
-        }
-        ConnectionConfig::Sqlite { path } => {
-            connection.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String("sqlite".to_string()),
-            );
-            connection.insert(Yaml::String("path".to_string()), Yaml::String(path.clone()));
-        }
-        ConnectionConfig::S3(s3_config) => {
-            connection.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String("s3".to_string()),
-            );
-            connection.insert(
-                Yaml::String("bucket".to_string()),
-                Yaml::String(s3_config.bucket.clone()),
-            );
-            connection.insert(
-                Yaml::String("region".to_string()),
-                Yaml::String(s3_config.region.clone()),
-            );
-
-            let auth_method_str = match &s3_config.auth_method {
-                S3AuthMethod::CredentialChain => "credential_chain",
-                S3AuthMethod::Explicit => "explicit",
-            };
-            connection.insert(
-                Yaml::String("auth_method".to_string()),
-                Yaml::String(auth_method_str.to_string()),
-            );
-
-            if matches!(s3_config.auth_method, S3AuthMethod::Explicit) {
-                connection.insert(
-                    Yaml::String("access_key_id".to_string()),
-                    Yaml::String(s3_config.access_key_id.clone()),
-                );
-                connection.insert(
-                    Yaml::String("secret_access_key".to_string()),
-                    Yaml::String(s3_config.secret_access_key.clone()),
-                );
-            }
-        }
-        ConnectionConfig::RemoteDatabase { db_type, config } => {
-            let type_name = match db_type {
-                DatabaseType::Mysql => "mysql",
-                DatabaseType::Postgresql => "postgresql",
-                _ => "unknown",
-            };
-            connection.insert(
-                Yaml::String("type".to_string()),
-                Yaml::String(type_name.to_string()),
-            );
-            connection.insert(
-                Yaml::String("host".to_string()),
-                Yaml::String(config.host.clone()),
-            );
-            connection.insert(
-                Yaml::String("port".to_string()),
-                Yaml::Integer(config.port as i64),
-            );
-            connection.insert(
-                Yaml::String("database".to_string()),
-                Yaml::String(config.database.clone()),
-            );
-            connection.insert(
-                Yaml::String("username".to_string()),
-                Yaml::String(config.username.clone()),
-            );
-            connection.insert(
-                Yaml::String("password".to_string()),
-                Yaml::String(config.password.clone()),
-            );
-        }
-    }
-
-    Yaml::Hash(connection)
 }
 
 async fn test_s3_connection(
@@ -447,7 +337,6 @@ async fn test_s3_connection(
 pub async fn execute_connection_delete(current_dir: &Path) -> Result<()> {
     use inquire::Select;
     use std::fs;
-    use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
     let project_root = find_project_root(Some(current_dir))?;
     let project_yml = project_root.join("project.yml");
@@ -459,22 +348,9 @@ pub async fn execute_connection_delete(current_dir: &Path) -> Result<()> {
     }
 
     let content = fs::read_to_string(&project_yml)?;
-    let docs = YamlLoader::load_from_str(&content)?;
+    let mut project_config: crate::config::ProjectConfig = serde_yml::from_str(&content)?;
 
-    if docs.is_empty() {
-        return Err(anyhow::anyhow!("Invalid project.yml"));
-    }
-
-    let yaml = &docs[0];
-
-    let connection_names: Vec<String> = if let Some(connections) = yaml["connections"].as_hash() {
-        connections
-            .keys()
-            .filter_map(|k| k.as_str().map(String::from))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let connection_names: Vec<String> = project_config.connections.keys().cloned().collect();
 
     if connection_names.is_empty() {
         println!("No connections found.");
@@ -483,26 +359,14 @@ pub async fn execute_connection_delete(current_dir: &Path) -> Result<()> {
 
     let selected = Select::new("Select connection to delete:", connection_names).prompt()?;
 
-    let mut yaml = docs.into_iter().next().unwrap();
+    if project_config.connections.remove(&selected).is_some() {
+        println!("✓ Connection '{selected}' removed successfully");
 
-    if let Yaml::Hash(ref mut root_hash) = yaml {
-        if let Some(Yaml::Hash(connections)) =
-            root_hash.get_mut(&Yaml::String("connections".to_string()))
-        {
-            let connection_key = Yaml::String(selected.clone());
-            if connections.remove(&connection_key).is_some() {
-                println!("✓ Connection '{selected}' removed successfully");
-            } else {
-                return Err(anyhow::anyhow!("Connection '{}' not found", selected));
-            }
-        }
+        let updated_content = serde_yml::to_string(&project_config)?;
+        fs::write(&project_yml, updated_content)?;
+    } else {
+        return Err(anyhow::anyhow!("Connection '{}' not found", selected));
     }
-
-    let mut output = String::new();
-    let mut emitter = YamlEmitter::new(&mut output);
-    emitter.dump(&yaml)?;
-
-    fs::write(&project_yml, output)?;
 
     Ok(())
 }

@@ -1,60 +1,76 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::{env, fs};
 use tempfile::TempDir;
 use uuid::Uuid;
-use yaml_rust2::YamlLoader;
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TestUser {
+    id: i32,
+    name: String,
+    email: String,
+    age: i32,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TestProduct {
+    id: i32,
+    name: String,
+    price: f64,
+    category: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TestData {
+    users: Option<Vec<TestUser>>,
+    products: Option<Vec<TestProduct>>,
+}
 
 fn create_sqlite_from_yaml(yaml_path: &Path, db_path: &Path) -> Result<()> {
     let yaml_content = fs::read_to_string(yaml_path)?;
-    let docs = YamlLoader::load_from_str(&yaml_content)?;
-    let doc = &docs[0];
+    let test_data: TestData = serde_yml::from_str(&yaml_content)?;
 
     let conn = Connection::open(db_path)?;
 
-    if let Some(users) = doc["users"].as_vec() {
+    if let Some(users) = test_data.users {
         conn.execute(
             "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, age INTEGER, created_at TEXT)",
             [],
         )?;
 
         for user in users {
-            let id = user["id"].as_i64().unwrap() as i32;
-            let name = user["name"].as_str().unwrap();
-            let email = user["email"].as_str().unwrap();
-            let age = user["age"].as_i64().unwrap() as i32;
-            let created_at = user["created_at"].as_str().unwrap();
-
             conn.execute(
                 "INSERT INTO users (id, name, email, age, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
                 [
-                    &id as &dyn rusqlite::ToSql,
-                    &name,
-                    &email,
-                    &age,
-                    &created_at,
+                    &user.id as &dyn rusqlite::ToSql,
+                    &user.name,
+                    &user.email,
+                    &user.age,
+                    &user.created_at,
                 ],
             )?;
         }
     }
 
-    if let Some(products) = doc["products"].as_vec() {
+    if let Some(products) = test_data.products {
         conn.execute(
             "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price DECIMAL(10,2), category TEXT)",
             [],
         )?;
 
         for product in products {
-            let id = product["id"].as_i64().unwrap() as i32;
-            let name = product["name"].as_str().unwrap();
-            let price = product["price"].as_f64().unwrap();
-            let category = product["category"].as_str().unwrap();
-
             conn.execute(
                 "INSERT INTO products (id, name, price, category) VALUES (?1, ?2, ?3, ?4)",
-                [&id as &dyn rusqlite::ToSql, &name, &price, &category],
+                [
+                    &product.id as &dyn rusqlite::ToSql,
+                    &product.name,
+                    &product.price,
+                    &product.category,
+                ],
             )?;
         }
     }

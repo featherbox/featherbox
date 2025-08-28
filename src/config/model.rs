@@ -12,21 +12,14 @@ impl ModelConfig {
     }
 }
 
-pub fn parse_model_config(yaml: &yaml_rust2::Yaml) -> anyhow::Result<ModelConfig> {
-    let description = yaml["description"].as_str().map(|s| s.to_string());
-
-    let sql = yaml["sql"]
-        .as_str()
-        .expect("Model SQL is required")
-        .to_string();
-
-    Ok(ModelConfig { description, sql })
+pub fn parse_model_config(yaml_str: &str) -> anyhow::Result<ModelConfig> {
+    serde_yml::from_str(yaml_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse model config: {}", e))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yaml_rust2::YamlLoader;
 
     #[test]
     fn test_parse_model_config() {
@@ -43,10 +36,8 @@ mod tests {
               ORDER BY
                 timestamp DESC
         "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
 
-        let config = parse_model_config(yaml).unwrap();
+        let config = parse_model_config(yaml_str).unwrap();
 
         assert_eq!(
             config.description,
@@ -63,10 +54,8 @@ mod tests {
         let yaml_str = r#"
             sql: SELECT * FROM users
         "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
 
-        let config = parse_model_config(yaml).unwrap();
+        let config = parse_model_config(yaml_str).unwrap();
 
         assert_eq!(config.description, None);
         assert_eq!(config.sql, "SELECT * FROM users");
@@ -90,10 +79,8 @@ mod tests {
               ORDER BY day DESC
               LIMIT 30
         "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
 
-        let config = parse_model_config(yaml).unwrap();
+        let config = parse_model_config(yaml_str).unwrap();
 
         assert_eq!(
             config.description,
@@ -105,15 +92,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Model SQL is required")]
     fn test_parse_model_config_missing_sql() {
         let yaml_str = r#"
             description: Model without SQL
         "#;
-        let docs = YamlLoader::load_from_str(yaml_str).unwrap();
-        let yaml = &docs[0];
 
-        parse_model_config(yaml).unwrap();
+        let result = parse_model_config(yaml_str);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("sql"));
     }
 
     #[test]
