@@ -9,31 +9,61 @@ use std::{
     fmt,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub name: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Edge {
     pub from: String,
     pub to: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
 }
 
-#[derive(Debug)]
-pub struct GraphError {
-    pub message: String,
+#[derive(Debug, PartialEq)]
+pub enum GraphError {
+    CircularDependency {
+        nodes: Vec<String>,
+    },
+    NonExistentTableReference {
+        model_name: String,
+        table_name: String,
+    },
+    SqlParseError {
+        model_name: String,
+        error: String,
+    },
 }
 
 impl fmt::Display for GraphError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
+        match self {
+            GraphError::CircularDependency { nodes } => {
+                write!(
+                    f,
+                    "Circular dependency detected involving nodes: {}",
+                    nodes.join(" -> ")
+                )
+            }
+            GraphError::NonExistentTableReference {
+                model_name,
+                table_name,
+            } => {
+                write!(
+                    f,
+                    "Model '{model_name}' references non-existent table '{table_name}'"
+                )
+            }
+            GraphError::SqlParseError { model_name, error } => {
+                write!(f, "SQL parse error in model '{model_name}': {error}")
+            }
+        }
     }
 }
 
@@ -131,6 +161,92 @@ pub fn build_adjacency_map(graph: &Graph) -> HashMap<String, Vec<String>> {
 }
 
 impl Graph {
+    fn validate_circular_dependencies(&self) -> Result<(), GraphError> {
+        let mut in_degree: HashMap<String, usize> = HashMap::new();
+        let mut adjacency_map: HashMap<String, Vec<String>> = HashMap::new();
+
+        for node in &self.nodes {
+            in_degree.insert(node.name.clone(), 0);
+            adjacency_map.insert(node.name.clone(), Vec::new());
+        }
+
+        for edge in &self.edges {
+            *in_degree.entry(edge.to.clone()).or_insert(0) += 1;
+            adjacency_map
+                .entry(edge.from.clone())
+                .or_default()
+                .push(edge.to.clone());
+        }
+
+        let mut queue: VecDeque<String> = VecDeque::new();
+        for (node, &degree) in &in_degree {
+            if degree == 0 {
+                queue.push_back(node.clone());
+            }
+        }
+
+        let mut sorted_count = 0;
+        while let Some(current) = queue.pop_front() {
+            sorted_count += 1;
+
+            if let Some(neighbors) = adjacency_map.get(&current) {
+                for neighbor in neighbors {
+                    if let Some(degree) = in_degree.get_mut(neighbor) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            queue.push_back(neighbor.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        if sorted_count != self.nodes.len() {
+            let remaining_nodes: Vec<String> = in_degree
+                .into_iter()
+                .filter(|(_, degree)| *degree > 0)
+                .map(|(node, _)| node)
+                .collect();
+
+            return Err(GraphError::CircularDependency {
+                nodes: remaining_nodes,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_table_references(&self, config: &Config) -> Result<(), GraphError> {
+        let mut all_table_names = HashSet::new();
+
+        for adapter_name in config.adapters.keys() {
+            all_table_names.insert(adapter_name.clone());
+        }
+
+        for model_name in config.models.keys() {
+            all_table_names.insert(model_name.clone());
+        }
+
+        for (model_name, model_config) in &config.models {
+            let dependent_tables =
+                dependent_tables(&model_config.sql).map_err(|e| GraphError::SqlParseError {
+                    model_name: model_name.clone(),
+                    error: e,
+                })?;
+
+            for table in dependent_tables {
+                if !all_table_names.contains(&table) {
+                    return Err(GraphError::NonExistentTableReference {
+                        model_name: model_name.clone(),
+                        table_name: table,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn from_config(config: &Config) -> Result<Self, GraphError> {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
@@ -146,14 +262,12 @@ impl Graph {
                 name: model_name.to_string(),
             });
 
-            let dependent_tables = from_table(&model_config.sql);
+            let dependent_tables =
+                dependent_tables(&model_config.sql).map_err(|e| GraphError::SqlParseError {
+                    model_name: model_name.clone(),
+                    error: e,
+                })?;
             for table in dependent_tables {
-                if table == *model_name {
-                    return Err(GraphError {
-                        message: format!("Model '{model_name}' has a self-reference"),
-                    });
-                }
-
                 edges.push(Edge {
                     from: table,
                     to: model_name.to_string(),
@@ -161,13 +275,21 @@ impl Graph {
             }
         }
 
-        Ok(Self { nodes, edges })
+        let graph = Self { nodes, edges };
+
+        graph.validate_table_references(config)?;
+        graph.validate_circular_dependencies()?;
+
+        Ok(graph)
     }
 }
 
-pub fn from_table(sql: &str) -> Vec<String> {
+pub fn dependent_tables(sql: &str) -> Result<Vec<String>, String> {
     let dialect = DuckDbDialect;
-    let ast = Parser::parse_sql(&dialect, sql).unwrap();
+    let ast = match Parser::parse_sql(&dialect, sql) {
+        Ok(ast) => ast,
+        Err(e) => return Err(e.to_string()),
+    };
 
     if let Some(Statement::Query(query)) = ast.first() {
         if let sqlparser::ast::SetExpr::Select(select) = query.body.as_ref() {
@@ -181,11 +303,11 @@ pub fn from_table(sql: &str) -> Vec<String> {
                 }
             }
 
-            return tables;
+            return Ok(tables);
         }
     }
 
-    vec![]
+    Ok(vec![])
 }
 
 fn collect_table_names(table_factor: &TableFactor, tables: &mut Vec<String>) {
@@ -216,7 +338,51 @@ mod tests {
 
     #[test]
     fn test_from_config() {
-        let adapters = HashMap::new();
+        let mut adapters = HashMap::new();
+        adapters.insert(
+            "raw_users".to_string(),
+            crate::config::adapter::AdapterConfig {
+                connection: "default".to_string(),
+                description: None,
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "/tmp/raw_users.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        delimiter: Some(",".to_string()),
+                        null_value: None,
+                        has_header: Some(true),
+                    },
+                },
+                columns: vec![],
+            },
+        );
+
+        adapters.insert(
+            "order_items".to_string(),
+            crate::config::adapter::AdapterConfig {
+                connection: "default".to_string(),
+                description: None,
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "/tmp/order_items.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        delimiter: Some(",".to_string()),
+                        null_value: None,
+                        has_header: Some(true),
+                    },
+                },
+                columns: vec![],
+            },
+        );
+
         let mut models = HashMap::new();
 
         models.insert(
@@ -261,8 +427,10 @@ mod tests {
 
         let graph = Graph::from_config(&config).unwrap();
 
-        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes.len(), 4);
         let node_names: Vec<&str> = graph.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(node_names.contains(&"raw_users"));
+        assert!(node_names.contains(&"order_items"));
         assert!(node_names.contains(&"users"));
         assert!(node_names.contains(&"orders"));
 
@@ -275,15 +443,39 @@ mod tests {
     }
 
     #[test]
-    fn test_self_reference_error() {
+    fn test_circular_dependency() {
         let adapters = HashMap::new();
         let mut models = HashMap::new();
 
         models.insert(
-            "recursive_model".to_string(),
+            "model_a".to_string(),
             ModelConfig {
                 description: None,
-                sql: "SELECT * FROM recursive_model WHERE id > 10".to_string(),
+                sql: "SELECT * FROM model_b".to_string(),
+            },
+        );
+
+        models.insert(
+            "model_b".to_string(),
+            ModelConfig {
+                description: None,
+                sql: "SELECT * FROM model_c".to_string(),
+            },
+        );
+
+        models.insert(
+            "model_c".to_string(),
+            ModelConfig {
+                description: None,
+                sql: "SELECT * FROM model_a".to_string(),
+            },
+        );
+
+        models.insert(
+            "self_reference_model".to_string(),
+            ModelConfig {
+                description: None,
+                sql: "SELECT * FROM self_reference_model WHERE id > 10".to_string(),
             },
         );
 
@@ -312,9 +504,174 @@ mod tests {
 
         let result = Graph::from_config(&config);
         assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.message.contains("self-reference"));
-            assert!(e.message.contains("recursive_model"));
+        if let Err(GraphError::CircularDependency { nodes }) = result {
+            assert_eq!(nodes.len(), 4);
+            assert!(nodes.contains(&"model_a".to_string()));
+            assert!(nodes.contains(&"model_b".to_string()));
+            assert!(nodes.contains(&"model_c".to_string()));
+            assert!(nodes.contains(&"self_reference_model".to_string()));
+        } else {
+            panic!("Expected CircularDependency error");
+        }
+    }
+
+    #[test]
+    fn test_non_existent_model_reference() {
+        let adapters = HashMap::new();
+        let mut models = HashMap::new();
+
+        models.insert(
+            "model_a".to_string(),
+            ModelConfig {
+                description: None,
+                sql: "SELECT * FROM non_existent_model".to_string(),
+            },
+        );
+
+        let config = Config {
+            project: ProjectConfig {
+                storage: StorageConfig::LocalFile {
+                    path: "/tmp".to_string(),
+                },
+                database: crate::config::project::DatabaseConfig {
+                    ty: crate::config::project::DatabaseType::Sqlite,
+                    path: Some("/tmp/test.db".to_string()),
+                    host: None,
+                    port: None,
+                    database: None,
+                    password: None,
+                    username: None,
+                },
+                deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
+                connections: HashMap::new(),
+                secret_key_path: None,
+            },
+            adapters,
+            models,
+            project_root: std::path::PathBuf::from("/tmp"),
+        };
+
+        let result = Graph::from_config(&config);
+        assert_eq!(
+            result,
+            Err(GraphError::NonExistentTableReference {
+                model_name: "model_a".to_string(),
+                table_name: "non_existent_model".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_non_existent_adapter_reference() {
+        let mut adapters = HashMap::new();
+        adapters.insert(
+            "existing_adapter".to_string(),
+            crate::config::adapter::AdapterConfig {
+                connection: "default".to_string(),
+                description: None,
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "/tmp/data.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        delimiter: Some(",".to_string()),
+                        null_value: None,
+                        has_header: Some(true),
+                    },
+                },
+                columns: vec![],
+            },
+        );
+
+        let mut models = HashMap::new();
+        models.insert(
+            "model_a".to_string(),
+            ModelConfig {
+                description: None,
+                sql: "SELECT * FROM non_existent_adapter".to_string(),
+            },
+        );
+
+        let config = Config {
+            project: ProjectConfig {
+                storage: StorageConfig::LocalFile {
+                    path: "/tmp".to_string(),
+                },
+                database: crate::config::project::DatabaseConfig {
+                    ty: crate::config::project::DatabaseType::Sqlite,
+                    path: Some("/tmp/test.db".to_string()),
+                    host: None,
+                    port: None,
+                    database: None,
+                    password: None,
+                    username: None,
+                },
+                deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
+                connections: HashMap::new(),
+                secret_key_path: None,
+            },
+            adapters,
+            models,
+            project_root: std::path::PathBuf::from("/tmp"),
+        };
+
+        let result = Graph::from_config(&config);
+        assert_eq!(
+            result,
+            Err(GraphError::NonExistentTableReference {
+                model_name: "model_a".to_string(),
+                table_name: "non_existent_adapter".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_sql_parse_error_handling() {
+        let adapters = HashMap::new();
+        let mut models = HashMap::new();
+
+        models.insert(
+            "invalid_model".to_string(),
+            ModelConfig {
+                description: None,
+                sql: "INVALID SQL SYNTAX HERE".to_string(),
+            },
+        );
+
+        let config = Config {
+            project: ProjectConfig {
+                storage: StorageConfig::LocalFile {
+                    path: "/tmp".to_string(),
+                },
+                database: crate::config::project::DatabaseConfig {
+                    ty: crate::config::project::DatabaseType::Sqlite,
+                    path: Some("/tmp/test.db".to_string()),
+                    host: None,
+                    port: None,
+                    database: None,
+                    password: None,
+                    username: None,
+                },
+                deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
+                connections: HashMap::new(),
+                secret_key_path: None,
+            },
+            adapters,
+            models,
+            project_root: std::path::PathBuf::from("/tmp"),
+        };
+
+        let result = Graph::from_config(&config);
+        assert!(result.is_err());
+        match result {
+            Err(GraphError::SqlParseError { model_name, error }) => {
+                assert_eq!(model_name, "invalid_model");
+                assert!(!error.is_empty());
+            }
+            _ => panic!("Expected SqlParseError"),
         }
     }
 
