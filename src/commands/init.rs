@@ -229,7 +229,6 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     fn test_project_config_validate() -> Result<()> {
         let mut config = ProjectConfig::default();

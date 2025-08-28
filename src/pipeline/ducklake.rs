@@ -2,9 +2,10 @@ use crate::config::project::{
     ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod, StorageConfig,
 };
 use anyhow::{Context, Result};
-use duckdb::Connection;
+use duckdb::DuckdbConnectionManager;
+use r2d2::Pool;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum CatalogConfig {
@@ -21,18 +22,21 @@ pub enum CatalogConfig {
 pub struct DuckLake {
     catalog_config: CatalogConfig,
     storage_config: StorageConfig,
-    connection: Arc<Mutex<Connection>>,
+    pool: Arc<Pool<DuckdbConnectionManager>>,
 }
 
 impl DuckLake {
     pub async fn new(catalog_config: CatalogConfig, storage_config: StorageConfig) -> Result<Self> {
-        let connection =
-            Connection::open_in_memory().context("Failed to create DuckDB connection")?;
+        let manager = DuckdbConnectionManager::memory()
+            .context("Failed to create DuckDB connection manager")?;
+        let pool = Pool::builder()
+            .build(manager)
+            .context("Failed to create connection pool")?;
 
         let instance = Self {
             catalog_config,
             storage_config,
-            connection: Arc::new(Mutex::new(connection)),
+            pool: Arc::new(pool),
         };
 
         instance.initialize().await?;
@@ -205,7 +209,10 @@ impl DuckLake {
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
-        let connection = self.connection.lock().unwrap();
+        let connection = self
+            .pool
+            .get()
+            .context("Failed to get connection from pool")?;
 
         connection
             .execute_batch(sql)
@@ -213,7 +220,10 @@ impl DuckLake {
     }
 
     pub fn query(&self, sql: &str) -> Result<Vec<Vec<String>>> {
-        let connection = self.connection.lock().unwrap();
+        let connection = self
+            .pool
+            .get()
+            .context("Failed to get connection from pool")?;
         let mut stmt = connection.prepare(sql)?;
         let mut rows = stmt.query([])?;
         let column_count = rows.as_ref().unwrap().column_count();
@@ -575,10 +585,12 @@ mod tests {
             path: "/tmp/test.db".to_string(),
         };
 
+        let manager = DuckdbConnectionManager::memory().unwrap();
+        let pool = Pool::builder().build(manager).unwrap();
         let ducklake = DuckLake {
             catalog_config,
             storage_config,
-            connection: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            pool: Arc::new(pool),
         };
 
         assert_eq!(ducklake.get_storage_path(), "/tmp/test_storage");
@@ -600,10 +612,12 @@ mod tests {
             path: "/tmp/test.db".to_string(),
         };
 
+        let manager = DuckdbConnectionManager::memory().unwrap();
+        let pool = Pool::builder().build(manager).unwrap();
         let ducklake = DuckLake {
             catalog_config,
             storage_config,
-            connection: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            pool: Arc::new(pool),
         };
 
         assert_eq!(ducklake.get_storage_path(), "s3://my-bucket/ducklake");
@@ -1273,5 +1287,106 @@ mod tests {
                 &format!("myminio/{unique_bucket}"),
             ])
             .output();
+    }
+
+    #[tokio::test]
+    async fn test_ducklake_execute_batch_parallel() {
+        use std::sync::Arc;
+        use std::thread;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: db_path.to_string_lossy().to_string(),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: temp_dir.path().to_string_lossy().to_string(),
+        };
+
+        let ducklake = Arc::new(
+            DuckLake::new(catalog_config, storage_config)
+                .await
+                .expect("Failed to create DuckLake"),
+        );
+
+        let mut handles = vec![];
+
+        for i in 0..5 {
+            let ducklake_clone = ducklake.clone();
+            let handle = thread::spawn(move || {
+                let table_name = format!("parallel_test_{i}");
+                let sql = format!("CREATE TABLE {table_name} (id INT, value VARCHAR);");
+                ducklake_clone
+                    .execute_batch(&sql)
+                    .unwrap_or_else(|_| panic!("Failed to create table {table_name}"));
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().expect("Thread failed");
+        }
+
+        let result = ducklake.query(
+            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'parallel_test_%' ORDER BY table_name"
+        ).expect("Failed to query created tables");
+
+        assert_eq!(result.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_ducklake_query_parallel() {
+        use std::sync::Arc;
+        use std::thread;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test_query.db");
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: db_path.to_string_lossy().to_string(),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: temp_dir.path().to_string_lossy().to_string(),
+        };
+
+        let ducklake = Arc::new(
+            DuckLake::new(catalog_config, storage_config)
+                .await
+                .expect("Failed to create DuckLake"),
+        );
+
+        ducklake
+            .execute_batch("CREATE TABLE test_data (id INT, value INT);")
+            .expect("Failed to create test table");
+
+        ducklake
+            .execute_batch(
+                "INSERT INTO test_data VALUES (1, 100), (2, 200), (3, 300), (4, 400), (5, 500);",
+            )
+            .expect("Failed to insert test data");
+
+        let mut handles = vec![];
+
+        for i in 1..=5 {
+            let ducklake_clone = ducklake.clone();
+            let handle = thread::spawn(move || {
+                let sql = format!("SELECT value FROM db.test_data WHERE id = {i}");
+                let result = ducklake_clone
+                    .query(&sql)
+                    .unwrap_or_else(|_| panic!("Failed to query id {i}"));
+                assert_eq!(result.len(), 1);
+                assert_eq!(result[0].len(), 1);
+                let expected_value = (i * 100).to_string();
+                assert_eq!(result[0][0], expected_value);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().expect("Thread failed");
+        }
     }
 }
