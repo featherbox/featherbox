@@ -415,7 +415,7 @@ mod tests {
                 type: s3
                 bucket: test-bucket
                 region: us-west-2
-                auth_method: Explicit
+                auth_method: explicit
                 access_key_id: ${{TEST_DUCKLAKE_S3_ACCESS_KEY}}
                 secret_access_key: ${{TEST_DUCKLAKE_S3_SECRET_KEY}}
                 path_style_access: false"#,

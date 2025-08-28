@@ -1,3 +1,4 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -8,6 +9,85 @@ pub struct ProjectConfig {
     pub deployments: DeploymentsConfig,
     pub connections: HashMap<String, ConnectionConfig>,
     pub secret_key_path: Option<String>,
+}
+
+impl ProjectConfig {
+    pub fn new(secret_key_path: Option<&str>) -> Self {
+        let mut config = Self::default();
+        if let Some(path) = secret_key_path {
+            config.secret_key_path = Some(path.to_string());
+        }
+        config
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if let StorageConfig::LocalFile { path } = &self.storage {
+            if path.is_empty() {
+                return Err(anyhow::anyhow!("Storage path cannot be empty"));
+            }
+        }
+
+        if let StorageConfig::S3(s3_config) = &self.storage {
+            if s3_config.bucket.is_empty() {
+                return Err(anyhow::anyhow!("S3 bucket name cannot be empty"));
+            }
+            if s3_config.region.is_empty() {
+                return Err(anyhow::anyhow!("S3 region cannot be empty"));
+            }
+        }
+
+        match self.database.ty {
+            DatabaseType::Sqlite => {
+                if self.database.path.as_ref().is_none_or(|p| p.is_empty()) {
+                    return Err(anyhow::anyhow!("SQLite database path cannot be empty"));
+                }
+            }
+            DatabaseType::Mysql | DatabaseType::Postgresql => {
+                if self.database.host.as_ref().is_none_or(|h| h.is_empty()) {
+                    return Err(anyhow::anyhow!("Database host cannot be empty"));
+                }
+                if self.database.database.as_ref().is_none_or(|d| d.is_empty()) {
+                    return Err(anyhow::anyhow!("Database name cannot be empty"));
+                }
+            }
+        }
+
+        if self.deployments.timeout == 0 {
+            return Err(anyhow::anyhow!("Deployment timeout must be greater than 0"));
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for ProjectConfig {
+    fn default() -> Self {
+        let home_dir = dirs::home_dir().expect("Unable to determine home directory");
+        let default_secret_path = home_dir
+            .join(".config")
+            .join("featherbox")
+            .join("secret.key")
+            .to_string_lossy()
+            .to_string();
+
+        Self {
+            storage: StorageConfig::LocalFile {
+                path: "./storage".to_string(),
+            },
+            database: DatabaseConfig {
+                ty: DatabaseType::Sqlite,
+                path: Some("./database.db".to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+            },
+            deployments: DeploymentsConfig { timeout: 600 },
+            connections: HashMap::new(),
+            secret_key_path: Some(default_secret_path),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,11 +115,17 @@ pub struct S3Config {
 pub struct DatabaseConfig {
     #[serde(rename = "type")]
     pub ty: DatabaseType,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
 }
 
@@ -50,8 +136,10 @@ pub struct DeploymentsConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum S3AuthMethod {
+    #[serde(rename = "credential_chain")]
     CredentialChain,
     #[default]
+    #[serde(rename = "explicit")]
     Explicit,
 }
 
@@ -84,9 +172,21 @@ pub enum ConnectionConfig {
     #[serde(rename = "sqlite")]
     Sqlite { path: String },
     #[serde(rename = "mysql")]
-    MySql { config: RemoteDatabaseConfig },
+    MySql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
     #[serde(rename = "postgresql")]
-    PostgreSql { config: RemoteDatabaseConfig },
+    PostgreSql {
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
 }
 
 impl ConnectionConfig {

@@ -7,9 +7,7 @@ use sea_orm::{Database, DbErr};
 use std::path::Path;
 
 use crate::commands::workspace::find_project_root;
-use crate::config::project::{
-    ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod, S3Config,
-};
+use crate::config::project::{ConnectionConfig, S3AuthMethod, S3Config};
 
 #[derive(Debug, Clone)]
 enum ConnectionType {
@@ -120,13 +118,11 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
             let username = Text::new("Username:").prompt()?;
             let password = Text::new("Password:").prompt()?;
             ConnectionConfig::MySql {
-                config: RemoteDatabaseConfig {
-                    host,
-                    port: port.parse()?,
-                    database,
-                    username,
-                    password,
-                },
+                host,
+                port: port.parse()?,
+                database,
+                username,
+                password,
             }
         }
         ConnectionType::PostgreSql => {
@@ -136,13 +132,11 @@ pub async fn execute_connection(current_dir: &Path) -> Result<()> {
             let username = Text::new("Username:").prompt()?;
             let password = Text::new("Password:").prompt()?;
             ConnectionConfig::PostgreSql {
-                config: RemoteDatabaseConfig {
-                    host,
-                    port: port.parse()?,
-                    database,
-                    username,
-                    password,
-                },
+                host,
+                port: port.parse()?,
+                database,
+                username,
+                password,
             }
         }
     };
@@ -195,37 +189,50 @@ async fn test_connection(config: &ConnectionConfig) -> Result<String> {
             )
             .await
         }
-        ConnectionConfig::MySql { config } => {
-            test_database_connection(&DatabaseType::Mysql, config).await
-        }
-        ConnectionConfig::PostgreSql { config } => {
-            test_database_connection(&DatabaseType::Postgresql, config).await
-        }
+        ConnectionConfig::MySql {
+            host,
+            port,
+            database,
+            username,
+            password,
+        } => test_mysql_connection(host, *port, database, username, password).await,
+        ConnectionConfig::PostgreSql {
+            host,
+            port,
+            database,
+            username,
+            password,
+        } => test_postgresql_connection(host, *port, database, username, password).await,
     }
 }
 
-async fn test_database_connection(
-    db_type: &DatabaseType,
-    config: &RemoteDatabaseConfig,
+async fn test_mysql_connection(
+    host: &str,
+    port: u16,
+    database: &str,
+    username: &str,
+    password: &str,
 ) -> Result<String> {
-    let database_url = match db_type {
-        DatabaseType::Mysql => {
-            format!(
-                "mysql://{}:{}@{}:{}/{}",
-                config.username, config.password, config.host, config.port, config.database
-            )
-        }
-        DatabaseType::Postgresql => {
-            format!(
-                "postgres://{}:{}@{}:{}/{}",
-                config.username, config.password, config.host, config.port, config.database
-            )
-        }
-        _ => return Err(anyhow::anyhow!("Unsupported database type")),
-    };
+    let database_url = format!("mysql://{username}:{password}@{host}:{port}/{database}");
 
     match Database::connect(&database_url).await {
-        Ok(_) => Ok(format!("{db_type:?} connection successful")),
+        Ok(_) => Ok("MySQL connection successful".to_string()),
+        Err(DbErr::Conn(err)) => Err(anyhow::anyhow!("Connection failed: {}", err)),
+        Err(err) => Err(anyhow::anyhow!("Database error: {}", err)),
+    }
+}
+
+async fn test_postgresql_connection(
+    host: &str,
+    port: u16,
+    database: &str,
+    username: &str,
+    password: &str,
+) -> Result<String> {
+    let database_url = format!("postgres://{username}:{password}@{host}:{port}/{database}");
+
+    match Database::connect(&database_url).await {
+        Ok(_) => Ok("PostgreSQL connection successful".to_string()),
         Err(DbErr::Conn(err)) => Err(anyhow::anyhow!("Connection failed: {}", err)),
         Err(err) => Err(anyhow::anyhow!("Database error: {}", err)),
     }

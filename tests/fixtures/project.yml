@@ -18,6 +18,9 @@ connections:
     bucket: featherbox-test-bucket
     region: us-east-1
     auth_method: credential_chain
+    access_key_id: ""
+    secret_access_key: ""
+    path_style_access: false
   mysql_datasource:
     type: mysql
     host: localhost

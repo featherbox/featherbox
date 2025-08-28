@@ -184,7 +184,8 @@ fn create_project_config_with_storage(
   endpoint_url: http://localhost:9010
   auth_method: explicit
   access_key_id: user
-  secret_access_key: password"#
+  secret_access_key: password
+  path_style_access: true"#
         ),
         _ => panic!("Unsupported storage type: {storage_type}"),
     };
@@ -199,6 +200,7 @@ fn create_project_config_with_storage(
     type: s3
     endpoint_url: http://localhost:9010
     region: us-east-1
+    auth_method: explicit
     access_key_id: user
     secret_access_key: password
     bucket: {minio_bucket_name}
@@ -238,6 +240,7 @@ connections:
     type: s3
     endpoint_url: http://localhost:9010
     region: us-east-1
+    auth_method: explicit
     access_key_id: user
     secret_access_key: password
     bucket: {}

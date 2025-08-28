@@ -10,7 +10,6 @@ pub mod workspace;
 
 pub const ADAPTER_TEMPLATE: &str = include_str!("commands/templates/adapter.yml");
 pub const MODEL_TEMPLATE: &str = include_str!("commands/templates/model.yml");
-pub const PROJECT_TEMPLATE: &str = include_str!("commands/templates/project.yml");
 
 pub fn render_adapter_template(name: &str) -> String {
     ADAPTER_TEMPLATE.replace("{name}", name)
@@ -18,10 +17,6 @@ pub fn render_adapter_template(name: &str) -> String {
 
 pub fn render_model_template(name: &str) -> String {
     MODEL_TEMPLATE.replace("{name}", name)
-}
-
-pub fn render_project_template(secret_key_path: &str) -> String {
-    PROJECT_TEMPLATE.replace("{secret_key_path}", secret_key_path)
 }
 
 pub fn validate_name(name: &str) -> anyhow::Result<()> {
@@ -114,25 +109,5 @@ mod tests {
     fn test_render_model_template_with_special_characters() {
         let result = render_model_template("user-profile_v2");
         assert!(result.contains("Generated model for user-profile_v2"));
-    }
-
-    #[test]
-    fn test_render_project_template() {
-        let result = render_project_template("/path/to/secret.key");
-        assert!(result.contains("secret_key_path: /path/to/secret.key"));
-        assert!(result.contains("storage:"));
-        assert!(result.contains("database:"));
-        assert!(result.contains("deployments:"));
-        assert!(result.contains("connections: {}"));
-        assert!(!result.contains("name:"));
-        assert!(!result.contains("{secret_key_path}"));
-    }
-
-    #[test]
-    fn test_render_project_template_with_empty_values() {
-        let result = render_project_template("");
-        assert!(result.contains("secret_key_path: "));
-        assert!(!result.contains("name:"));
-        assert!(!result.contains("{secret_key_path}"));
     }
 }

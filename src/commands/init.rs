@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
-use super::render_project_template;
+use crate::config::ProjectConfig;
 use age::secrecy::ExposeSecret;
 use inquire::Text;
 
@@ -20,55 +20,42 @@ pub fn create_new_project(
         ));
     }
 
-    fs::create_dir_all(&project_path)
-        .with_context(|| format!("Failed to create project directory '{project_name}'"))?;
+    let config = ProjectConfig::new(secret_key_path);
 
-    create_project_structure(&project_path)?;
-    create_project_yml(&project_path, project_name, secret_key_path)?;
-    ensure_secret_key(&project_path, secret_key_path)?;
+    config.validate()?;
+
+    create_project_directory(current_dir, project_name)?;
+    ensure_secret_key(secret_key_path)?;
+    save_project_config(&config, &project_path)?;
 
     println!("✓ Project '{project_name}' initialized successfully");
     Ok(())
 }
 
-fn create_project_structure(project_path: &Path) -> Result<()> {
+fn create_project_directory(current_dir: &Path, project_name: &str) -> Result<()> {
+    let project_path = current_dir.join(project_name);
+
+    fs::create_dir_all(&project_path)
+        .with_context(|| format!("Failed to create project directory '{project_name}'"))?;
+
     fs::create_dir_all(project_path.join("adapters"))
         .context("Failed to create adapters directory")?;
     fs::create_dir_all(project_path.join("models")).context("Failed to create models directory")?;
+
     Ok(())
 }
 
-fn create_project_yml(
-    project_path: &Path,
-    project_name: &str,
-    secret_key_path: Option<&str>,
-) -> Result<()> {
-    let key_path = match secret_key_path {
-        Some(path) => path.to_string(),
-        None => {
-            let home_dir = dirs::home_dir().context("Unable to find home directory")?;
-            let config_dir = home_dir.join(".config").join("featherbox");
-            let secret_key_path = config_dir.join("secret.key");
-            secret_key_path.to_string_lossy().to_string()
-        }
-    };
+fn save_project_config(config: &ProjectConfig, project_path: &Path) -> Result<()> {
+    let yaml_content =
+        serde_yml::to_string(config).context("Failed to serialize project config to YAML")?;
 
-    create_project_yml_with_secret_path(project_path, project_name, &key_path)
-}
+    fs::write(project_path.join("project.yml"), yaml_content)
+        .context("Failed to write project.yml")?;
 
-fn create_project_yml_with_secret_path(
-    project_path: &Path,
-    _project_name: &str,
-    secret_key_path: &str,
-) -> Result<()> {
-    let project_yml_content = render_project_template(secret_key_path);
-
-    fs::write(project_path.join("project.yml"), project_yml_content)
-        .context("Failed to create project.yml")?;
     Ok(())
 }
 
-fn ensure_secret_key(_project_path: &Path, secret_key_path: Option<&str>) -> Result<()> {
+fn ensure_secret_key(secret_key_path: Option<&str>) -> Result<()> {
     let (key_path, key_dir) = match secret_key_path {
         Some(path) => {
             let key_path = std::path::PathBuf::from(path);
@@ -162,10 +149,11 @@ pub async fn execute_init_interactive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::project::StorageConfig;
     use tempfile;
 
     #[test]
-    fn test_execute_init_success() -> Result<()> {
+    fn test_create_new_project() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let project_name = "test_project";
 
@@ -189,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_init_already_exists() -> Result<()> {
+    fn test_create_new_project_already_exists() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let project_name = "existing_project";
 
@@ -204,54 +192,21 @@ mod tests {
     }
 
     #[test]
-    fn test_create_project_structure() -> Result<()> {
+    fn test_create_project_directory() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
+        let project_name = "test_project";
 
-        create_project_structure(temp_dir.path())?;
-
-        assert!(temp_dir.path().join("adapters").is_dir());
-        assert!(temp_dir.path().join("models").is_dir());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_create_project_yml() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let project_name = "test_yml_project";
-        let test_secret_path = temp_dir
-            .path()
-            .join("test_secret.key")
-            .to_string_lossy()
-            .to_string();
-
-        create_project_yml_with_secret_path(temp_dir.path(), project_name, &test_secret_path)?;
-
-        let content = fs::read_to_string(temp_dir.path().join("project.yml"))?;
-        assert!(content.contains("storage:"));
-        assert!(content.contains("type: local"));
-        assert!(content.contains("type: sqlite"));
-        assert!(content.contains("secret_key_path:"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_project_name_in_yaml() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let project_name = "my_awesome_project";
-
-        let result = create_new_project(project_name, temp_dir.path(), None);
-        assert!(result.is_ok());
+        create_project_directory(temp_dir.path(), project_name)?;
 
         let project_path = temp_dir.path().join(project_name);
-        let _content = fs::read_to_string(project_path.join("project.yml"))?;
+        assert!(project_path.join("adapters").is_dir());
+        assert!(project_path.join("models").is_dir());
 
         Ok(())
     }
 
     #[test]
-    fn test_execute_init_with_custom_secret_key_path() -> Result<()> {
+    fn test_create_secret_key() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let project_name = "test_project_custom_secret";
         let custom_secret_path = temp_dir
@@ -270,6 +225,40 @@ mod tests {
         assert!(content.contains(&format!("secret_key_path: {custom_secret_path}")));
 
         assert!(temp_dir.path().join("custom_secret.key").exists());
+
+        Ok(())
+    }
+
+
+    #[test]
+    fn test_project_config_validate() -> Result<()> {
+        let mut config = ProjectConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.storage = StorageConfig::LocalFile {
+            path: "".to_string(),
+        };
+        assert!(config.validate().is_err());
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Storage path cannot be empty")
+        );
+
+        config.storage = StorageConfig::LocalFile {
+            path: "./storage".to_string(),
+        };
+        config.deployments.timeout = 0;
+        assert!(config.validate().is_err());
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Deployment timeout must be greater than 0")
+        );
 
         Ok(())
     }

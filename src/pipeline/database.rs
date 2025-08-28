@@ -1,4 +1,4 @@
-use crate::config::project::{ConnectionConfig, DatabaseType, RemoteDatabaseConfig};
+use crate::config::project::{ConnectionConfig, DatabaseType};
 use anyhow::Result;
 
 #[derive(Debug, Clone)]
@@ -8,7 +8,11 @@ pub enum DatabaseSystem {
     },
     RemoteDatabase {
         db_type: DatabaseType,
-        config: RemoteDatabaseConfig,
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
     },
 }
 
@@ -16,13 +20,33 @@ impl DatabaseSystem {
     pub fn from_connection(connection: &ConnectionConfig) -> Result<Self> {
         match connection {
             ConnectionConfig::Sqlite { path } => Ok(Self::Sqlite { path: path.clone() }),
-            ConnectionConfig::MySql { config } => Ok(Self::RemoteDatabase {
+            ConnectionConfig::MySql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => Ok(Self::RemoteDatabase {
                 db_type: DatabaseType::Mysql,
-                config: config.clone(),
+                host: host.clone(),
+                port: *port,
+                database: database.clone(),
+                username: username.clone(),
+                password: password.clone(),
             }),
-            ConnectionConfig::PostgreSql { config } => Ok(Self::RemoteDatabase {
+            ConnectionConfig::PostgreSql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => Ok(Self::RemoteDatabase {
                 db_type: DatabaseType::Postgresql,
-                config: config.clone(),
+                host: host.clone(),
+                port: *port,
+                database: database.clone(),
+                username: username.clone(),
+                password: password.clone(),
             }),
             _ => Err(anyhow::anyhow!(
                 "Unsupported connection type for database system"
@@ -60,7 +84,14 @@ impl DatabaseSystem {
                 let query = format!("ATTACH '{path}' AS {alias} (TYPE sqlite);");
                 Ok(query)
             }
-            Self::RemoteDatabase { db_type, config } => {
+            Self::RemoteDatabase {
+                db_type,
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
                 let (extension_name, db_type_str) = match db_type {
                     DatabaseType::Mysql => ("mysql", "mysql"),
                     DatabaseType::Postgresql => ("postgres", "postgres"),
@@ -70,12 +101,10 @@ impl DatabaseSystem {
                 };
                 let connection_string = match db_type {
                     DatabaseType::Mysql => format!(
-                        "host={} port={} database={} user={} password={}",
-                        config.host, config.port, config.database, config.username, config.password
+                        "host={host} port={port} database={database} user={username} password={password}"
                     ),
                     DatabaseType::Postgresql => format!(
-                        "host={} port={} dbname={} user={} password={}",
-                        config.host, config.port, config.database, config.username, config.password
+                        "host={host} port={port} dbname={database} user={username} password={password}"
                     ),
                     DatabaseType::Sqlite => unreachable!(),
                 };
@@ -119,7 +148,14 @@ impl DatabaseSystem {
                 let query = format!("ATTACH '{path}' AS {alias} (TYPE sqlite);");
                 Ok(query)
             }
-            Self::RemoteDatabase { db_type, config } => {
+            Self::RemoteDatabase {
+                db_type,
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
                 let db_type_str = match db_type {
                     DatabaseType::Mysql => "mysql",
                     DatabaseType::Postgresql => "postgres",
@@ -129,12 +165,10 @@ impl DatabaseSystem {
                 };
                 let connection_string = match db_type {
                     DatabaseType::Mysql => format!(
-                        "host={} port={} database={} user={} password={}",
-                        config.host, config.port, config.database, config.username, config.password
+                        "host={host} port={port} database={database} user={username} password={password}"
                     ),
                     DatabaseType::Postgresql => format!(
-                        "host={} port={} dbname={} user={} password={}",
-                        config.host, config.port, config.database, config.username, config.password
+                        "host={host} port={port} dbname={database} user={username} password={password}"
                     ),
                     DatabaseType::Sqlite => unreachable!(),
                 };
@@ -200,25 +234,30 @@ mod tests {
     #[test]
     fn test_mysql_system_creation() {
         let connection = ConnectionConfig::MySql {
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 3307,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let db_system = DatabaseSystem::from_connection(&connection).unwrap();
 
         match db_system {
-            DatabaseSystem::RemoteDatabase { db_type, config } => {
+            DatabaseSystem::RemoteDatabase {
+                db_type,
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
                 assert_eq!(db_type, DatabaseType::Mysql);
-                assert_eq!(config.host, "localhost");
-                assert_eq!(config.port, 3307);
-                assert_eq!(config.database, "datasource_test");
-                assert_eq!(config.username, "datasource");
-                assert_eq!(config.password, "datasourcepass");
+                assert_eq!(host, "localhost");
+                assert_eq!(port, 3307);
+                assert_eq!(database, "datasource_test");
+                assert_eq!(username, "datasource");
+                assert_eq!(password, "datasourcepass");
             }
             _ => panic!("Expected MySQL system"),
         }
@@ -248,13 +287,11 @@ mod tests {
     fn test_mysql_attach_detach_queries() {
         let db_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Mysql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 3307,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let alias = "mysql_db";
@@ -283,13 +320,11 @@ mod tests {
     fn test_mysql_read_query() {
         let db_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Mysql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 3307,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let alias = "mysql_db";
@@ -315,13 +350,11 @@ mod tests {
     fn test_mysql_validate_table_exists() {
         let db_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Mysql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 3307,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let alias = "mysql_db";
@@ -335,25 +368,30 @@ mod tests {
     #[test]
     fn test_postgres_system_creation() {
         let connection = ConnectionConfig::PostgreSql {
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 5433,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let db_system = DatabaseSystem::from_connection(&connection).unwrap();
 
         match db_system {
-            DatabaseSystem::RemoteDatabase { db_type, config } => {
+            DatabaseSystem::RemoteDatabase {
+                db_type,
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => {
                 assert_eq!(db_type, DatabaseType::Postgresql);
-                assert_eq!(config.host, "localhost");
-                assert_eq!(config.port, 5433);
-                assert_eq!(config.database, "datasource_test");
-                assert_eq!(config.username, "datasource");
-                assert_eq!(config.password, "datasourcepass");
+                assert_eq!(host, "localhost");
+                assert_eq!(port, 5433);
+                assert_eq!(database, "datasource_test");
+                assert_eq!(username, "datasource");
+                assert_eq!(password, "datasourcepass");
             }
             _ => panic!("Expected PostgreSQL system"),
         }
@@ -363,13 +401,11 @@ mod tests {
     fn test_postgres_attach_detach_queries() {
         let db_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Postgresql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 5433,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let alias = "postgres_db";
@@ -387,13 +423,11 @@ mod tests {
     fn test_postgres_read_query() {
         let db_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Postgresql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 5433,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let alias = "postgres_db";
@@ -405,13 +439,11 @@ mod tests {
     fn test_postgres_validate_table_exists() {
         let db_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Postgresql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 5433,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let alias = "postgres_db";
@@ -434,13 +466,11 @@ mod tests {
 
         let mysql_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Mysql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 3307,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 3307,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let mysql_alias = mysql_system.generate_alias();
@@ -449,13 +479,11 @@ mod tests {
 
         let postgres_system = DatabaseSystem::RemoteDatabase {
             db_type: DatabaseType::Postgresql,
-            config: RemoteDatabaseConfig {
-                host: "localhost".to_string(),
-                port: 5433,
-                database: "datasource_test".to_string(),
-                username: "datasource".to_string(),
-                password: "datasourcepass".to_string(),
-            },
+            host: "localhost".to_string(),
+            port: 5433,
+            database: "datasource_test".to_string(),
+            username: "datasource".to_string(),
+            password: "datasourcepass".to_string(),
         };
 
         let postgres_alias = postgres_system.generate_alias();

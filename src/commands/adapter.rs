@@ -563,17 +563,11 @@ async fn test_connection_simple(connection_config: &ConnectionConfig) -> Result<
         ConnectionConfig::S3(s3_config) => {
             println!("✓ S3 bucket configuration: {}", s3_config.bucket);
         }
-        ConnectionConfig::MySql { config } => {
-            println!(
-                "✓ MySQL connection configured at {}:{}",
-                config.host, config.port
-            );
+        ConnectionConfig::MySql { host, port, .. } => {
+            println!("✓ MySQL connection configured at {host}:{port}");
         }
-        ConnectionConfig::PostgreSql { config } => {
-            println!(
-                "✓ PostgreSQL connection configured at {}:{}",
-                config.host, config.port
-            );
+        ConnectionConfig::PostgreSql { host, port, .. } => {
+            println!("✓ PostgreSQL connection configured at {host}:{port}");
         }
     }
     Ok(())
