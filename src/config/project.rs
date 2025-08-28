@@ -3,7 +3,6 @@ use std::env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
-    pub name: Option<String>,
     pub storage: StorageConfig,
     pub database: DatabaseConfig,
     pub deployments: DeploymentsConfig,
@@ -175,7 +174,6 @@ fn parse_remote_database_config(
 }
 
 pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
-    let name = yaml["name"].as_str().map(|s| s.to_string());
     let storage = parse_storage(&yaml["storage"]);
     let database = parse_database(&yaml["database"]);
     let deployments = parse_deployments(&yaml["deployments"]);
@@ -183,7 +181,6 @@ pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
     let secret_key_path = yaml["secret_key_path"].as_str().map(|s| s.to_string());
 
     ProjectConfig {
-        name,
         storage,
         database,
         deployments,
@@ -192,20 +189,7 @@ pub fn parse_project_config(yaml: &yaml_rust2::Yaml) -> ProjectConfig {
     }
 }
 
-fn parse_s3_config(
-    config: &yaml_rust2::Yaml,
-) -> Result<
-    (
-        String,
-        String,
-        Option<String>,
-        S3AuthMethod,
-        String,
-        String,
-        Option<String>,
-    ),
-    String,
-> {
+fn parse_s3_config(config: &yaml_rust2::Yaml) -> Result<S3Config, String> {
     let bucket = config["bucket"]
         .as_str()
         .ok_or("S3 bucket is required")?
@@ -249,7 +233,7 @@ fn parse_s3_config(
 
     validate_s3_config(&bucket, &auth_method, &access_key_id, &secret_access_key)?;
 
-    Ok((
+    Ok(S3Config {
         bucket,
         region,
         endpoint_url,
@@ -257,7 +241,8 @@ fn parse_s3_config(
         access_key_id,
         secret_access_key,
         session_token,
-    ))
+        path_style_access: false,
+    })
 }
 
 fn validate_s3_config(
@@ -318,26 +303,9 @@ fn parse_storage(storage: &yaml_rust2::Yaml) -> StorageConfig {
                 .to_string(),
         },
         "s3" => {
-            let (
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-            ) = parse_s3_config(storage).expect("Failed to parse S3 storage configuration");
-
-            StorageConfig::S3(S3Config {
-                bucket,
-                region,
-                endpoint_url,
-                auth_method,
-                access_key_id,
-                secret_access_key,
-                session_token,
-                path_style_access: false,
-            })
+            let s3_config =
+                parse_s3_config(storage).expect("Failed to parse S3 storage configuration");
+            StorageConfig::S3(s3_config)
         }
         _ => panic!("Unsupported storage type: {ty}"),
     }
@@ -367,8 +335,8 @@ fn parse_database(database: &yaml_rust2::Yaml) -> DatabaseConfig {
                 host: None,
                 port: None,
                 database: None,
-                username: None,
                 password: None,
+                username: None,
             }
         }
         DatabaseType::Mysql => {
@@ -469,28 +437,10 @@ fn parse_connections(connections: &yaml_rust2::Yaml) -> HashMap<String, Connecti
                 }
             }
             "s3" => {
-                let (
-                    bucket,
-                    region,
-                    endpoint_url,
-                    auth_method,
-                    access_key_id,
-                    secret_access_key,
-                    session_token,
-                ) = parse_s3_config(value).expect("Failed to parse S3 connection configuration");
-
-                let path_style_access = value["path_style_access"].as_bool().unwrap_or(false);
-
-                ConnectionConfig::S3(S3Config {
-                    bucket,
-                    region,
-                    endpoint_url,
-                    auth_method,
-                    access_key_id,
-                    secret_access_key,
-                    session_token,
-                    path_style_access,
-                })
+                let mut s3_config =
+                    parse_s3_config(value).expect("Failed to parse S3 connection configuration");
+                s3_config.path_style_access = value["path_style_access"].as_bool().unwrap_or(false);
+                ConnectionConfig::S3(s3_config)
             }
             _ => panic!("Unsupported connection type"),
         };
@@ -1475,7 +1425,6 @@ mod tests {
 
         let config = parse_project_config(yaml);
 
-        assert_eq!(config.name, Some("test_project".to_string()));
         assert_eq!(
             config.storage,
             StorageConfig::LocalFile {
@@ -1522,7 +1471,6 @@ mod tests {
 
         let config = parse_project_config(yaml);
 
-        assert_eq!(config.name, Some("project_with_secret".to_string()));
         assert_eq!(
             config.secret_key_path,
             Some("/custom/path/secret.key".to_string())
@@ -1600,7 +1548,6 @@ mod tests {
 
         let config = parse_project_config(yaml);
 
-        assert_eq!(config.name, None);
         assert_eq!(
             config.storage,
             StorageConfig::LocalFile {

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use super::render_project_template;
 use age::secrecy::ExposeSecret;
+use inquire::Text;
 
 pub fn create_new_project(
     project_name: &str,
@@ -26,11 +27,7 @@ pub fn create_new_project(
     create_project_yml(&project_path, project_name, secret_key_path)?;
     ensure_secret_key(&project_path, secret_key_path)?;
 
-    println!(
-        "FeatherBox project '{}' initialized successfully at {}",
-        project_name,
-        project_path.display()
-    );
+    println!("✓ Project '{project_name}' initialized successfully");
     Ok(())
 }
 
@@ -61,10 +58,10 @@ fn create_project_yml(
 
 fn create_project_yml_with_secret_path(
     project_path: &Path,
-    project_name: &str,
+    _project_name: &str,
     secret_key_path: &str,
 ) -> Result<()> {
-    let project_yml_content = render_project_template(project_name, secret_key_path);
+    let project_yml_content = render_project_template(secret_key_path);
 
     fs::write(project_path.join("project.yml"), project_yml_content)
         .context("Failed to create project.yml")?;
@@ -94,7 +91,6 @@ fn ensure_secret_key(_project_path: &Path, secret_key_path: Option<&str>) -> Res
 
     if !key_path.exists() {
         generate_secret_key(&key_path)?;
-        println!("✓ Secret key generated at {}", key_path.display());
     }
     Ok(())
 }
@@ -121,6 +117,48 @@ fn generate_secret_key(key_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+fn get_default_secret_key_path() -> Result<String> {
+    let home_dir = dirs::home_dir().context("Unable to find home directory")?;
+    let config_dir = home_dir.join(".config").join("featherbox");
+    let secret_key_path = config_dir.join("secret.key");
+    Ok(secret_key_path.to_string_lossy().to_string())
+}
+
+pub async fn execute_init_interactive(
+    current_dir: &Path,
+    default_project_name: Option<&str>,
+    default_secret_key_path: Option<&str>,
+) -> Result<()> {
+    let mut project_name_prompt = Text::new("Project name:");
+    if let Some(default_name) = default_project_name {
+        project_name_prompt = project_name_prompt.with_default(default_name);
+    }
+
+    let project_name = project_name_prompt.prompt()?;
+
+    if project_name.trim().is_empty() {
+        println!("Project initialization cancelled.");
+        return Ok(());
+    }
+
+    let default_key_path = match default_secret_key_path {
+        Some(path) => path.to_string(),
+        None => get_default_secret_key_path()?,
+    };
+
+    let secret_key_path_input = Text::new("Secret key path:")
+        .with_initial_value(&default_key_path)
+        .prompt()?;
+
+    let secret_key_path = if secret_key_path_input.trim().is_empty() {
+        None
+    } else {
+        Some(secret_key_path_input)
+    };
+
+    create_new_project(&project_name, current_dir, secret_key_path.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,7 +179,6 @@ mod tests {
         assert!(project_path.join("models").is_dir());
 
         let content = fs::read_to_string(project_path.join("project.yml"))?;
-        assert!(content.contains(&format!("name: {project_name}")));
         assert!(content.contains("storage:"));
         assert!(content.contains("database:"));
         assert!(content.contains("deployments:"));
@@ -191,7 +228,6 @@ mod tests {
         create_project_yml_with_secret_path(temp_dir.path(), project_name, &test_secret_path)?;
 
         let content = fs::read_to_string(temp_dir.path().join("project.yml"))?;
-        assert!(content.contains(&format!("name: {project_name}")));
         assert!(content.contains("storage:"));
         assert!(content.contains("type: local"));
         assert!(content.contains("type: sqlite"));
@@ -209,9 +245,7 @@ mod tests {
         assert!(result.is_ok());
 
         let project_path = temp_dir.path().join(project_name);
-        let content = fs::read_to_string(project_path.join("project.yml"))?;
-
-        assert!(content.starts_with(&format!("name: {project_name}")));
+        let _content = fs::read_to_string(project_path.join("project.yml"))?;
 
         Ok(())
     }
@@ -233,7 +267,6 @@ mod tests {
         assert!(project_path.join("project.yml").exists());
 
         let content = fs::read_to_string(project_path.join("project.yml"))?;
-        assert!(content.contains(&format!("name: {project_name}")));
         assert!(content.contains(&format!("secret_key_path: {custom_secret_path}")));
 
         assert!(temp_dir.path().join("custom_secret.key").exists());

@@ -809,16 +809,14 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
     );
 
     if let Ok(entries) = fs::read_dir(project_dir.join("test_data")) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "db")
-                    && path
-                        .file_name()
-                        .is_some_and(|name| name.to_string_lossy().starts_with("source_"))
-                {
-                    let _ = fs::remove_file(&path);
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "db")
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("source_"))
+            {
+                let _ = fs::remove_file(&path);
             }
         }
     }

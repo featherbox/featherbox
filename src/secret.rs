@@ -266,7 +266,6 @@ mod tests {
         secret_key_path: Option<String>,
     ) -> crate::config::project::ProjectConfig {
         crate::config::project::ProjectConfig {
-            name: None,
             storage: StorageConfig::LocalFile {
                 path: "./storage".to_string(),
             },
@@ -277,8 +276,8 @@ mod tests {
                 host: None,
                 port: None,
                 database: None,
-                username: None,
                 password: None,
+                username: None,
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),

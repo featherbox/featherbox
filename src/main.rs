@@ -19,7 +19,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Init {
-        project_name: String,
+        project_name: Option<String>,
         #[arg(long, help = "Path to secret key file")]
         secret_key_path: Option<String>,
     },
@@ -86,11 +86,19 @@ async fn main() -> Result<()> {
         Commands::Init {
             project_name,
             secret_key_path,
-        } => commands::init::create_new_project(
-            project_name,
-            &current_dir,
-            secret_key_path.as_deref(),
-        ),
+        } => match project_name {
+            Some(name) => {
+                commands::init::create_new_project(name, &current_dir, secret_key_path.as_deref())
+            }
+            None => {
+                commands::init::execute_init_interactive(
+                    &current_dir,
+                    None,
+                    secret_key_path.as_deref(),
+                )
+                .await
+            }
+        },
         Commands::Adapter { action } => match action {
             AdapterAction::New => {
                 commands::adapter::execute_adapter_interactive(&current_dir).await

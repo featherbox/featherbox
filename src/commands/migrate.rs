@@ -67,7 +67,6 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = crate::config::project::ProjectConfig {
-            name: None,
             storage: StorageConfig::LocalFile {
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
@@ -77,8 +76,8 @@ mod tests {
                 host: None,
                 port: None,
                 database: None,
-                username: None,
                 password: None,
+                username: None,
             },
             deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),

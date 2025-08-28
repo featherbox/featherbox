@@ -121,7 +121,6 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = ProjectConfig {
-            name: None,
             storage: StorageConfig::LocalFile {
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
@@ -131,8 +130,8 @@ mod tests {
                 host: None,
                 port: None,
                 database: None,
-                username: None,
                 password: None,
+                username: None,
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
@@ -151,7 +150,6 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let project_config = ProjectConfig {
-            name: None,
             storage: StorageConfig::LocalFile {
                 path: temp_dir.path().to_string_lossy().to_string(),
             },
@@ -161,8 +159,8 @@ mod tests {
                 host: None,
                 port: None,
                 database: None,
-                username: None,
                 password: None,
+                username: None,
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
@@ -178,7 +176,6 @@ mod tests {
     #[tokio::test]
     async fn test_connect_mysql_db() -> Result<()> {
         let project_config = ProjectConfig {
-            name: None,
             storage: StorageConfig::LocalFile {
                 path: "/tmp/test_storage".to_string(),
             },
@@ -207,7 +204,6 @@ mod tests {
     #[tokio::test]
     async fn test_connect_postgresql_db() -> Result<()> {
         let project_config = ProjectConfig {
-            name: None,
             storage: StorageConfig::LocalFile {
                 path: "/tmp/test_storage".to_string(),
             },

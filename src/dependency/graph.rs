@@ -238,7 +238,6 @@ mod tests {
 
         let config = Config {
             project: ProjectConfig {
-                name: None,
                 storage: StorageConfig::LocalFile {
                     path: "/tmp".to_string(),
                 },
@@ -248,8 +247,8 @@ mod tests {
                     host: None,
                     port: None,
                     database: None,
-                    username: None,
                     password: None,
+                    username: None,
                 },
                 deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
                 connections: HashMap::new(),
@@ -290,7 +289,6 @@ mod tests {
 
         let config = Config {
             project: ProjectConfig {
-                name: None,
                 storage: StorageConfig::LocalFile {
                     path: "/tmp".to_string(),
                 },
@@ -300,8 +298,8 @@ mod tests {
                     host: None,
                     port: None,
                     database: None,
-                    username: None,
                     password: None,
+                    username: None,
                 },
                 deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
                 connections: HashMap::new(),

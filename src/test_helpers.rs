@@ -42,7 +42,6 @@ pub fn create_project_structure(project_path: &Path) -> Result<()> {
 #[cfg(test)]
 pub fn create_default_project_config() -> ProjectConfig {
     ProjectConfig {
-        name: None,
         storage: StorageConfig::LocalFile {
             path: "/tmp/foo/storage".to_string(),
         },
@@ -52,8 +51,8 @@ pub fn create_default_project_config() -> ProjectConfig {
             host: None,
             port: None,
             database: None,
-            username: None,
             password: None,
+            username: None,
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
@@ -66,7 +65,6 @@ pub fn create_project_config_with_connections(
     connections: HashMap<String, ConnectionConfig>,
 ) -> ProjectConfig {
     ProjectConfig {
-        name: None,
         storage: StorageConfig::LocalFile {
             path: "/tmp/foo/storage".to_string(),
         },
@@ -76,8 +74,8 @@ pub fn create_project_config_with_connections(
             host: None,
             port: None,
             database: None,
-            username: None,
             password: None,
+            username: None,
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections,
@@ -147,7 +145,6 @@ pub async fn setup_test_db_connection() -> Result<DatabaseConnection> {
     let db_path = temp_dir.path().join("test.db");
 
     let project_config = ProjectConfig {
-        name: None,
         storage: StorageConfig::LocalFile {
             path: temp_dir.path().to_string_lossy().to_string(),
         },
@@ -157,8 +154,8 @@ pub async fn setup_test_db_connection() -> Result<DatabaseConnection> {
             host: None,
             port: None,
             database: None,
-            username: None,
             password: None,
+            username: None,
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
@@ -176,7 +173,6 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
     let db_path = temp_dir.path().join("test.db");
 
     let project_config = ProjectConfig {
-        name: None,
         storage: StorageConfig::LocalFile {
             path: temp_dir.path().to_string_lossy().to_string(),
         },
@@ -186,8 +182,8 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
             host: None,
             port: None,
             database: None,
-            username: None,
             password: None,
+            username: None,
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
