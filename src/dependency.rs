@@ -289,7 +289,6 @@ mod tests {
                 },
                 deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
                 connections: HashMap::new(),
-                secret_key_path: None,
             },
             adapters: HashMap::new(),
             models: HashMap::new(),
@@ -322,7 +321,6 @@ mod tests {
             },
             deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
-            secret_key_path: None,
         };
 
         let db = connect_app_db(&project_config).await?;

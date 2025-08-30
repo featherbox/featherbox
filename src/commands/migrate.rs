@@ -81,7 +81,6 @@ mod tests {
             },
             deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
-            secret_key_path: None,
         };
 
         let config = crate::config::Config {

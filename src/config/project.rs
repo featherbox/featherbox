@@ -9,52 +9,21 @@ pub struct ProjectConfig {
     pub database: DatabaseConfig,
     pub deployments: DeploymentsConfig,
     pub connections: HashMap<String, ConnectionConfig>,
-    pub secret_key_path: Option<String>,
 }
 
 impl ProjectConfig {
-    pub fn new(secret_key_path: Option<&str>) -> Self {
-        let mut config = Self::default();
-        if let Some(path) = secret_key_path {
-            config.secret_key_path = Some(path.to_string());
-        }
-        config
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub async fn new_interactively(
-        default_secret_key_path: Option<&str>,
-    ) -> Result<(Self, String)> {
+    pub async fn new_interactively() -> Result<(Self, String)> {
         let project_name = Text::new("Project name:").prompt()?;
 
         if project_name.trim().is_empty() {
             return Err(anyhow::anyhow!("Project name cannot be empty"));
         }
 
-        let default_key_path = match default_secret_key_path {
-            Some(path) => path.to_string(),
-            None => {
-                let home_dir = dirs::home_dir()
-                    .ok_or_else(|| anyhow::anyhow!("Unable to find home directory"))?;
-                home_dir
-                    .join(".config")
-                    .join("featherbox")
-                    .join("secret.key")
-                    .to_string_lossy()
-                    .to_string()
-            }
-        };
-
-        let secret_key_path_input = Text::new("Secret key path:")
-            .with_initial_value(&default_key_path)
-            .prompt()?;
-
-        let secret_key_path = if secret_key_path_input.trim().is_empty() {
-            None
-        } else {
-            Some(secret_key_path_input)
-        };
-
-        let config = Self::new(secret_key_path.as_deref());
+        let config = Self::new();
         Ok((config, project_name))
     }
 
@@ -100,14 +69,6 @@ impl ProjectConfig {
 
 impl Default for ProjectConfig {
     fn default() -> Self {
-        let home_dir = dirs::home_dir().expect("Unable to determine home directory");
-        let default_secret_path = home_dir
-            .join(".config")
-            .join("featherbox")
-            .join("secret.key")
-            .to_string_lossy()
-            .to_string();
-
         Self {
             storage: StorageConfig::LocalFile {
                 path: "./storage".to_string(),
@@ -123,7 +84,6 @@ impl Default for ProjectConfig {
             },
             deployments: DeploymentsConfig { timeout: 600 },
             connections: HashMap::new(),
-            secret_key_path: Some(default_secret_path),
         }
     }
 }

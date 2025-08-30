@@ -135,7 +135,6 @@ mod tests {
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
-            secret_key_path: None,
         };
 
         let db = connect_app_db(&project_config).await?;
@@ -164,7 +163,6 @@ mod tests {
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
-            secret_key_path: None,
         };
 
         let db = connect_app_db(&project_config).await?;
@@ -190,7 +188,6 @@ mod tests {
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
-            secret_key_path: None,
         };
 
         let result = connect_app_db(&project_config).await;
@@ -218,7 +215,6 @@ mod tests {
             },
             deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
-            secret_key_path: None,
         };
 
         let result = connect_app_db(&project_config).await;

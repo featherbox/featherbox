@@ -61,11 +61,8 @@ impl ProjectBuilder {
     }
 
     pub fn create_secret_key(&self) -> Result<()> {
-        if let Some(secret_key_path) = &self.config.secret_key_path {
-            ensure_secret_key(Some(secret_key_path))
-        } else {
-            ensure_secret_key(None)
-        }
+        let project_path = self.current_dir.join(&self.project_name);
+        ensure_secret_key(&project_path)
     }
 
     pub fn save_project_config(&self) -> Result<()> {
@@ -81,26 +78,11 @@ impl ProjectBuilder {
     }
 }
 
-fn ensure_secret_key(secret_key_path: Option<&str>) -> Result<()> {
-    let (key_path, key_dir) = match secret_key_path {
-        Some(path) => {
-            let key_path = std::path::PathBuf::from(path);
-            let key_dir = key_path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("Invalid secret key path: {}", path))?
-                .to_path_buf();
-            (key_path, key_dir)
-        }
-        None => {
-            let home_dir = dirs::home_dir().context("Unable to find home directory")?;
-            let config_dir = home_dir.join(".config").join("featherbox");
-            let key_path = config_dir.join("secret.key");
-            (key_path, config_dir)
-        }
-    };
+fn ensure_secret_key(project_path: &std::path::Path) -> Result<()> {
+    let key_path = project_path.join(".secret.key");
 
-    fs::create_dir_all(&key_dir)
-        .with_context(|| format!("Failed to create directory: {}", key_dir.display()))?;
+    fs::create_dir_all(project_path)
+        .with_context(|| format!("Failed to create directory: {}", project_path.display()))?;
 
     if !key_path.exists() {
         generate_secret_key(&key_path)?;
@@ -140,7 +122,7 @@ mod tests {
     fn test_project_builder() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let project_name = "test_project";
-        let config = ProjectConfig::new(None);
+        let config = ProjectConfig::new();
 
         let builder = ProjectBuilder::with_current_dir(
             project_name.to_string(),
@@ -161,7 +143,8 @@ mod tests {
         assert!(content.contains("database:"));
         assert!(content.contains("deployments:"));
         assert!(content.contains("connections: {}"));
-        assert!(content.contains("secret_key_path:"));
+
+        assert!(project_path.join(".secret.key").exists());
 
         Ok(())
     }
@@ -170,7 +153,7 @@ mod tests {
     fn test_project_builder_already_exists() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let project_name = "existing_project";
-        let config = ProjectConfig::new(None);
+        let config = ProjectConfig::new();
 
         fs::create_dir_all(temp_dir.path().join(project_name))?;
 
@@ -191,7 +174,7 @@ mod tests {
     fn test_project_builder_directories() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let project_name = "test_project";
-        let config = ProjectConfig::new(None);
+        let config = ProjectConfig::new();
 
         let builder = ProjectBuilder::with_current_dir(
             project_name.to_string(),
@@ -203,38 +186,6 @@ mod tests {
         let project_path = temp_dir.path().join(project_name);
         assert!(project_path.join("adapters").is_dir());
         assert!(project_path.join("models").is_dir());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_project_builder_custom_secret() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let project_name = "test_project_custom_secret";
-        let custom_secret_path = temp_dir
-            .path()
-            .join("custom_secret.key")
-            .to_string_lossy()
-            .to_string();
-
-        let config = ProjectConfig::new(Some(&custom_secret_path));
-        let builder = ProjectBuilder::with_current_dir(
-            project_name.to_string(),
-            &config,
-            temp_dir.path().to_path_buf(),
-        );
-
-        builder.create_project_directory()?;
-        builder.create_secret_key()?;
-        builder.save_project_config()?;
-
-        let project_path = temp_dir.path().join(project_name);
-        assert!(project_path.join("project.yml").exists());
-
-        let content = fs::read_to_string(project_path.join("project.yml"))?;
-        assert!(content.contains(&format!("secret_key_path: {custom_secret_path}")));
-
-        assert!(temp_dir.path().join("custom_secret.key").exists());
 
         Ok(())
     }

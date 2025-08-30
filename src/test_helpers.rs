@@ -56,7 +56,6 @@ pub fn create_default_project_config() -> ProjectConfig {
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
-        secret_key_path: None,
     }
 }
 
@@ -79,7 +78,6 @@ pub fn create_project_config_with_connections(
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections,
-        secret_key_path: None,
     }
 }
 
@@ -159,7 +157,6 @@ pub async fn setup_test_db_connection() -> Result<DatabaseConnection> {
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
-        secret_key_path: None,
     };
 
     let db = connect_app_db(&project_config).await?;
@@ -187,7 +184,6 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
         },
         deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
-        secret_key_path: None,
     };
 
     let config = Config {

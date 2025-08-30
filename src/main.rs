@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+pub mod api;
 pub mod commands;
 pub mod config;
 pub mod database;
@@ -8,7 +9,6 @@ pub mod dependency;
 pub mod pipeline;
 pub mod s3_client;
 pub mod secret;
-pub mod api;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -100,9 +100,9 @@ async fn main() -> Result<()> {
         }
         Commands::New {
             project_name,
-            secret_key_path,
+            secret_key_path: _,
         } => {
-            let config = crate::config::ProjectConfig::new(secret_key_path.as_deref());
+            let config = crate::config::ProjectConfig::new();
             config.validate()?;
 
             let builder = commands::init::ProjectBuilder::new(project_name.clone(), &config)?;
@@ -110,23 +110,18 @@ async fn main() -> Result<()> {
             builder.create_secret_key()?;
             builder.save_project_config()?;
 
-            println!("✓ Project '{}' created successfully", project_name);
-            println!("  Run 'fbox start {}' to open the project", project_name);
+            println!("✓ Project '{project_name}' created successfully");
+            println!("  Run 'fbox start {project_name}' to open the project");
             Ok(())
         }
         Commands::Init {
             project_name,
-            secret_key_path,
+            secret_key_path: _,
         } => {
             let (config, name) = match project_name {
-                Some(name) => (
-                    crate::config::ProjectConfig::new(secret_key_path.as_deref()),
-                    name.clone(),
-                ),
+                Some(name) => (crate::config::ProjectConfig::new(), name.clone()),
                 None => {
-                    let (config, name) =
-                        crate::config::ProjectConfig::new_interactively(secret_key_path.as_deref())
-                            .await?;
+                    let (config, name) = crate::config::ProjectConfig::new_interactively().await?;
                     (config, name)
                 }
             };
@@ -173,7 +168,7 @@ async fn main() -> Result<()> {
         },
         Commands::Start { project_name, port } => {
             commands::start::execute_start(project_name, *port).await
-        },
+        }
     };
 
     if let Err(err) = result {

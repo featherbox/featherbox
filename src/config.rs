@@ -28,8 +28,8 @@ pub struct Config {
 impl Config {
     pub fn load_from_directory(project_path: &Path) -> Result<Self> {
         let project_config = load_project_config(project_path)?;
-        let adapters = load_adapters(&project_config, project_path)?;
-        let models = load_models(&project_config, project_path)?;
+        let adapters = load_adapters(project_path)?;
+        let models = load_models(project_path)?;
 
         Ok(Config {
             project: project_config,
@@ -49,9 +49,9 @@ fn load_project_config(project_path: &Path) -> Result<ProjectConfig> {
     }
 
     let content = fs::read_to_string(&project_yml_path)?;
-    let project_config: ProjectConfig = project::parse_project_config(&content)?;
+    let _project_config: ProjectConfig = project::parse_project_config(&content)?;
 
-    let expanded_content = expand_secrets_in_text(&content, &project_config, project_path)?;
+    let expanded_content = expand_secrets_in_text(&content, project_path)?;
 
     project::parse_project_config(&expanded_content)
 }
@@ -60,7 +60,6 @@ fn load_config_files_recursive<T>(
     config_dir: &Path,
     file_type: &str,
     parse_fn: fn(&str) -> Result<T>,
-    project_config: &ProjectConfig,
     project_path: &Path,
 ) -> Result<HashMap<String, T>> {
     let mut configs = HashMap::new();
@@ -74,7 +73,6 @@ fn load_config_files_recursive<T>(
         config_dir,
         file_type,
         parse_fn,
-        project_config,
         project_path,
         &mut configs,
     )?;
@@ -87,7 +85,6 @@ fn collect_config_files_recursive<T>(
     base_dir: &Path,
     file_type: &str,
     parse_fn: fn(&str) -> Result<T>,
-    project_config: &ProjectConfig,
     project_path: &Path,
     configs: &mut HashMap<String, T>,
 ) -> Result<()> {
@@ -101,13 +98,12 @@ fn collect_config_files_recursive<T>(
                 base_dir,
                 file_type,
                 parse_fn,
-                project_config,
                 project_path,
                 configs,
             )?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("yml") {
             let name = extract_config_name(&path, base_dir, file_type)?;
-            let config = parse_config_file(&path, parse_fn, project_config, project_path)?;
+            let config = parse_config_file(&path, parse_fn, project_path)?;
             configs.insert(name, config);
         }
     }
@@ -132,36 +128,27 @@ fn extract_config_name(path: &Path, base_dir: &Path, file_type: &str) -> Result<
 fn parse_config_file<T>(
     path: &Path,
     parse_fn: fn(&str) -> Result<T>,
-    project_config: &ProjectConfig,
     project_path: &Path,
 ) -> Result<T> {
     let content = fs::read_to_string(path)?;
-    let expanded_content = expand_secrets_in_text(&content, project_config, project_path)?;
+    let expanded_content = expand_secrets_in_text(&content, project_path)?;
     parse_fn(&expanded_content)
 }
 
-fn load_adapters(
-    project_config: &ProjectConfig,
-    project_path: &Path,
-) -> Result<HashMap<String, AdapterConfig>> {
+fn load_adapters(project_path: &Path) -> Result<HashMap<String, AdapterConfig>> {
     load_config_files_recursive(
         &project_path.join("adapters"),
         "adapter",
         adapter::parse_adapter_config,
-        project_config,
         project_path,
     )
 }
 
-fn load_models(
-    project_config: &ProjectConfig,
-    project_path: &Path,
-) -> Result<HashMap<String, ModelConfig>> {
+fn load_models(project_path: &Path) -> Result<HashMap<String, ModelConfig>> {
     load_config_files_recursive(
         &project_path.join("models"),
         "model",
         model::parse_model_config,
-        project_config,
         project_path,
     )
 }
