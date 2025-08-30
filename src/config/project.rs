@@ -1,4 +1,5 @@
 use anyhow::Result;
+use inquire::Text;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -18,6 +19,43 @@ impl ProjectConfig {
             config.secret_key_path = Some(path.to_string());
         }
         config
+    }
+
+    pub async fn new_interactively(
+        default_secret_key_path: Option<&str>,
+    ) -> Result<(Self, String)> {
+        let project_name = Text::new("Project name:").prompt()?;
+
+        if project_name.trim().is_empty() {
+            return Err(anyhow::anyhow!("Project name cannot be empty"));
+        }
+
+        let default_key_path = match default_secret_key_path {
+            Some(path) => path.to_string(),
+            None => {
+                let home_dir = dirs::home_dir()
+                    .ok_or_else(|| anyhow::anyhow!("Unable to find home directory"))?;
+                home_dir
+                    .join(".config")
+                    .join("featherbox")
+                    .join("secret.key")
+                    .to_string_lossy()
+                    .to_string()
+            }
+        };
+
+        let secret_key_path_input = Text::new("Secret key path:")
+            .with_initial_value(&default_key_path)
+            .prompt()?;
+
+        let secret_key_path = if secret_key_path_input.trim().is_empty() {
+            None
+        } else {
+            Some(secret_key_path_input)
+        };
+
+        let config = Self::new(secret_key_path.as_deref());
+        Ok((config, project_name))
     }
 
     pub fn validate(&self) -> Result<()> {

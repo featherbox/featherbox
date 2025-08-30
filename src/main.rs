@@ -86,19 +86,32 @@ async fn main() -> Result<()> {
         Commands::Init {
             project_name,
             secret_key_path,
-        } => match project_name {
-            Some(name) => {
-                commands::init::create_new_project(name, &current_dir, secret_key_path.as_deref())
-            }
-            None => {
-                commands::init::execute_init_interactive(
-                    &current_dir,
-                    None,
-                    secret_key_path.as_deref(),
-                )
-                .await
-            }
-        },
+        } => {
+            let (config, name) = match project_name {
+                Some(name) => (
+                    crate::config::ProjectConfig::new(secret_key_path.as_deref()),
+                    name.clone(),
+                ),
+                None => {
+                    let (config, name) =
+                        crate::config::ProjectConfig::new_interactively(secret_key_path.as_deref())
+                            .await?;
+                    (config, name)
+                }
+            };
+            config.validate()?;
+
+            let builder = commands::init::ProjectBuilder::new(name, &config)?;
+            builder.create_project_directory()?;
+            builder.create_secret_key()?;
+            builder.save_project_config()?;
+
+            println!(
+                "✓ Project '{}' initialized successfully",
+                builder.project_name
+            );
+            Ok(())
+        }
         Commands::Adapter { action } => match action {
             AdapterAction::New => {
                 commands::adapter::execute_adapter_interactive(&current_dir).await
