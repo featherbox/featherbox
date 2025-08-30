@@ -8,6 +8,7 @@ pub mod dependency;
 pub mod pipeline;
 pub mod s3_client;
 pub mod secret;
+pub mod api;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -18,6 +19,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Server,
+    New {
+        project_name: String,
+        #[arg(long, help = "Path to secret key file")]
+        secret_key_path: Option<String>,
+    },
     Init {
         project_name: Option<String>,
         #[arg(long, help = "Path to secret key file")]
@@ -43,6 +50,11 @@ enum Commands {
     Secret {
         #[command(subcommand)]
         action: SecretAction,
+    },
+    Start {
+        project_name: String,
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
     },
 }
 
@@ -72,17 +84,36 @@ enum SecretAction {
     List,
     GenKey,
 }
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    // tracing_subscriber::fmt()
-    //     .with_max_level(tracing::Level::DEBUG)
-    //     .init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
 
     let cli = Cli::parse();
     let current_dir = std::env::current_dir()?;
 
     let result = match &cli.command {
+        Commands::Server => {
+            api::main().await?;
+            Ok(())
+        }
+        Commands::New {
+            project_name,
+            secret_key_path,
+        } => {
+            let config = crate::config::ProjectConfig::new(secret_key_path.as_deref());
+            config.validate()?;
+
+            let builder = commands::init::ProjectBuilder::new(project_name.clone(), &config)?;
+            builder.create_project_directory()?;
+            builder.create_secret_key()?;
+            builder.save_project_config()?;
+
+            println!("✓ Project '{}' created successfully", project_name);
+            println!("  Run 'fbox start {}' to open the project", project_name);
+            Ok(())
+        }
         Commands::Init {
             project_name,
             secret_key_path,
@@ -139,6 +170,9 @@ async fn main() -> Result<()> {
             SecretAction::Delete => commands::secret::execute_secret_delete(&current_dir).await,
             SecretAction::List => commands::secret::execute_secret_list(&current_dir).await,
             SecretAction::GenKey => commands::secret::execute_secret_gen_key(&current_dir).await,
+        },
+        Commands::Start { project_name, port } => {
+            commands::start::execute_start(project_name, *port).await
         },
     };
 

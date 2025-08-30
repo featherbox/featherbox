@@ -6,6 +6,7 @@ pub mod model;
 pub mod query;
 pub mod run;
 pub mod secret;
+pub mod start;
 pub mod workspace;
 
 pub const ADAPTER_TEMPLATE: &str = include_str!("commands/templates/adapter.yml");
