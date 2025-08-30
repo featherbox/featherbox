@@ -692,10 +692,10 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
 
     let temp_dir = TempDir::new()?;
     let project_name = format!("test_project_{storage_type}_{catalog_type}");
-    let (success, output) = run_fbox_command(&["init", &project_name], temp_dir.path())?;
+    let (success, output) = run_fbox_command(&["new", &project_name], temp_dir.path())?;
     let project_dir = temp_dir.path().join(&project_name);
     if !success {
-        anyhow::bail!("fbox init failed: {}", output);
+        anyhow::bail!("fbox new failed: {}", output);
     }
 
     let unique_db_name = if catalog_type == "sqlite" {

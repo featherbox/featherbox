@@ -76,6 +76,16 @@ impl ProjectBuilder {
 
         Ok(())
     }
+
+    pub fn create_gitignore(&self) -> Result<()> {
+        let project_path = self.current_dir.join(&self.project_name);
+        let gitignore_content = ".secret.key\nstorage/\ndatabase.db\n";
+
+        fs::write(project_path.join(".gitignore"), gitignore_content)
+            .context("Failed to write .gitignore")?;
+
+        Ok(())
+    }
 }
 
 fn ensure_secret_key(project_path: &std::path::Path) -> Result<()> {
@@ -132,6 +142,7 @@ mod tests {
         builder.create_project_directory()?;
         builder.create_secret_key()?;
         builder.save_project_config()?;
+        builder.create_gitignore()?;
 
         let project_path = temp_dir.path().join(project_name);
         assert!(project_path.join("project.yml").exists());
@@ -145,6 +156,12 @@ mod tests {
         assert!(content.contains("connections: {}"));
 
         assert!(project_path.join(".secret.key").exists());
+        assert!(project_path.join(".gitignore").exists());
+
+        let gitignore_content = fs::read_to_string(project_path.join(".gitignore"))?;
+        assert!(gitignore_content.contains(".secret.key"));
+        assert!(gitignore_content.contains("storage/"));
+        assert!(gitignore_content.contains("database.db"));
 
         Ok(())
     }

@@ -25,11 +25,6 @@ enum Commands {
         #[arg(long, help = "Path to secret key file")]
         secret_key_path: Option<String>,
     },
-    Init {
-        project_name: Option<String>,
-        #[arg(long, help = "Path to secret key file")]
-        secret_key_path: Option<String>,
-    },
     Adapter {
         #[command(subcommand)]
         action: AdapterAction,
@@ -109,33 +104,10 @@ async fn main() -> Result<()> {
             builder.create_project_directory()?;
             builder.create_secret_key()?;
             builder.save_project_config()?;
+            builder.create_gitignore()?;
 
             println!("✓ Project '{project_name}' created successfully");
             println!("  Run 'fbox start {project_name}' to open the project");
-            Ok(())
-        }
-        Commands::Init {
-            project_name,
-            secret_key_path: _,
-        } => {
-            let (config, name) = match project_name {
-                Some(name) => (crate::config::ProjectConfig::new(), name.clone()),
-                None => {
-                    let (config, name) = crate::config::ProjectConfig::new_interactively().await?;
-                    (config, name)
-                }
-            };
-            config.validate()?;
-
-            let builder = commands::init::ProjectBuilder::new(name, &config)?;
-            builder.create_project_directory()?;
-            builder.create_secret_key()?;
-            builder.save_project_config()?;
-
-            println!(
-                "✓ Project '{}' initialized successfully",
-                builder.project_name
-            );
             Ok(())
         }
         Commands::Adapter { action } => match action {

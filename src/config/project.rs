@@ -1,5 +1,4 @@
 use anyhow::Result;
-use inquire::Text;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -14,17 +13,6 @@ pub struct ProjectConfig {
 impl ProjectConfig {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub async fn new_interactively() -> Result<(Self, String)> {
-        let project_name = Text::new("Project name:").prompt()?;
-
-        if project_name.trim().is_empty() {
-            return Err(anyhow::anyhow!("Project name cannot be empty"));
-        }
-
-        let config = Self::new();
-        Ok((config, project_name))
     }
 
     pub fn validate(&self) -> Result<()> {
