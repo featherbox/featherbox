@@ -1,5 +1,5 @@
 use crate::config::project::{
-    ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod, StorageConfig,
+    ConnectionConfig, DatabaseType, RemoteDatabaseConfig, S3AuthMethod, S3Config, StorageConfig,
 };
 use anyhow::{Context, Result};
 use duckdb::DuckdbConnectionManager;
@@ -23,13 +23,20 @@ pub struct DuckLake {
     catalog_config: CatalogConfig,
     storage_config: StorageConfig,
     pool: Arc<Pool<DuckdbConnectionManager>>,
+    #[allow(dead_code)]
+    temp_dir: Arc<tempfile::TempDir>,
 }
 
 impl DuckLake {
     pub async fn new(catalog_config: CatalogConfig, storage_config: StorageConfig) -> Result<Self> {
-        let manager = DuckdbConnectionManager::memory()
+        let temp_dir =
+            tempfile::tempdir().context("Failed to create temporary directory for DuckDB")?;
+        let temp_db_path = temp_dir.path().join("shared.db");
+
+        let manager = DuckdbConnectionManager::file(&temp_db_path)
             .context("Failed to create DuckDB connection manager")?;
         let pool = Pool::builder()
+            .max_size(1)
             .build(manager)
             .context("Failed to create connection pool")?;
 
@@ -37,6 +44,7 @@ impl DuckLake {
             catalog_config,
             storage_config,
             pool: Arc::new(pool),
+            temp_dir: Arc::new(temp_dir),
         };
 
         instance.initialize().await?;
@@ -347,17 +355,7 @@ impl DuckLake {
             self.execute_batch("INSTALL httpfs; LOAD httpfs;")
                 .context("Failed to install and load httpfs extension")?;
 
-            let secret_sql = Self::build_s3_secret_sql(
-                &s3_config.region,
-                s3_config.endpoint_url.as_deref(),
-                &s3_config.auth_method,
-                &s3_config.access_key_id,
-                &s3_config.secret_access_key,
-                s3_config.session_token.as_deref(),
-                s3_config.path_style_access,
-                "s3_secret",
-                true,
-            );
+            let secret_sql = Self::build_s3_secret_sql(s3_config, "s3_secret", true);
 
             self.execute_batch(&secret_sql)
                 .context("Failed to create S3 secret")?;
@@ -366,18 +364,10 @@ impl DuckLake {
         Ok(())
     }
 
-    fn build_s3_secret_sql(
-        region: &str,
-        endpoint_url: Option<&str>,
-        auth_method: &S3AuthMethod,
-        access_key_id: &str,
-        secret_access_key: &str,
-        session_token: Option<&str>,
-        path_style_access: bool,
-        secret_name: &str,
-        if_not_exists: bool,
-    ) -> String {
-        let is_minio = endpoint_url
+    fn build_s3_secret_sql(s3_config: &S3Config, secret_name: &str, if_not_exists: bool) -> String {
+        let is_minio = s3_config
+            .endpoint_url
+            .as_ref()
             .map(|url| url.contains("localhost") || url.contains("127.0.0.1"))
             .unwrap_or(false);
 
@@ -387,23 +377,25 @@ impl DuckLake {
             format!("CREATE OR REPLACE SECRET {secret_name}")
         };
 
-        let mut sql = match auth_method {
+        let mut sql = match &s3_config.auth_method {
             S3AuthMethod::Explicit => format!(
                 "{create_clause} (
                     TYPE S3,
-                    KEY_ID '{access_key_id}',
-                    SECRET '{secret_access_key}',
-                    REGION '{region}'"
+                    KEY_ID '{}',
+                    SECRET '{}',
+                    REGION '{}'",
+                s3_config.access_key_id, s3_config.secret_access_key, s3_config.region
             ),
             S3AuthMethod::CredentialChain => format!(
                 "{create_clause} (
                     TYPE S3,
                     PROVIDER credential_chain,
-                    REGION '{region}'"
+                    REGION '{}'",
+                s3_config.region
             ),
         };
 
-        if let Some(endpoint) = endpoint_url {
+        if let Some(endpoint) = &s3_config.endpoint_url {
             let clean_endpoint = endpoint
                 .strip_prefix("http://")
                 .or_else(|| endpoint.strip_prefix("https://"))
@@ -411,11 +403,11 @@ impl DuckLake {
             sql.push_str(&format!(",\n    ENDPOINT '{clean_endpoint}'"));
         }
 
-        if let Some(token) = session_token {
+        if let Some(token) = &s3_config.session_token {
             sql.push_str(&format!(",\n    SESSION_TOKEN '{token}'"));
         }
 
-        if path_style_access || is_minio {
+        if s3_config.path_style_access || is_minio {
             sql.push_str(",\n    URL_STYLE 'path'");
         }
 
@@ -585,12 +577,15 @@ mod tests {
             path: "/tmp/test.db".to_string(),
         };
 
-        let manager = DuckdbConnectionManager::memory().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_db_path = temp_dir.path().join("test.db");
+        let manager = DuckdbConnectionManager::file(&temp_db_path).unwrap();
         let pool = Pool::builder().build(manager).unwrap();
         let ducklake = DuckLake {
             catalog_config,
             storage_config,
             pool: Arc::new(pool),
+            temp_dir: Arc::new(temp_dir),
         };
 
         assert_eq!(ducklake.get_storage_path(), "/tmp/test_storage");
@@ -612,12 +607,15 @@ mod tests {
             path: "/tmp/test.db".to_string(),
         };
 
-        let manager = DuckdbConnectionManager::memory().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_db_path = temp_dir.path().join("test.db");
+        let manager = DuckdbConnectionManager::file(&temp_db_path).unwrap();
         let pool = Pool::builder().build(manager).unwrap();
         let ducklake = DuckLake {
             catalog_config,
             storage_config,
             pool: Arc::new(pool),
+            temp_dir: Arc::new(temp_dir),
         };
 
         assert_eq!(ducklake.get_storage_path(), "s3://my-bucket/ducklake");
