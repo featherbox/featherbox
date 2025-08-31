@@ -45,10 +45,15 @@ pub fn list_queries(current_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn save_query(name: &str, sql: &str, description: Option<String>, current_dir: &Path) -> Result<()> {
+pub fn save_query(
+    name: &str,
+    sql: &str,
+    description: Option<String>,
+    current_dir: &Path,
+) -> Result<()> {
     let project_root = ensure_project_directory(Some(current_dir))?;
     let queries_dir = project_root.join("queries");
-    
+
     if !queries_dir.exists() {
         fs::create_dir_all(&queries_dir)?;
     }
@@ -61,9 +66,12 @@ pub fn save_query(name: &str, sql: &str, description: Option<String>, current_di
 
     let yaml_content = serde_yml::to_string(&query_config)?;
     let query_file = queries_dir.join(format!("{}.yml", name));
-    
+
     if query_file.exists() {
-        return Err(anyhow::anyhow!("Query '{}' already exists. Use update command to modify it.", name));
+        return Err(anyhow::anyhow!(
+            "Query '{}' already exists. Use update command to modify it.",
+            name
+        ));
     }
 
     fs::write(&query_file, yaml_content)?;
@@ -102,7 +110,12 @@ pub fn delete_query(name: &str, current_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn update_query(name: &str, sql: Option<String>, description: Option<String>, current_dir: &Path) -> Result<()> {
+pub fn update_query(
+    name: &str,
+    sql: Option<String>,
+    description: Option<String>,
+    current_dir: &Path,
+) -> Result<()> {
     let project_root = ensure_project_directory(Some(current_dir))?;
     let queries_dir = project_root.join("queries");
     let query_file = queries_dir.join(format!("{}.yml", name));
@@ -112,7 +125,9 @@ pub fn update_query(name: &str, sql: Option<String>, description: Option<String>
     }
 
     let config = Config::load_from_directory(&project_root)?;
-    let mut query_config = config.queries.get(name)
+    let mut query_config = config
+        .queries
+        .get(name)
         .ok_or_else(|| anyhow::anyhow!("Query '{}' not found.", name))?
         .clone();
 

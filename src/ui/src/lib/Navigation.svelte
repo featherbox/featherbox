@@ -44,10 +44,7 @@
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'query'}>
-      <button
-        onclick={() => (activeSection = 'query')}
-        title="Query"
-      >
+      <button onclick={() => (activeSection = 'query')} title="Query">
         <Search class="icon" />
       </button>
     </li>

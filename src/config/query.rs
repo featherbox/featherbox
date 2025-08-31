@@ -9,8 +9,7 @@ pub struct QueryConfig {
 
 impl QueryConfig {
     pub fn has_changed(&self, other: &Self) -> bool {
-        self.name != other.name 
-            || self.sql != other.sql
+        self.name != other.name || self.sql != other.sql
     }
 }
 
@@ -41,7 +40,10 @@ mod tests {
         let config = parse_query_config(yaml_str).unwrap();
 
         assert_eq!(config.name, "User Analysis");
-        assert_eq!(config.description, Some("Daily active users analysis".to_string()));
+        assert_eq!(
+            config.description,
+            Some("Daily active users analysis".to_string())
+        );
         assert!(config.sql.contains("SELECT"));
         assert!(config.sql.contains("FROM user_events"));
     }

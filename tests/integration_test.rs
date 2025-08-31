@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use rstest::*;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -6,6 +7,8 @@ use std::process::{Command, Output};
 use std::{env, fs};
 use tempfile::TempDir;
 use uuid::Uuid;
+
+mod common;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestUser {
@@ -846,32 +849,16 @@ fn test_e2e_with_setup(storage_type: &str, catalog_type: &str) -> Result<()> {
     run_e2e_test(storage_type, catalog_type)
 }
 
-#[test]
-fn test_e2e_localfile_sqlite() -> Result<()> {
-    test_e2e_with_setup("localfile", "sqlite")
-}
-
-#[test]
-fn test_e2e_localfile_mysql() -> Result<()> {
-    test_e2e_with_setup("localfile", "mysql")
-}
-
-#[test]
-fn test_e2e_localfile_postgresql() -> Result<()> {
-    test_e2e_with_setup("localfile", "postgresql")
-}
-
-#[test]
-fn test_e2e_s3_sqlite() -> Result<()> {
-    test_e2e_with_setup("s3", "sqlite")
-}
-
-#[test]
-fn test_e2e_s3_mysql() -> Result<()> {
-    test_e2e_with_setup("s3", "mysql")
-}
-
-#[test]
-fn test_e2e_s3_postgresql() -> Result<()> {
-    test_e2e_with_setup("s3", "postgresql")
+#[rstest]
+#[case("localfile", "sqlite")]
+#[case("localfile", "mysql")]
+#[case("localfile", "postgresql")]
+#[case("s3", "sqlite")]
+#[case("s3", "mysql")]
+#[case("s3", "postgresql")]
+fn test_e2e_storage_database_combinations(
+    #[case] storage_type: &str,
+    #[case] database_type: &str,
+) -> Result<()> {
+    test_e2e_with_setup(storage_type, database_type)
 }

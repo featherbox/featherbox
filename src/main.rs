@@ -118,7 +118,9 @@ enum ModelAction {
 
 #[derive(Subcommand)]
 enum QueryAction {
-    Execute { sql: String },
+    Execute {
+        sql: String,
+    },
     List,
     Save {
         name: String,
@@ -126,8 +128,12 @@ enum QueryAction {
         #[arg(short, long)]
         description: Option<String>,
     },
-    Run { name: String },
-    Delete { name: String },
+    Run {
+        name: String,
+    },
+    Delete {
+        name: String,
+    },
     Update {
         name: String,
         #[arg(long)]
@@ -193,12 +199,18 @@ async fn main() -> Result<()> {
         Commands::Query { action } => match action {
             QueryAction::Execute { sql } => commands::query::execute_query(sql, &current_dir).await,
             QueryAction::List => commands::query::list_queries(&current_dir),
-            QueryAction::Save { name, sql, description } => {
-                commands::query::save_query(name, sql, description.clone(), &current_dir)
-            }
+            QueryAction::Save {
+                name,
+                sql,
+                description,
+            } => commands::query::save_query(name, sql, description.clone(), &current_dir),
             QueryAction::Run { name } => commands::query::run_query(name, &current_dir).await,
             QueryAction::Delete { name } => commands::query::delete_query(name, &current_dir),
-            QueryAction::Update { name, sql, description } => {
+            QueryAction::Update {
+                name,
+                sql,
+                description,
+            } => {
                 commands::query::update_query(name, sql.clone(), description.clone(), &current_dir)
             }
         },

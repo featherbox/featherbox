@@ -1,7 +1,13 @@
 use crate::commands::{run::connect_ducklake, workspace::ensure_project_directory};
 use crate::config::{Config, QueryConfig};
 use anyhow::Result;
-use axum::{Router, extract::Path as AxumPath, http::StatusCode, response::Json, routing::{get, post, put, delete}};
+use axum::{
+    Router,
+    extract::Path as AxumPath,
+    http::StatusCode,
+    response::Json,
+    routing::{delete, get, post, put},
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env};
 
@@ -78,7 +84,8 @@ async fn execute_query_internal(sql: &str) -> Result<(Vec<Vec<String>>, usize)> 
     Ok((results, column_count))
 }
 
-pub async fn list_queries_handler() -> Result<Json<QueryListResponse>, (StatusCode, Json<ErrorResponse>)> {
+pub async fn list_queries_handler()
+-> Result<Json<QueryListResponse>, (StatusCode, Json<ErrorResponse>)> {
     match list_queries_internal().await {
         Ok(queries) => Ok(Json(QueryListResponse { queries })),
         Err(e) => Err((
@@ -103,7 +110,12 @@ pub async fn save_query_handler(
             } else {
                 StatusCode::BAD_REQUEST
             };
-            Err((status, Json(ErrorResponse { error: e.to_string() })))
+            Err((
+                status,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            ))
         }
     }
 }
@@ -169,7 +181,12 @@ pub async fn run_query_handler(
             } else {
                 StatusCode::BAD_REQUEST
             };
-            Err((status, Json(ErrorResponse { error: e.to_string() })))
+            Err((
+                status,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            ))
         }
     }
 }
@@ -190,13 +207,19 @@ async fn get_query_internal(name: &str) -> Result<QueryConfig> {
     let current_dir = env::current_dir()?;
     let project_root = ensure_project_directory(Some(&current_dir))?;
     let config = Config::load_from_directory(&project_root)?;
-    
-    config.queries.get(name)
+
+    config
+        .queries
+        .get(name)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("Query '{}' not found", name))
 }
 
-async fn update_query_internal(name: &str, sql: Option<String>, description: Option<String>) -> Result<()> {
+async fn update_query_internal(
+    name: &str,
+    sql: Option<String>,
+    description: Option<String>,
+) -> Result<()> {
     let current_dir = env::current_dir()?;
     crate::commands::query::update_query(name, sql, description, &current_dir)
 }

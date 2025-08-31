@@ -7,9 +7,9 @@ mod adapter;
 mod chat;
 mod connection;
 mod model;
+mod pipeline;
 mod query;
 mod secret;
-mod pipeline;
 
 pub async fn main() -> Result<()> {
     let cors = CorsLayer::new()

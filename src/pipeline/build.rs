@@ -197,6 +197,38 @@ mod tests {
 
     #[test]
     fn test_pipeline_from_graph() {
+        macro_rules! assert_pipeline_has_levels {
+            ($pipeline:expr, $expected_sizes:expr) => {
+                let actual_sizes: Vec<usize> =
+                    $pipeline.levels.iter().map(|level| level.len()).collect();
+                assert_eq!(
+                    actual_sizes, $expected_sizes,
+                    "Pipeline level sizes don't match. Expected: {:?}, got: {:?}",
+                    $expected_sizes, actual_sizes
+                );
+            };
+        }
+
+        macro_rules! assert_level_has_tables {
+            ($pipeline:expr, $level_index:expr, $expected_tables:expr) => {
+                let level_tables: Vec<&str> = $pipeline.levels[$level_index]
+                    .iter()
+                    .map(|action| action.table_name.as_str())
+                    .collect();
+                for expected in $expected_tables {
+                    assert!(
+                        level_tables.contains(&expected),
+                        "Level {} should contain table '{}', but only found: {:?}",
+                        $level_index,
+                        expected,
+                        level_tables
+                    );
+                }
+            };
+        }
+
+        use crate::dependency::graph::{Edge, Graph, Node};
+
         let graph = Graph {
             nodes: vec![
                 Node {
@@ -223,17 +255,8 @@ mod tests {
 
         let pipeline = Pipeline::from_graph(&graph);
 
-        assert_eq!(pipeline.levels.len(), 2);
-        assert_eq!(pipeline.levels[0].len(), 2);
-        assert_eq!(pipeline.levels[1].len(), 1);
-
-        let level_0_tables: Vec<&str> = pipeline.levels[0]
-            .iter()
-            .map(|a| a.table_name.as_str())
-            .collect();
-        assert!(level_0_tables.contains(&"users"));
-        assert!(level_0_tables.contains(&"orders"));
-
+        assert_pipeline_has_levels!(pipeline, vec![2, 1]);
+        assert_level_has_tables!(pipeline, 0, &["users", "orders"]);
         assert_eq!(pipeline.levels[1][0].table_name, "analytics");
     }
 

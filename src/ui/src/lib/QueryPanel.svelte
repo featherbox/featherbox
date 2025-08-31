@@ -124,9 +124,12 @@
     }
 
     try {
-      const response = await fetch(`http://localhost:3000/api/queries/${queryName}`, {
-        method: 'DELETE',
-      });
+      const response = await fetch(
+        `http://localhost:3000/api/queries/${queryName}`,
+        {
+          method: 'DELETE',
+        },
+      );
 
       if (response.ok) {
         await loadSavedQueries();
@@ -175,7 +178,11 @@
                 <div class="query-description">{query.description}</div>
               {/if}
             </div>
-            <button class="delete-btn" on:click={() => deleteQuery(name)} title="Delete">
+            <button
+              class="delete-btn"
+              on:click={() => deleteQuery(name)}
+              title="Delete"
+            >
               ×
             </button>
           </div>
@@ -191,7 +198,11 @@
       <div class="editor-header">
         <h2>SQL Query</h2>
         <div class="editor-actions">
-          <button class="btn-secondary" on:click={openSaveDialog} disabled={!sql.trim()}>
+          <button
+            class="btn-secondary"
+            on:click={openSaveDialog}
+            disabled={!sql.trim()}
+          >
             Save Query
           </button>
         </div>
@@ -214,52 +225,52 @@
     </div>
 
     <div class="results-container">
-    {#if error}
-      <div class="error">
-        <h3>Error</h3>
-        <p>{error}</p>
-      </div>
-    {:else if results}
-      <div class="results">
-        <h3>Results ({results.results.length} rows)</h3>
-        {#if results.results.length === 0}
-          <p class="no-results">No results found.</p>
-        {:else}
-          <div class="table-container">
-            <table>
-              <thead>
-                {#if results.results.length > 0}
-                  <tr>
-                    {#each Array(results.column_count) as _, i}
-                      <th>Column {i + 1}</th>
-                    {/each}
-                  </tr>
-                {/if}
-              </thead>
-              <tbody>
-                {#each results.results as row}
-                  <tr>
-                    {#each row as cell}
-                      <td>{cell}</td>
-                    {/each}
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </div>
-    {:else if !loading}
-      <div class="placeholder">
-        <p>Execute a query to see results here.</p>
-      </div>
-    {/if}
+      {#if error}
+        <div class="error">
+          <h3>Error</h3>
+          <p>{error}</p>
+        </div>
+      {:else if results}
+        <div class="results">
+          <h3>Results ({results.results.length} rows)</h3>
+          {#if results.results.length === 0}
+            <p class="no-results">No results found.</p>
+          {:else}
+            <div class="table-container">
+              <table>
+                <thead>
+                  {#if results.results.length > 0}
+                    <tr>
+                      {#each Array(results.column_count) as _, i}
+                        <th>Column {i + 1}</th>
+                      {/each}
+                    </tr>
+                  {/if}
+                </thead>
+                <tbody>
+                  {#each results.results as row}
+                    <tr>
+                      {#each row as cell}
+                        <td>{cell}</td>
+                      {/each}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
+      {:else if !loading}
+        <div class="placeholder">
+          <p>Execute a query to see results here.</p>
+        </div>
+      {/if}
 
-    {#if loading}
-      <div class="loading">
-        <p>Executing query...</p>
-      </div>
-    {/if}
+      {#if loading}
+        <div class="loading">
+          <p>Executing query...</p>
+        </div>
+      {/if}
     </div>
   </div>
 </div>
@@ -296,7 +307,11 @@
         <button class="btn-secondary" on:click={closeSaveDialog}>
           Cancel
         </button>
-        <button class="btn-primary" on:click={saveQuery} disabled={!saveQueryName.trim()}>
+        <button
+          class="btn-primary"
+          on:click={saveQuery}
+          disabled={!saveQueryName.trim()}
+        >
           Save
         </button>
       </div>

@@ -672,6 +672,27 @@ mod tests {
 
     #[test]
     fn test_calculate_affected_nodes_simple() {
+        macro_rules! assert_collection_contains_all {
+            ($collection:expr, $expected_items:expr) => {
+                for expected in $expected_items {
+                    assert!(
+                        $collection.contains(expected),
+                        "Collection should contain '{:?}', but only found: {:?}",
+                        expected,
+                        $collection
+                    );
+                }
+                assert_eq!(
+                    $collection.len(),
+                    $expected_items.len(),
+                    "Collection length mismatch. Expected {} items, but got {}. Collection: {:?}",
+                    $expected_items.len(),
+                    $collection.len(),
+                    $collection
+                );
+            };
+        }
+
         let graph = Graph {
             nodes: vec![
                 Node {
@@ -697,9 +718,10 @@ mod tests {
 
         let affected_nodes = calculate_affected_nodes(&graph, &changes);
 
-        assert!(affected_nodes.contains(&"users".to_string()));
-        assert!(affected_nodes.contains(&"user_stats".to_string()));
-        assert_eq!(affected_nodes.len(), 2);
+        assert_collection_contains_all!(
+            affected_nodes,
+            &["users".to_string(), "user_stats".to_string()]
+        );
     }
 
     #[test]
