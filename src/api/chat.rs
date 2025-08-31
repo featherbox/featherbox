@@ -1,14 +1,19 @@
 use anyhow::Result;
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::{Arc, Mutex}, time::SystemTime, time::UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::SystemTime,
+    time::UNIX_EPOCH,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatConfig {
@@ -108,7 +113,7 @@ fn get_config_path() -> Result<std::path::PathBuf, String> {
 
 async fn load_config() -> Result<ChatConfig, String> {
     let config_path = get_config_path()?;
-    
+
     if !config_path.exists() {
         return Ok(ChatConfig {
             api_key: String::new(),
@@ -118,10 +123,10 @@ async fn load_config() -> Result<ChatConfig, String> {
 
     let json_data = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config file: {e}"))?;
-    
-    let config: ChatConfig = serde_json::from_str(&json_data)
-        .map_err(|e| format!("JSON parsing error: {e}"))?;
-    
+
+    let config: ChatConfig =
+        serde_json::from_str(&json_data).map_err(|e| format!("JSON parsing error: {e}"))?;
+
     Ok(config)
 }
 
@@ -149,21 +154,28 @@ async fn get_chat_config() -> Result<Json<ChatConfig>, (StatusCode, String)> {
     }
 }
 
-async fn save_chat_config(Json(config): Json<ChatConfig>) -> Result<StatusCode, (StatusCode, String)> {
+async fn save_chat_config(
+    Json(config): Json<ChatConfig>,
+) -> Result<StatusCode, (StatusCode, String)> {
     match save_config_impl(&config).await {
         Ok(()) => Ok(StatusCode::OK),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }
 
-async fn start_session(State(state): State<AppState>) -> Result<Json<StartSessionResponse>, (StatusCode, String)> {
+async fn start_session(
+    State(state): State<AppState>,
+) -> Result<Json<StartSessionResponse>, (StatusCode, String)> {
     let config = match load_config().await {
         Ok(config) => config,
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     };
 
     if config.api_key.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "API key not configured".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "API key not configured".to_string(),
+        ));
     }
 
     let session_id = {
@@ -214,14 +226,18 @@ async fn send_message(
     };
     session.messages.push(user_message);
 
-    let response = match call_gemini_api(&state.http_client, &session.config, &session.messages).await {
-        Ok(response) => response,
-        Err(e) => {
-            let mut sessions = state.sessions.lock().unwrap();
-            sessions.insert(session_id, session);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Gemini API error: {e}")));
-        }
-    };
+    let response =
+        match call_gemini_api(&state.http_client, &session.config, &session.messages).await {
+            Ok(response) => response,
+            Err(e) => {
+                let mut sessions = state.sessions.lock().unwrap();
+                sessions.insert(session_id, session);
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Gemini API error: {e}"),
+                ));
+            }
+        };
 
     let ai_timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -270,13 +286,13 @@ async fn call_gemini_api(
     );
 
     let mut contents = Vec::new();
-    
+
     for message in messages {
         let role = match message.r#type {
             MessageRole::User => "user",
             MessageRole::AI => "model",
         };
-        
+
         contents.push(GeminiContent {
             role: role.to_string(),
             parts: vec![GeminiPart {
@@ -297,7 +313,7 @@ async fn call_gemini_api(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("API error {}: {}", status, text));
+        return Err(format!("API error {status}: {text}"));
     }
 
     let gemini_response: GeminiResponse = response
@@ -314,12 +330,12 @@ async fn call_gemini_api(
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/sessions", post(start_session))
-        .route("/sessions/{session_id}/messages", get(get_messages).post(send_message))
+    Router::new().route("/sessions", post(start_session)).route(
+        "/sessions/{session_id}/messages",
+        get(get_messages).post(send_message),
+    )
 }
 
 pub fn config_routes() -> Router {
-    Router::new()
-        .route("/chat/config", get(get_chat_config).post(save_chat_config))
+    Router::new().route("/chat/config", get(get_chat_config).post(save_chat_config))
 }

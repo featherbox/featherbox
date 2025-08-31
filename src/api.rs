@@ -1,11 +1,12 @@
+use crate::ui::static_handler;
 use anyhow::Result;
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 
 mod adapter;
+mod chat;
 mod connection;
 mod model;
-mod chat;
 
 pub async fn main() -> Result<()> {
     let cors = CorsLayer::new()
@@ -22,10 +23,14 @@ pub async fn main() -> Result<()> {
         .merge(chat::config_routes())
         .nest("/chat", chat::routes().with_state(chat_state));
 
-    let app = Router::new().nest("/api", api_routes).layer(cors);
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .fallback(static_handler)
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     println!("API server listening on http://0.0.0.0:3000");
+    println!("UI available on http://0.0.0.0:3000");
     axum::serve(listener, app).await?;
 
     Ok(())
