@@ -1,6 +1,7 @@
 <script lang="ts">
   import ChatPanel from './ChatPanel.svelte';
   import { onMount } from 'svelte';
+  import { t } from './i18n';
 
   interface AnalysisSession {
     id: string;
@@ -18,7 +19,7 @@
       updatedAt: '2024-01-20T15:45:00Z',
     },
     {
-      id: 'session-2', 
+      id: 'session-2',
       name: 'ユーザー行動分析',
       createdAt: '2024-01-19T14:20:00Z',
       updatedAt: '2024-01-19T16:30:00Z',
@@ -41,9 +42,12 @@
       currentSessionId = selectedSession.sessionId;
     } else {
       try {
-        const response = await fetch('http://localhost:3000/api/chat/sessions', {
-          method: 'POST',
-        });
+        const response = await fetch(
+          'http://localhost:3000/api/chat/sessions',
+          {
+            method: 'POST',
+          },
+        );
         if (response.ok) {
           const data = await response.json();
           currentSessionId = data.session_id;
@@ -64,7 +68,7 @@
         const data = await response.json();
         const newSession: AnalysisSession = {
           id: `session-${Date.now()}`,
-          name: `新しい分析セッション`,
+          name: $t('analysis.new_session_name'),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           sessionId: data.session_id,
@@ -93,24 +97,36 @@
       handleSessionSelect(sessions[0]);
     }
   });
-
 </script>
 
 <div class="analysis-container">
   <div class="analysis-sidebar">
     <div class="sidebar-header">
-      <h2>分析セッション</h2>
-      <button onclick={handleNewSession} class="new-session-btn" aria-label="新しいセッション">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <h2>{$t('analysis.title')}</h2>
+      <button
+        onclick={handleNewSession}
+        class="new-session-btn"
+        aria-label={$t('analysis.new_session')}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
       </button>
     </div>
-    
+
     <div class="sessions-list">
       {#each sessions as session}
-        <button 
+        <button
           class="session-item"
           class:active={selectedSession?.id === session.id}
           onclick={() => handleSessionSelect(session)}
@@ -128,9 +144,13 @@
       <div class="analysis-content">
         <div class="content-header">
           <h1>{selectedSession.name}</h1>
-          <span class="last-updated">最終更新: {formatDate(selectedSession.updatedAt)}</span>
+          <span class="last-updated"
+            >{$t('analysis.last_updated')}: {formatDate(
+              selectedSession.updatedAt,
+            )}</span
+          >
         </div>
-        
+
         <div class="chat-container">
           <ChatPanel {isLoading} sessionId={currentSessionId} />
         </div>
@@ -138,8 +158,8 @@
     {:else}
       <div class="empty-selection">
         <div class="empty-content">
-          <h2>分析セッションを選択してください</h2>
-          <p>左のリストから分析セッションを選択して、チャット画面を表示します。</p>
+          <h2>{$t('analysis.select_session')}</h2>
+          <p>{$t('analysis.select_description')}</p>
         </div>
       </div>
     {/if}

@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { FileText, Code, Play } from 'lucide-svelte';
   import type { ModelDetails } from './types';
+  import { t } from './i18n';
 
   const dispatch = createEventDispatcher();
 
@@ -81,7 +82,7 @@
     </div>
   {:else}
     <div class="empty-state">
-      <p>モデルを選択してください</p>
+      <p>{$t('common.select_model')}</p>
     </div>
   {/if}
 </div>

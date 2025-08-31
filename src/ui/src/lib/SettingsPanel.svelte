@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t, locale } from './i18n';
+
   interface ChatConfig {
     api_key: string;
     model: string;
@@ -11,6 +13,7 @@
 
   let isSaving = $state(false);
   let saveStatus = $state<string | null>(null);
+  let currentLocale = $state($locale);
 
   const availableModels = [
     'gemini-2.5-pro',
@@ -27,6 +30,10 @@
     await loadConfig();
   });
 
+  $effect(() => {
+    currentLocale = $locale;
+  });
+
   async function loadConfig() {
     try {
       const response = await fetch('http://localhost:3000/api/chat/config');
@@ -40,7 +47,7 @@
 
   async function saveConfig() {
     if (!config.api_key.trim()) {
-      saveStatus = 'APIキーを入力してください';
+      saveStatus = $t('settings.api_key_required');
       return;
     }
 
@@ -57,16 +64,16 @@
       });
 
       if (response.ok) {
-        saveStatus = '設定を保存しました';
+        saveStatus = $t('settings.save_success');
         setTimeout(() => {
           saveStatus = null;
         }, 3000);
       } else {
-        saveStatus = '設定の保存に失敗しました';
+        saveStatus = $t('settings.save_failed');
       }
     } catch (error) {
       console.error('Config save error:', error);
-      saveStatus = `保存に失敗しました: ${error}`;
+      saveStatus = `${$t('settings.save_error')}: ${error}`;
     } finally {
       isSaving = false;
     }
@@ -75,35 +82,54 @@
 
 <div class="settings-panel">
   <div class="page-header">
-    <h1 class="page-title">Settings</h1>
-    <p class="page-description">チャット機能の設定を行います</p>
+    <h1 class="page-title">{$t('settings.title')}</h1>
+    <p class="page-description">{$t('settings.description')}</p>
   </div>
 
   <div class="settings-content">
     <div class="settings-section">
-      <h2 class="section-title">AI設定</h2>
+      <h2 class="section-title">{$t('settings.language.title')}</h2>
+      <div class="setting-group">
+        <label for="language">{$t('settings.language.description')}</label>
+        <select
+          id="language"
+          bind:value={currentLocale}
+          onchange={() => locale.set(currentLocale)}
+        >
+          <option value="ja">日本語</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2 class="section-title">{$t('settings.ai_config.title')}</h2>
 
       <div class="setting-group">
-        <label for="model">モデル</label>
+        <label for="model">{$t('settings.ai_config.model')}</label>
         <select id="model" bind:value={config.model}>
           {#each availableModels as model}
             <option value={model}>{model}</option>
           {/each}
         </select>
-        <div class="setting-help">使用するGeminiモデルを選択してください</div>
+        <div class="setting-help">{$t('settings.ai_config.model_help')}</div>
       </div>
 
       <div class="setting-group">
-        <label for="apikey">Gemini API キー</label>
+        <label for="apikey">{$t('settings.ai_config.api_key')}</label>
         <input
           id="apikey"
           type="password"
           bind:value={config.api_key}
-          placeholder="Google AI StudioからAPIキーを入力"
+          placeholder={$t('settings.ai_config.api_key_placeholder')}
         />
         <div class="setting-help">
-          APIキーを取得: 
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">
+          {$t('settings.ai_config.api_key_help')}:
+          <a
+            href="https://aistudio.google.com/app/apikey"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             https://aistudio.google.com/app/apikey
           </a>
         </div>
@@ -115,14 +141,14 @@
           class="save-button"
           disabled={isSaving || !config.api_key.trim()}
         >
-          {isSaving ? '保存中...' : '設定を保存'}
+          {isSaving ? $t('settings.saving') : $t('settings.save_settings')}
         </button>
 
         {#if saveStatus}
           <div
             class="save-status"
-            class:success={saveStatus.includes('保存しました')}
-            class:error={!saveStatus.includes('保存しました')}
+            class:success={saveStatus === $t('settings.save_success')}
+            class:error={saveStatus !== $t('settings.save_success')}
           >
             {saveStatus}
           </div>
@@ -159,6 +185,7 @@
     border-radius: 8px;
     padding: 2rem;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1.5rem;
   }
 
   .section-title {

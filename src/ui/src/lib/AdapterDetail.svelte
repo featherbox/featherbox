@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { AdapterDetails } from './types';
+  import { t } from './i18n';
 
   const dispatch = createEventDispatcher();
 
@@ -116,7 +117,7 @@
     </div>
   {:else}
     <div class="empty-state">
-      <p>アダプターを選択してください</p>
+      <p>{$t('common.select_adapter')}</p>
     </div>
   {/if}
 </div>

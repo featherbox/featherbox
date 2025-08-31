@@ -1,0 +1,126 @@
+{
+  "navigation": {
+    "connections": "接続",
+    "adapters": "アダプター",
+    "models": "モデル",
+    "analysis": "分析",
+    "settings": "設定"
+  },
+  "connections": {
+    "title": "接続",
+    "create": "新規作成",
+    "empty": {
+      "message": "接続がありません",
+      "action": "最初の接続を作成"
+    },
+    "delete": {
+      "confirm": "接続「{name}」を削除しますか？"
+    },
+    "detail": {
+      "title": "接続の詳細",
+      "edit": "編集",
+      "delete": "削除",
+      "test": "接続テスト"
+    }
+  },
+  "adapters": {
+    "title": "アダプター",
+    "create": "新規作成",
+    "empty": {
+      "message": "アダプターがありません",
+      "action": "最初のアダプターを作成"
+    },
+    "delete": {
+      "confirm": "アダプター「{name}」を削除しますか？"
+    },
+    "detail": {
+      "title": "アダプターの詳細",
+      "edit": "編集",
+      "delete": "削除"
+    },
+    "source_type": {
+      "file": "ファイル",
+      "database": "データベース"
+    }
+  },
+  "models": {
+    "title": "モデル",
+    "create": "新規作成",
+    "empty": {
+      "message": "モデルがありません",
+      "action": "最初のモデルを作成"
+    },
+    "delete": {
+      "confirm": "モデルを削除しますか？"
+    },
+    "detail": {
+      "title": "モデルの詳細",
+      "edit": "編集",
+      "delete": "削除",
+      "run": "実行"
+    }
+  },
+  "settings": {
+    "title": "設定",
+    "description": "チャット機能の設定を行います",
+    "language": {
+      "title": "言語",
+      "description": "表示言語を選択"
+    },
+    "theme": {
+      "title": "テーマ",
+      "description": "外観を選択"
+    },
+    "ai_config": {
+      "title": "AI設定",
+      "model": "モデル",
+      "model_help": "使用するGeminiモデルを選択してください",
+      "api_key": "Gemini API キー",
+      "api_key_placeholder": "Google AI StudioからAPIキーを入力",
+      "api_key_help": "APIキーを取得"
+    },
+    "api_key_required": "APIキーを入力してください",
+    "save_success": "設定を保存しました",
+    "save_failed": "設定の保存に失敗しました",
+    "save_error": "保存に失敗しました",
+    "saving": "保存中...",
+    "save_settings": "設定を保存"
+  },
+  "analysis": {
+    "title": "分析セッション",
+    "new_session": "新しいセッション",
+    "new_session_name": "新しい分析セッション",
+    "select_session": "分析セッションを選択してください",
+    "select_description": "左のリストから分析セッションを選択して、チャット画面を表示します。",
+    "last_updated": "最終更新"
+  },
+  "chat": {
+    "welcome": "データ分析について質問してください",
+    "placeholder": "データ分析について質問を入力してください...",
+    "send": "送信",
+    "sending": "送信中...",
+    "analyzing": "分析中...",
+    "error_occurred": "エラーが発生しました",
+    "examples": {
+      "title": "例",
+      "sales": "今月の売上データを見せて",
+      "users": "地域別のユーザー数を教えて",
+      "popular": "最も人気のある商品は？"
+    },
+    "api_key_warning": {
+      "title": "APIキーが設定されていません",
+      "description": "チャット機能を使用するには、Gemini APIキーの設定が必要です。",
+      "go_to_settings": "設定へ移動",
+      "close": "閉じる"
+    }
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "キャンセル",
+    "close": "閉じる",
+    "submit": "送信",
+    "select_connection": "接続を選択してください",
+    "select_adapter": "アダプターを選択してください",
+    "select_model": "モデルを選択してください"
+  }
+}

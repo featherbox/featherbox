@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import './lib/i18n';
+  import { t, isLoading } from './lib/i18n';
   import Navigation from './lib/Navigation.svelte';
   import AdapterList from './lib/AdapterList.svelte';
   import AdapterDetail from './lib/AdapterDetail.svelte';
@@ -106,7 +108,7 @@
 
   async function handleAdapterDelete(event: CustomEvent<string>) {
     const name = event.detail;
-    if (!confirm(`アダプター「${name}」を削除しますか？`)) {
+    if (!confirm($t('adapters.delete.confirm', { values: { name } }))) {
       return;
     }
 
@@ -212,7 +214,7 @@
 
   async function handleConnectionDelete(event: CustomEvent<string>) {
     const name = event.detail;
-    if (!confirm(`接続「${name}」を削除しますか？`)) {
+    if (!confirm($t('connections.delete.confirm', { values: { name } }))) {
       return;
     }
 
@@ -317,7 +319,7 @@
 
   async function handleModelDelete(event: CustomEvent<string>) {
     const path = event.detail;
-    if (!confirm(`モデルを削除しますか？`)) {
+    if (!confirm($t('models.delete.confirm'))) {
       return;
     }
 
@@ -383,96 +385,100 @@
   }
 </script>
 
-<div class="app">
-  <Navigation bind:activeSection />
+{#if !$isLoading}
+  <div class="app">
+    <Navigation bind:activeSection />
 
-  <main class="main-content">
-    {#if activeSection === 'connections'}
-      <div class="connections-section">
-        <div class="connection-list-panel">
-          <ConnectionList
-            {connections}
-            {selectedConnection}
-            on:select={handleConnectionSelect}
-            on:create={handleConnectionCreate}
-          />
+    <main class="main-content">
+      {#if activeSection === 'connections'}
+        <div class="connections-section">
+          <div class="connection-list-panel">
+            <ConnectionList
+              {connections}
+              {selectedConnection}
+              on:select={handleConnectionSelect}
+              on:create={handleConnectionCreate}
+            />
+          </div>
+          <div class="connection-detail-panel">
+            <ConnectionDetail
+              connection={selectedConnectionDetails}
+              on:edit={handleConnectionEdit}
+              on:delete={handleConnectionDelete}
+            />
+          </div>
         </div>
-        <div class="connection-detail-panel">
-          <ConnectionDetail
-            connection={selectedConnectionDetails}
-            on:edit={handleConnectionEdit}
-            on:delete={handleConnectionDelete}
-          />
+      {:else if activeSection === 'adapters'}
+        <div class="adapters-section">
+          <div class="adapter-list-panel">
+            <AdapterList
+              {adapters}
+              {selectedAdapter}
+              on:select={handleAdapterSelect}
+              on:create={handleAdapterCreate}
+            />
+          </div>
+          <div class="adapter-detail-panel">
+            <AdapterDetail
+              adapter={selectedAdapterDetails}
+              on:edit={handleAdapterEdit}
+              on:delete={handleAdapterDelete}
+            />
+          </div>
         </div>
-      </div>
-    {:else if activeSection === 'adapters'}
-      <div class="adapters-section">
-        <div class="adapter-list-panel">
-          <AdapterList
-            {adapters}
-            {selectedAdapter}
-            on:select={handleAdapterSelect}
-            on:create={handleAdapterCreate}
-          />
+      {:else if activeSection === 'models'}
+        <div class="models-section">
+          <div class="model-list-panel">
+            <ModelList
+              {models}
+              {selectedModel}
+              on:select={handleModelSelect}
+              on:create={handleModelCreate}
+            />
+          </div>
+          <div class="model-detail-panel">
+            <ModelDetail
+              model={selectedModelDetails}
+              on:edit={handleModelEdit}
+              on:delete={handleModelDelete}
+              on:run={handleModelRun}
+            />
+          </div>
         </div>
-        <div class="adapter-detail-panel">
-          <AdapterDetail
-            adapter={selectedAdapterDetails}
-            on:edit={handleAdapterEdit}
-            on:delete={handleAdapterDelete}
-          />
-        </div>
-      </div>
-    {:else if activeSection === 'models'}
-      <div class="models-section">
-        <div class="model-list-panel">
-          <ModelList
-            {models}
-            {selectedModel}
-            on:select={handleModelSelect}
-            on:create={handleModelCreate}
-          />
-        </div>
-        <div class="model-detail-panel">
-          <ModelDetail
-            model={selectedModelDetails}
-            on:edit={handleModelEdit}
-            on:delete={handleModelDelete}
-            on:run={handleModelRun}
-          />
-        </div>
-      </div>
-    {:else if activeSection === 'analysis'}
-      <AnalysisSession />
-    {:else if activeSection === 'settings'}
-      <SettingsPanel />
-    {/if}
-  </main>
-</div>
+      {:else if activeSection === 'analysis'}
+        <AnalysisSession />
+      {:else if activeSection === 'settings'}
+        <SettingsPanel />
+      {/if}
+    </main>
+  </div>
 
-<AdapterForm
-  bind:isOpen={showAdapterForm}
-  mode={adapterFormMode}
-  initialData={adapterFormData}
-  on:submit={handleAdapterFormSubmit}
-  on:close={() => (showAdapterForm = false)}
-/>
+  <AdapterForm
+    bind:isOpen={showAdapterForm}
+    mode={adapterFormMode}
+    initialData={adapterFormData}
+    on:submit={handleAdapterFormSubmit}
+    on:close={() => (showAdapterForm = false)}
+  />
 
-<ConnectionForm
-  bind:isOpen={showConnectionForm}
-  mode={connectionFormMode}
-  initialData={connectionFormData}
-  on:submit={handleConnectionFormSubmit}
-  on:close={() => (showConnectionForm = false)}
-/>
+  <ConnectionForm
+    bind:isOpen={showConnectionForm}
+    mode={connectionFormMode}
+    initialData={connectionFormData}
+    on:submit={handleConnectionFormSubmit}
+    on:close={() => (showConnectionForm = false)}
+  />
 
-<ModelForm
-  bind:isOpen={showModelForm}
-  mode={modelFormMode}
-  initialData={modelFormData}
-  on:submit={handleModelFormSubmit}
-  on:close={() => (showModelForm = false)}
-/>
+  <ModelForm
+    bind:isOpen={showModelForm}
+    mode={modelFormMode}
+    initialData={modelFormData}
+    on:submit={handleModelFormSubmit}
+    on:close={() => (showModelForm = false)}
+  />
+{:else}
+  <div class="loading">Loading...</div>
+{/if}
 
 <style>
   .app {
@@ -506,4 +512,12 @@
     flex: 1;
   }
 
+  .loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-size: 1.2rem;
+    color: #666;
+  }
 </style>

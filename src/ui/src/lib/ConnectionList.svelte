@@ -1,6 +1,9 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { ConnectionSummary } from './types';
+  import { t } from './i18n';
+  import ListHeader from './ListHeader.svelte';
+  import EmptyState from './EmptyState.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -40,10 +43,11 @@
 </script>
 
 <div class="connection-list">
-  <div class="header">
-    <h3>Connections</h3>
-    <button class="create-btn" onclick={handleCreate}>新規作成</button>
-  </div>
+  <ListHeader
+    titleKey="connections.title"
+    createKey="connections.create"
+    on:create={handleCreate}
+  />
 
   <div class="list">
     {#each connections as connection}
@@ -69,10 +73,11 @@
     {/each}
 
     {#if connections.length === 0}
-      <div class="empty-state">
-        <p>接続がありません</p>
-        <button onclick={handleCreate}>最初の接続を作成</button>
-      </div>
+      <EmptyState
+        messageKey="connections.empty.message"
+        actionKey="connections.empty.action"
+        on:create={handleCreate}
+      />
     {/if}
   </div>
 </div>
@@ -84,36 +89,6 @@
     flex-direction: column;
     background: white;
     border-right: 1px solid #e0e0e0;
-  }
-
-  .header {
-    padding: 16px;
-    border-bottom: 1px solid #e0e0e0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .header h3 {
-    margin: 0;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #333;
-  }
-
-  .create-btn {
-    background: #27ae60;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .create-btn:hover {
-    background: #2ecc71;
   }
 
   .list {
@@ -175,28 +150,5 @@
     font-size: 0.85rem;
     color: #999;
     margin-left: 34px;
-  }
-
-  .empty-state {
-    padding: 40px 16px;
-    text-align: center;
-    color: #666;
-  }
-
-  .empty-state p {
-    margin-bottom: 16px;
-  }
-
-  .empty-state button {
-    background: #27ae60;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-
-  .empty-state button:hover {
-    background: #2ecc71;
   }
 </style>

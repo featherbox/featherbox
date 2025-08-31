@@ -1,0 +1,126 @@
+{
+  "navigation": {
+    "connections": "Connections",
+    "adapters": "Adapters",
+    "models": "Models",
+    "analysis": "Analysis",
+    "settings": "Settings"
+  },
+  "connections": {
+    "title": "Connections",
+    "create": "Create New",
+    "empty": {
+      "message": "No connections",
+      "action": "Create your first connection"
+    },
+    "delete": {
+      "confirm": "Delete connection \"{name}\"?"
+    },
+    "detail": {
+      "title": "Connection Details",
+      "edit": "Edit",
+      "delete": "Delete",
+      "test": "Test Connection"
+    }
+  },
+  "adapters": {
+    "title": "Adapters",
+    "create": "Create New",
+    "empty": {
+      "message": "No adapters",
+      "action": "Create your first adapter"
+    },
+    "delete": {
+      "confirm": "Delete adapter \"{name}\"?"
+    },
+    "detail": {
+      "title": "Adapter Details",
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "source_type": {
+      "file": "File",
+      "database": "Database"
+    }
+  },
+  "models": {
+    "title": "Models",
+    "create": "Create New",
+    "empty": {
+      "message": "No models",
+      "action": "Create your first model"
+    },
+    "delete": {
+      "confirm": "Delete model?"
+    },
+    "detail": {
+      "title": "Model Details",
+      "edit": "Edit",
+      "delete": "Delete",
+      "run": "Run"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Configure chat functionality",
+    "language": {
+      "title": "Language",
+      "description": "Select display language"
+    },
+    "theme": {
+      "title": "Theme",
+      "description": "Select appearance"
+    },
+    "ai_config": {
+      "title": "AI Configuration",
+      "model": "Model",
+      "model_help": "Select the Gemini model to use",
+      "api_key": "Gemini API Key",
+      "api_key_placeholder": "Enter API key from Google AI Studio",
+      "api_key_help": "Get API key"
+    },
+    "api_key_required": "Please enter an API key",
+    "save_success": "Settings saved successfully",
+    "save_failed": "Failed to save settings",
+    "save_error": "Save failed",
+    "saving": "Saving...",
+    "save_settings": "Save Settings"
+  },
+  "analysis": {
+    "title": "Analysis Sessions",
+    "new_session": "New Session",
+    "new_session_name": "New Analysis Session",
+    "select_session": "Select an analysis session",
+    "select_description": "Choose an analysis session from the list on the left to display the chat interface.",
+    "last_updated": "Last updated"
+  },
+  "chat": {
+    "welcome": "Ask questions about data analysis",
+    "placeholder": "Enter questions about data analysis...",
+    "send": "Send",
+    "sending": "Sending...",
+    "analyzing": "Analyzing...",
+    "error_occurred": "An error occurred",
+    "examples": {
+      "title": "Examples",
+      "sales": "Show me this month's sales data",
+      "users": "Tell me the number of users by region",
+      "popular": "What is the most popular product?"
+    },
+    "api_key_warning": {
+      "title": "API key not configured",
+      "description": "Gemini API key configuration is required to use the chat functionality.",
+      "go_to_settings": "Go to Settings",
+      "close": "Close"
+    }
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "submit": "Submit",
+    "select_connection": "Select a connection",
+    "select_adapter": "Select an adapter",
+    "select_model": "Select a model"
+  }
+}

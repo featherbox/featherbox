@@ -28,7 +28,6 @@ export interface DatabaseConfig {
   password?: string;
 }
 
-
 export interface ConnectionConfig {
   type: 'localfile' | 's3' | 'sqlite' | 'mysql' | 'postgresql';
   base_path?: string;

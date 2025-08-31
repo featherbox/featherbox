@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { ConnectionDetails } from './types';
+  import { t } from './i18n';
 
   const dispatch = createEventDispatcher();
 
@@ -100,7 +101,7 @@
     </div>
   {:else}
     <div class="empty-state">
-      <p>接続を選択してください</p>
+      <p>{$t('common.select_connection')}</p>
     </div>
   {/if}
 </div>

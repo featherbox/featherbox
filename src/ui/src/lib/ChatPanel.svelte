@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from './i18n';
+
   interface Props {
     isLoading: boolean;
     sessionId?: number | null;
@@ -33,9 +35,11 @@
 
   async function loadChatHistory() {
     if (currentSessionId === null) return;
-    
+
     try {
-      const response = await fetch(`http://localhost:3000/api/chat/sessions/${currentSessionId}/messages`);
+      const response = await fetch(
+        `http://localhost:3000/api/chat/sessions/${currentSessionId}/messages`,
+      );
       if (response.ok) {
         const data = await response.json();
         chatHistory = data.messages;
@@ -99,7 +103,7 @@
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ message: currentInput }),
-        }
+        },
       );
 
       if (response.ok) {
@@ -113,7 +117,7 @@
       } else {
         const errorMessage = {
           type: 'ai' as const,
-          message: `エラーが発生しました: ${response.statusText}`,
+          message: `${$t('chat.error_occurred')}: ${response.statusText}`,
           timestamp: new Date().toISOString(),
         };
         chatHistory.push(errorMessage);
@@ -123,7 +127,7 @@
       console.error('Message send error:', error);
       const errorMessage = {
         type: 'ai' as const,
-        message: `エラーが発生しました: ${error}`,
+        message: `${$t('chat.error_occurred')}: ${error}`,
         timestamp: new Date().toISOString(),
       };
       chatHistory.push(errorMessage);
@@ -152,13 +156,13 @@
   <div class="chat-messages">
     {#if chatHistory.length === 0}
       <div class="welcome-message">
-        <p>データ分析について質問してください</p>
+        <p>{$t('chat.welcome')}</p>
         <div class="example-queries">
-          <p><strong>例:</strong></p>
+          <p><strong>{$t('chat.examples.title')}:</strong></p>
           <ul>
-            <li>今月の売上データを見せて</li>
-            <li>地域別のユーザー数を教えて</li>
-            <li>最も人気のある商品は？</li>
+            <li>{$t('chat.examples.sales')}</li>
+            <li>{$t('chat.examples.users')}</li>
+            <li>{$t('chat.examples.popular')}</li>
           </ul>
         </div>
       </div>
@@ -182,7 +186,7 @@
               <span></span>
               <span></span>
             </div>
-            分析中...
+            {$t('chat.analyzing')}
           </div>
         </div>
       </div>
@@ -194,9 +198,9 @@
       <div class="api-key-warning">
         <div class="warning-content">
           <div class="warning-text">
-            <strong>APIキーが設定されていません</strong>
+            <strong>{$t('chat.api_key_warning.title')}</strong>
             <p>
-              チャット機能を使用するには、Gemini APIキーの設定が必要です。
+              {$t('chat.api_key_warning.description')}
             </p>
           </div>
           <div class="warning-actions">
@@ -204,13 +208,13 @@
               onclick={() => (window.location.hash = '#settings')}
               class="settings-link"
             >
-              設定へ移動
+              {$t('chat.api_key_warning.go_to_settings')}
             </button>
             <button
               onclick={() => (showApiKeyWarning = false)}
               class="dismiss-btn"
             >
-              閉じる
+              {$t('chat.api_key_warning.close')}
             </button>
           </div>
         </div>
@@ -220,7 +224,7 @@
       <textarea
         bind:value={inputValue}
         onkeydown={handleKeyDown}
-        placeholder="データ分析について質問を入力してください..."
+        placeholder={$t('chat.placeholder')}
         class="chat-input"
         rows="3"
         disabled={isProcessing}
@@ -230,7 +234,7 @@
         class="send-button"
         disabled={!inputValue.trim() || isProcessing}
       >
-        {isProcessing ? '送信中...' : '送信'}
+        {isProcessing ? $t('chat.sending') : $t('chat.send')}
       </button>
     </div>
   </div>

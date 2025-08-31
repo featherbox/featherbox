@@ -2,6 +2,9 @@
   import { onMount } from 'svelte';
   import { createEventDispatcher } from 'svelte';
   import type { AdapterSummary } from './types';
+  import { t } from './i18n';
+  import ListHeader from './ListHeader.svelte';
+  import EmptyState from './EmptyState.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -24,10 +27,11 @@
 </script>
 
 <div class="adapter-list">
-  <div class="header">
-    <h3>Adapters</h3>
-    <button class="create-btn" onclick={handleCreate}>新規作成</button>
-  </div>
+  <ListHeader
+    titleKey="adapters.title"
+    createKey="adapters.create"
+    on:create={handleCreate}
+  />
 
   <div class="list">
     {#each adapters as adapter}
@@ -53,10 +57,11 @@
     {/each}
 
     {#if adapters.length === 0}
-      <div class="empty-state">
-        <p>アダプターがありません</p>
-        <button onclick={handleCreate}>最初のアダプターを作成</button>
-      </div>
+      <EmptyState
+        messageKey="adapters.empty.message"
+        actionKey="adapters.empty.action"
+        on:create={handleCreate}
+      />
     {/if}
   </div>
 </div>
@@ -68,36 +73,6 @@
     flex-direction: column;
     background: white;
     border-right: 1px solid #e0e0e0;
-  }
-
-  .header {
-    padding: 16px;
-    border-bottom: 1px solid #e0e0e0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .header h3 {
-    margin: 0;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #333;
-  }
-
-  .create-btn {
-    background: #27ae60;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .create-btn:hover:not(:disabled) {
-    background: #2ecc71;
   }
 
   .list {
@@ -168,28 +143,5 @@
     font-size: 0.85rem;
     color: #666;
     line-height: 1.3;
-  }
-
-  .empty-state {
-    padding: 40px 16px;
-    text-align: center;
-    color: #666;
-  }
-
-  .empty-state p {
-    margin-bottom: 16px;
-  }
-
-  .empty-state button {
-    background: #27ae60;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-
-  .empty-state button:hover:not(:disabled) {
-    background: #2ecc71;
   }
 </style>

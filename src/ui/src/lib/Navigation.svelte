@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Database, FileText, BarChart3, Settings, Link } from 'lucide-svelte';
+  import { t } from './i18n';
 
   let {
     activeSection = $bindable('connections'),
@@ -13,28 +14,40 @@
     <li class="nav-item" class:active={activeSection === 'connections'}>
       <button
         onclick={() => (activeSection = 'connections')}
-        title="Connections"
+        title={$t('navigation.connections')}
       >
         <Link class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'adapters'}>
-      <button onclick={() => (activeSection = 'adapters')} title="Adapters">
+      <button
+        onclick={() => (activeSection = 'adapters')}
+        title={$t('navigation.adapters')}
+      >
         <Database class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'models'}>
-      <button onclick={() => (activeSection = 'models')} title="Models">
+      <button
+        onclick={() => (activeSection = 'models')}
+        title={$t('navigation.models')}
+      >
         <FileText class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'analysis'}>
-      <button onclick={() => (activeSection = 'analysis')} title="Analysis">
+      <button
+        onclick={() => (activeSection = 'analysis')}
+        title={$t('navigation.analysis')}
+      >
         <BarChart3 class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'settings'}>
-      <button onclick={() => (activeSection = 'settings')} title="Settings">
+      <button
+        onclick={() => (activeSection = 'settings')}
+        title={$t('navigation.settings')}
+      >
         <Settings class="icon" />
       </button>
     </li>
