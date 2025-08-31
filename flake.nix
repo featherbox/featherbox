@@ -87,6 +87,7 @@
               gcc
               stdenv.cc.cc.lib
               awscli2
+              go-task
             ];
             shellHook = ''
               export LD_LIBRARY_PATH="${duckdb-131}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"

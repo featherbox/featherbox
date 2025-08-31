@@ -130,7 +130,6 @@
           class="session-item"
           class:active={selectedSession?.id === session.id}
           onclick={() => handleSessionSelect(session)}
-          role="button"
         >
           <div class="session-name">{session.name}</div>
           <div class="session-date">{formatDate(session.updatedAt)}</div>

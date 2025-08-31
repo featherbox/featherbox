@@ -1,0 +1,28 @@
+version: '3'
+
+tasks:
+  lint:
+    desc: Run linter for Rust and pnpm, auto-fix where possible
+    cmds:
+      - nix develop --command cargo fix --allow-dirty --allow-staged
+      - nix develop --command cargo clippy --fix --allow-dirty --allow-staged
+      - cd src/ui && pnpm run check
+
+  format:
+    desc: Format Rust and UI code
+    cmds:
+      - nix develop --command cargo fmt
+      - cd src/ui && pnpm run format
+
+  test:
+    desc: Run tests with proper environment setup
+    cmds:
+      - docker compose up -d
+      - sleep 10
+      - nix develop --command cargo test
+
+  init:
+    desc: Initialize direnv for nix development environment
+    cmds:
+      - echo 'use flake .' > .envrc
+      - direnv allow

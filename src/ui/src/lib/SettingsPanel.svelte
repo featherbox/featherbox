@@ -26,8 +26,8 @@
     'gemini-1.5-flash-8b',
   ];
 
-  $effect(async () => {
-    await loadConfig();
+  $effect(() => {
+    loadConfig();
   });
 
   $effect(() => {
