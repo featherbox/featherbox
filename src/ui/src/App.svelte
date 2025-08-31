@@ -12,6 +12,7 @@
   import ModelList from './lib/ModelList.svelte';
   import ModelDetail from './lib/ModelDetail.svelte';
   import ModelForm from './lib/ModelForm.svelte';
+  import PipelinePanel from './lib/PipelinePanel.svelte';
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import AnalysisSession from './lib/AnalysisSession.svelte';
   import QueryPanel from './lib/QueryPanel.svelte';
@@ -448,6 +449,8 @@
         </div>
       {:else if activeSection === 'query'}
         <QueryPanel />
+      {:else if activeSection === 'pipeline'}
+        <PipelinePanel />
       {:else if activeSection === 'analysis'}
         <AnalysisSession />
       {:else if activeSection === 'settings'}

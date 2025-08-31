@@ -8,6 +8,10 @@ pub struct Model {
     pub pipeline_id: i32,
     pub table_name: String,
     pub execution_order: i32,
+    pub status: String,
+    pub started_at: Option<DateTime>,
+    pub completed_at: Option<DateTime>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

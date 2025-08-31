@@ -17,7 +17,7 @@ use crate::{
 use anyhow::Result;
 use sea_orm::DatabaseConnection;
 use sea_orm::{ActiveModelTrait, NotSet, Set};
-use std::path::Path;
+use std::{env, path::Path};
 
 #[cfg(test)]
 use crate::dependency::{calculate_affected_nodes, detect_changes, save_execution_history};
@@ -66,6 +66,9 @@ async fn save_pipeline(
         id: NotSet,
         graph_id: Set(graph_id),
         created_at: Set(chrono::Utc::now().naive_utc()),
+        status: Set("PENDING".to_string()),
+        started_at: NotSet,
+        completed_at: NotSet,
     };
     let saved_pipeline = pipeline_model.insert(app_db).await?;
     let pipeline_id = saved_pipeline.id;
@@ -78,6 +81,10 @@ async fn save_pipeline(
             pipeline_id: Set(pipeline_id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(execution_order as i32),
+            status: Set("PENDING".to_string()),
+            started_at: NotSet,
+            completed_at: NotSet,
+            error_message: NotSet,
         };
         let saved_action = action_model.insert(app_db).await?;
         action_ids.push(saved_action.id);
@@ -174,6 +181,123 @@ pub async fn connect_ducklake(config: &Config) -> Result<DuckLake> {
     };
 
     DuckLake::new(catalog_config, config.project.storage.clone()).await
+}
+
+pub fn execute_with_path(project_path: &str) -> Result<i32> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let path = Path::new(project_path);
+        execute_run_internal(path, None).await
+    })
+}
+
+pub fn execute_with_target_node(project_path: &str, target_node: &str) -> Result<i32> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let path = Path::new(project_path);
+        execute_run_internal(path, Some(target_node.to_string())).await
+    })
+}
+
+pub fn execute() -> Result<i32> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let current_dir = env::current_dir()?;
+        execute_run_internal(&current_dir, None).await
+    })
+}
+
+async fn execute_run_internal(project_path: &Path, target_node: Option<String>) -> Result<i32> {
+    let project_root = ensure_project_directory(Some(project_path))?;
+    let config = Config::load_from_directory(&project_root)?;
+
+    if config.adapters.is_empty() && config.models.is_empty() {
+        return Err(anyhow::anyhow!("No adapters or models found"));
+    }
+
+    let app_db = connect_app_db(&config.project).await?;
+    let graph_id = crate::dependency::latest_graph_id(&app_db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("No graph found. Run migrate first"))?;
+
+    let current_graph = Graph::from_config(&config)?;
+    let ducklake = connect_ducklake(&config).await?;
+
+    let pipeline = if let Some(target) = target_node {
+        let execution_graph = create_execution_subgraph(&current_graph, &target)?;
+        Pipeline::from_graph(&execution_graph)
+    } else {
+        Pipeline::from_graph(&current_graph)
+    };
+
+    save_pipeline(&app_db, graph_id, &pipeline).await?;
+
+    let pipeline_id = get_latest_pipeline_id(&app_db).await?;
+
+    pipeline
+        .execute(&current_graph, &config, &ducklake, &app_db)
+        .await?;
+
+    Ok(pipeline_id)
+}
+
+fn create_execution_subgraph(graph: &Graph, target_node: &str) -> Result<Graph> {
+    use std::collections::{HashSet, VecDeque};
+
+    if !graph.nodes.iter().any(|n| n.name == target_node) {
+        return Err(anyhow::anyhow!(
+            "Target node '{}' not found in graph",
+            target_node
+        ));
+    }
+
+    let mut upstream_nodes = HashSet::new();
+    let mut queue: VecDeque<String> = vec![target_node.to_string()].into();
+
+    while let Some(current_node) = queue.pop_front() {
+        if upstream_nodes.contains(&current_node) {
+            continue;
+        }
+        upstream_nodes.insert(current_node.clone());
+
+        for edge in &graph.edges {
+            if edge.to == current_node && !upstream_nodes.contains(&edge.from) {
+                queue.push_back(edge.from.clone());
+            }
+        }
+    }
+
+    let filtered_nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| upstream_nodes.contains(&node.name))
+        .cloned()
+        .collect();
+
+    let filtered_edges = graph
+        .edges
+        .iter()
+        .filter(|edge| upstream_nodes.contains(&edge.from) && upstream_nodes.contains(&edge.to))
+        .cloned()
+        .collect();
+
+    Ok(Graph {
+        nodes: filtered_nodes,
+        edges: filtered_edges,
+    })
+}
+
+async fn get_latest_pipeline_id(app_db: &DatabaseConnection) -> Result<i32> {
+    use crate::database::entities::pipelines;
+    use sea_orm::{EntityTrait, QueryOrder};
+
+    let latest_pipeline = pipelines::Entity::find()
+        .order_by_desc(pipelines::Column::CreatedAt)
+        .one(app_db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("No pipeline found"))?;
+
+    Ok(latest_pipeline.id)
 }
 
 #[cfg(test)]

@@ -141,7 +141,9 @@ impl MigrationTrait for Migration {
                     )
                     .to_owned(),
             )
-            .await
+            .await?;
+
+        Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
@@ -159,7 +161,9 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .drop_table(Table::drop().table(FboxGraphs::Table).to_owned())
-            .await
+            .await?;
+
+        Ok(())
     }
 }
 

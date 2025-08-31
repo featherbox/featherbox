@@ -18,13 +18,25 @@ cargo test                     # DO NOT use this directly - may fail due to miss
 target/debug/fbox new <project>           # Initialize new project
 target/debug/fbox start <project>         # Start web UI and API server for project
 target/debug/fbox server                  # Start API server only (port 3000)
-target/debug/fbox connection new <name>   # Create connection configuration
-target/debug/fbox adapter new <name>      # Create adapter configuration
-target/debug/fbox model new <name>        # Create model configuration
-target/debug/fbox secret set <key> <value> # Manage encrypted secrets
+target/debug/fbox connection new          # Create connection configuration
+target/debug/fbox connection delete       # Delete connection configuration
+target/debug/fbox adapter new             # Create adapter configuration
+target/debug/fbox adapter delete <name>   # Delete adapter configuration
+target/debug/fbox model new               # Create model configuration
+target/debug/fbox model delete            # Delete model configuration
+target/debug/fbox secret new              # Create new secret
+target/debug/fbox secret edit             # Edit existing secret
+target/debug/fbox secret delete           # Delete secret
+target/debug/fbox secret list             # List all secrets
+target/debug/fbox secret gen-key          # Generate new encryption key
+target/debug/fbox query execute "<sql>"   # Execute SQL query for verification
+target/debug/fbox query list              # List saved queries
+target/debug/fbox query save <name> "<sql>" # Save query with name
+target/debug/fbox query run <name>        # Run saved query by name
+target/debug/fbox query delete <name>     # Delete saved query
+target/debug/fbox query update <name>     # Update saved query
 target/debug/fbox migrate                 # Run database migrations and save graph
 target/debug/fbox run                     # Execute pipeline with differential execution
-target/debug/fbox query "<sql>"           # Execute SQL query for verification
 ```
 
 ## Architecture Overview
@@ -42,6 +54,7 @@ FeatherBox follows domain-driven design principles with clear separation of conc
    - `project.rs`: Project-wide settings structure (storage, database, connections)
    - `adapter.rs`: Data source configuration structures (CSV, JSON, Parquet)
    - `model.rs`: SQL transformation configuration structures
+   - `query.rs`: SQL query configuration structures
 
 3. **Pipeline Execution Domain (`src/pipeline/`)**: Data processing pipeline
    - `execution.rs`: Pipeline orchestration with topological sorting
@@ -51,6 +64,8 @@ FeatherBox follows domain-driven design principles with clear separation of conc
    - `database.rs`: Database operations
    - `file_processor.rs`: File processing utilities
    - `logger.rs`: Pipeline logging
+   - `status.rs`: Pipeline execution status management
+   - `state_manager.rs`: Pipeline state coordination
 
 4. **Dependency Resolution Domain (`src/dependency/`)**: Graph analysis and change detection
    - `graph.rs`: Dependency analysis and DAG generation from SQL parsing
@@ -67,8 +82,10 @@ FeatherBox follows domain-driven design principles with clear separation of conc
 
 7. **Web UI (`src/ui/`)**: Svelte-based web interface
    - Svelte frontend application for visual management
-   - Provides forms for adapter, model, and connection configuration
-   - Real-time pipeline execution monitoring
+   - Provides forms for adapter, model, connection, and secret configuration
+   - Real-time pipeline execution monitoring with visual graph representation
+   - Interactive SQL query panel for data exploration
+   - Pipeline execution controls and status monitoring
    - Accessible at http://localhost:5173 when started
 
 ### Data Flow
@@ -141,12 +158,37 @@ All functionality is embedded in a single binary including:
 - Database migrations (`src/database/migration/`)
 - All dependencies statically linked
 
+### Secret Management
+Implemented using age encryption for secure credential storage:
+- Automatic encryption key generation (`secret_key.txt`)
+- Encrypted secrets storage (`secrets.enc`)
+- Secret expansion in connection configurations using `{{SECRET_NAME}}` syntax
+- Command-line interface for secret management (new, edit, delete, list)
+- Integration with database connections for secure credential handling
+
+### Query Management
+Structured SQL query management system:
+- Save frequently used queries with descriptive names
+- Query templates with parameter substitution
+- Direct SQL execution for ad-hoc analysis
+- Integration with web UI for interactive query development
+- YAML-based query configuration for version control
+
+### Pipeline Status Management
+Real-time pipeline execution monitoring:
+- Pipeline execution status tracking (running, completed, failed)
+- Visual dependency graph representation in web UI
+- Individual task status monitoring
+- Failed task isolation and error reporting
+- Pipeline restart and recovery capabilities
 
 ## Configuration Structure
 
 ### Project Layout
 ```
 project.yml           # Main configuration
+secret_key.txt        # Encryption key for secrets (auto-generated)
+secrets.enc           # Encrypted secrets storage
 adapters/            # Data source definitions
 ├── source1.yml
 └── source2.yml
@@ -155,6 +197,9 @@ models/              # Transformation definitions
 │   └── clean_data.yml
 └── marts/
     └── aggregated.yml
+queries/             # Saved SQL queries
+├── analysis.yml
+└── validation.yml
 ```
 
 
@@ -244,3 +289,53 @@ src/
 - Graph migration (`fbox migrate`) must be run before pipeline execution (`fbox run`)
 - Web UI runs on port 5173, API server runs on port 3000
 - Use `fbox start <project>` to launch both UI and API server together
+
+## API Endpoints
+
+The RESTful API provides the following endpoints:
+
+### Adapters
+- `GET /api/adapters` - List all adapters
+- `GET /api/adapters/{name}` - Get adapter details
+- `POST /api/adapters` - Create new adapter
+- `PUT /api/adapters/{name}` - Update adapter
+- `DELETE /api/adapters/{name}` - Delete adapter
+
+### Models
+- `GET /api/models` - List all models
+- `GET /api/models/{path}` - Get model details
+- `POST /api/models` - Create new model
+- `PUT /api/models/{path}` - Update model
+- `DELETE /api/models/{path}` - Delete model
+
+### Connections
+- `GET /api/connections` - List all connections
+- `GET /api/connections/{name}` - Get connection details
+- `POST /api/connections` - Create new connection
+- `PUT /api/connections/{name}` - Update connection
+- `DELETE /api/connections/{name}` - Delete connection
+
+### Secrets
+- `GET /api/secrets` - List all secrets (masked)
+- `POST /api/secrets` - Create new secret
+- `PUT /api/secrets/{name}` - Update secret
+- `DELETE /api/secrets/{name}` - Delete secret
+- `POST /api/secrets/generate-key` - Generate encryption key
+
+### Queries
+- `GET /api/queries` - List saved queries
+- `GET /api/queries/{name}` - Get query details
+- `POST /api/queries` - Save new query
+- `PUT /api/queries/{name}` - Update query
+- `DELETE /api/queries/{name}` - Delete query
+- `POST /api/queries/{name}/execute` - Execute saved query
+
+### Pipeline
+- `GET /api/pipeline/status` - Get pipeline execution status
+- `POST /api/pipeline/run` - Start pipeline execution
+- `POST /api/pipeline/stop` - Stop running pipeline
+- `GET /api/pipeline/graph` - Get dependency graph visualization data
+
+### Chat/Analysis
+- `POST /api/chat/message` - Send analysis message
+- `GET /api/chat/config` - Get chat configuration

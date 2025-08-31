@@ -7,6 +7,8 @@ use crate::{
         ducklake::DuckLake,
         logger::Logger,
         model::Model,
+        state_manager::StateManager,
+        status::{PipelineStatus, TaskStatus},
     },
 };
 use anyhow::{Context, Result};
@@ -24,6 +26,7 @@ struct ExecutionContext {
     adapters: Arc<HashMap<String, Adapter>>,
     models: Arc<HashMap<String, Model>>,
     app_db: Arc<sea_orm::DatabaseConnection>,
+    state_manager: Arc<StateManager>,
 }
 
 enum TaskResult {
@@ -78,6 +81,14 @@ impl Pipeline {
         let shared_models = Arc::new(models);
 
         let pipeline_id = self.get_latest_pipeline_id(app_db).await?;
+        let state_manager = Arc::new(StateManager::new(app_db.clone()));
+
+        if let Err(e) = state_manager
+            .update_pipeline_status(pipeline_id, PipelineStatus::Running)
+            .await
+        {
+            anyhow::bail!("Failed to update pipeline status to running: {}", e);
+        }
 
         let context = ExecutionContext {
             pipeline_id,
@@ -87,6 +98,7 @@ impl Pipeline {
             adapters: shared_adapters,
             models: shared_models,
             app_db: Arc::new(app_db.clone()),
+            state_manager: state_manager.clone(),
         };
 
         context
@@ -121,6 +133,17 @@ impl Pipeline {
                         );
 
                         context
+                            .state_manager
+                            .update_task_status(
+                                context.pipeline_id,
+                                &table_name,
+                                TaskStatus::Completed,
+                                None,
+                            )
+                            .await
+                            .context("Failed to update task status to completed")?;
+
+                        context
                             .logger
                             .log_task_execution(
                                 context.pipeline_id,
@@ -149,6 +172,17 @@ impl Pipeline {
                         eprintln!(
                             "Task failed for table '{table_name}': {error} ({execution_time_ms}ms)"
                         );
+
+                        context
+                            .state_manager
+                            .update_task_status(
+                                context.pipeline_id,
+                                &table_name,
+                                TaskStatus::Failed,
+                                Some(&error.to_string()),
+                            )
+                            .await
+                            .context("Failed to update task status to failed")?;
 
                         context
                             .logger
@@ -185,6 +219,12 @@ impl Pipeline {
                 )
                 .context("Failed to log pipeline failure")?;
 
+            context
+                .state_manager
+                .update_pipeline_status(context.pipeline_id, PipelineStatus::Failed)
+                .await
+                .context("Failed to update pipeline status to failed")?;
+
             self.print_pipeline_summary(context.pipeline_id, &context.logger)?;
 
             return Err(anyhow::anyhow!(error_message));
@@ -199,6 +239,12 @@ impl Pipeline {
                 None,
             )
             .context("Failed to log pipeline success")?;
+
+        context
+            .state_manager
+            .update_pipeline_status(context.pipeline_id, PipelineStatus::Completed)
+            .await
+            .context("Failed to update pipeline status to completed")?;
 
         self.print_pipeline_summary(context.pipeline_id, &context.logger)?;
 
@@ -267,8 +313,29 @@ impl Pipeline {
                 self.should_skip_task(&action.table_name, &context.graph, failed_tasks);
             if should_skip {
                 failed_tasks.insert(action.table_name.clone());
+                context
+                    .state_manager
+                    .update_task_status(
+                        context.pipeline_id,
+                        &action.table_name,
+                        TaskStatus::Failed,
+                        Some("Skipped due to upstream failure"),
+                    )
+                    .await
+                    .ok();
                 continue;
             }
+
+            context
+                .state_manager
+                .update_task_status(
+                    context.pipeline_id,
+                    &action.table_name,
+                    TaskStatus::Running,
+                    None,
+                )
+                .await
+                .ok();
 
             let handle = self.spawn_task(action, context)?;
             task_handles.push(handle);

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::Path;
+use std::{env, path::Path};
 
 use crate::{
     commands::workspace::ensure_project_directory,
@@ -30,6 +30,21 @@ pub async fn migrate(project_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn execute() -> Result<Option<i32>> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let current_dir = env::current_dir()?;
+        let config = Config::load_from_directory(&current_dir)?;
+
+        if config.adapters.is_empty() && config.models.is_empty() {
+            return Ok(None);
+        }
+
+        let app_db = crate::database::connect_app_db(&config.project).await?;
+        migrate_from_config(&config, &app_db).await
+    })
 }
 
 pub async fn migrate_from_config(

@@ -9,6 +9,7 @@ mod connection;
 mod model;
 mod query;
 mod secret;
+mod pipeline;
 
 pub async fn main() -> Result<()> {
     let cors = CorsLayer::new()
@@ -24,6 +25,7 @@ pub async fn main() -> Result<()> {
         .merge(model::routes())
         .merge(query::routes())
         .merge(secret::routes())
+        .merge(pipeline::routes())
         .merge(chat::config_routes())
         .nest("/chat", chat::routes().with_state(chat_state));
 
@@ -34,7 +36,6 @@ pub async fn main() -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     println!("API server listening on http://0.0.0.0:3000");
-    println!("UI available on http://0.0.0.0:3000");
     axum::serve(listener, app).await?;
 
     Ok(())

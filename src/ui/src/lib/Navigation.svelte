@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { Database, FileText, BarChart3, Settings, Link, Search } from 'lucide-svelte';
+  import {
+    Database,
+    FileText,
+    BarChart3,
+    Settings,
+    Link,
+    Search,
+    GitBranch,
+  } from 'lucide-svelte';
   import { t } from './i18n';
 
   let {
@@ -41,6 +49,14 @@
         title="Query"
       >
         <Search class="icon" />
+      </button>
+    </li>
+    <li class="nav-item" class:active={activeSection === 'pipeline'}>
+      <button
+        onclick={() => (activeSection = 'pipeline')}
+        title={$t('navigation.pipeline')}
+      >
+        <GitBranch class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'analysis'}>

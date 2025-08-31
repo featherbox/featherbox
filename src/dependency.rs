@@ -171,6 +171,9 @@ pub async fn save_execution_history(
         id: NotSet,
         graph_id: Set(saved_graph.id),
         created_at: Set(chrono::Utc::now().naive_utc()),
+        status: Set("pending".to_string()),
+        started_at: Set(None),
+        completed_at: Set(None),
     };
     let saved_pipeline = pipeline_model.insert(db).await?;
 
@@ -181,6 +184,10 @@ pub async fn save_execution_history(
             pipeline_id: Set(saved_pipeline.id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(order as i32),
+            status: Set("pending".to_string()),
+            started_at: Set(None),
+            completed_at: Set(None),
+            error_message: Set(None),
         };
         action_model.insert(db).await?;
     }
@@ -309,6 +316,9 @@ pub async fn save_pipeline_execution(
         id: NotSet,
         graph_id: Set(graph_id),
         created_at: Set(chrono::Utc::now().naive_utc()),
+        status: Set("pending".to_string()),
+        started_at: Set(None),
+        completed_at: Set(None),
     };
     let saved_pipeline = pipeline_model.insert(db).await?;
 
@@ -319,6 +329,10 @@ pub async fn save_pipeline_execution(
             pipeline_id: Set(saved_pipeline.id),
             table_name: Set(action.table_name.clone()),
             execution_order: Set(order as i32),
+            status: Set("pending".to_string()),
+            started_at: Set(None),
+            completed_at: Set(None),
+            error_message: Set(None),
         };
         action_model.insert(db).await?;
     }

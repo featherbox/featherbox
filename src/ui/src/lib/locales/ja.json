@@ -3,6 +3,7 @@
     "connections": "接続",
     "adapters": "アダプター",
     "models": "モデル",
+    "pipeline": "パイプライン",
     "analysis": "分析",
     "settings": "設定"
   },
@@ -113,6 +114,15 @@
       "go_to_settings": "設定へ移動",
       "close": "閉じる"
     }
+  },
+  "pipeline": {
+    "title": "パイプライン",
+    "migrate": "マイグレート",
+    "run": "実行",
+    "refresh": "再読み込み",
+    "migrate_tooltip": "データベーススキーマをマイグレートし、依存関係グラフを更新します",
+    "run_tooltip": "現在の設定でパイプラインを実行します",
+    "refresh_tooltip": "パイプライングラフを再読み込みします"
   },
   "common": {
     "save": "保存",

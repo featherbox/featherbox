@@ -3,6 +3,7 @@
     "connections": "Connections",
     "adapters": "Adapters",
     "models": "Models",
+    "pipeline": "Pipeline",
     "analysis": "Analysis",
     "settings": "Settings"
   },
@@ -113,6 +114,15 @@
       "go_to_settings": "Go to Settings",
       "close": "Close"
     }
+  },
+  "pipeline": {
+    "title": "Pipeline",
+    "migrate": "Migrate",
+    "run": "Run",
+    "refresh": "Refresh",
+    "migrate_tooltip": "Migrate database schema and update dependency graph",
+    "run_tooltip": "Execute pipeline with current configuration",
+    "refresh_tooltip": "Refresh pipeline graph"
   },
   "common": {
     "save": "Save",

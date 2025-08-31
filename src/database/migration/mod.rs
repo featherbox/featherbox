@@ -5,6 +5,7 @@ mod m20240102_000001_add_range_to_pipeline_actions;
 mod m20240103_000001_remove_range_from_pipeline_actions;
 mod m20240104_000001_add_config_json_to_nodes;
 mod m20240105_000001_add_last_updated_at_to_nodes;
+mod m20240106_000001_add_execution_status;
 
 pub struct Migrator;
 
@@ -17,6 +18,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240103_000001_remove_range_from_pipeline_actions::Migration),
             Box::new(m20240104_000001_add_config_json_to_nodes::Migration),
             Box::new(m20240105_000001_add_last_updated_at_to_nodes::Migration),
+            Box::new(m20240106_000001_add_execution_status::Migration),
         ]
     }
 }

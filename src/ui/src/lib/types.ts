@@ -135,3 +135,39 @@ export interface ConnectionDetails {
   type: string;
   [key: string]: any; // 接続タイプによって異なるプロパティ
 }
+
+export interface FormConfig {
+  show: boolean;
+  type: 'create' | 'edit';
+  name?: string;
+}
+
+export interface GraphNode {
+  name: string;
+  status?: string;
+  last_updated_at?: string;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+}
+
+export interface TaskStatus {
+  table_name: string;
+  status: string;
+  execution_order: number;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export interface PipelineStatus {
+  id: number;
+  graph_id: number;
+  status: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  tasks: TaskStatus[];
+}

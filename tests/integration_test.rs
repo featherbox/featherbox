@@ -119,7 +119,7 @@ fn run_fbox_command(args: &[&str], project_dir: &Path) -> Result<(bool, String)>
 }
 
 fn verify_data_with_query(project_dir: &Path, sql: &str) -> Result<String> {
-    let (success, output) = run_fbox_command(&["query", sql], project_dir)?;
+    let (success, output) = run_fbox_command(&["query", "execute", sql], project_dir)?;
     if !success {
         anyhow::bail!("Query failed: {}", output);
     }
