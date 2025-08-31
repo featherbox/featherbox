@@ -100,7 +100,7 @@
   <div class="analysis-sidebar">
     <div class="sidebar-header">
       <h2>分析セッション</h2>
-      <button onclick={handleNewSession} class="new-session-btn" title="新しいセッション">
+      <button onclick={handleNewSession} class="new-session-btn" aria-label="新しいセッション">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -110,14 +110,15 @@
     
     <div class="sessions-list">
       {#each sessions as session}
-        <div 
+        <button 
           class="session-item"
           class:active={selectedSession?.id === session.id}
           onclick={() => handleSessionSelect(session)}
+          role="button"
         >
           <div class="session-name">{session.name}</div>
           <div class="session-date">{formatDate(session.updatedAt)}</div>
-        </div>
+        </button>
       {/each}
     </div>
   </div>
@@ -208,6 +209,8 @@
     transition: all 0.2s ease;
     background-color: white;
     border: 1px solid #e0e0e0;
+    width: 100%;
+    text-align: left;
   }
 
   .session-item:hover {

@@ -506,20 +506,4 @@
     flex: 1;
   }
 
-  .placeholder {
-    padding: 32px;
-    max-width: 800px;
-    margin: 0 auto;
-  }
-
-  .placeholder h2 {
-    margin: 0 0 16px 0;
-    font-size: 1.75rem;
-    color: #333;
-  }
-
-  .placeholder p {
-    color: #666;
-    font-size: 1rem;
-  }
 </style>
