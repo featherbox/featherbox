@@ -2,3 +2,4 @@
 storage/
 database.db
 *.db
+.playwright-mcp

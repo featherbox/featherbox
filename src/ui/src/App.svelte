@@ -10,6 +10,8 @@
   import ModelList from './lib/ModelList.svelte';
   import ModelDetail from './lib/ModelDetail.svelte';
   import ModelForm from './lib/ModelForm.svelte';
+  import SettingsPanel from './lib/SettingsPanel.svelte';
+  import AnalysisSession from './lib/AnalysisSession.svelte';
   import type {
     AdapterSummary,
     AdapterDetails,
@@ -441,15 +443,9 @@
         </div>
       </div>
     {:else if activeSection === 'analysis'}
-      <div class="placeholder">
-        <h2>Analysis</h2>
-        <p>分析機能は今後実装予定です</p>
-      </div>
+      <AnalysisSession />
     {:else if activeSection === 'settings'}
-      <div class="placeholder">
-        <h2>Settings</h2>
-        <p>設定機能は今後実装予定です</p>
-      </div>
+      <SettingsPanel />
     {/if}
   </main>
 </div>

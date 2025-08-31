@@ -5,6 +5,7 @@ use tower_http::cors::{Any, CorsLayer};
 mod adapter;
 mod connection;
 mod model;
+mod chat;
 
 pub async fn main() -> Result<()> {
     let cors = CorsLayer::new()
@@ -12,10 +13,14 @@ pub async fn main() -> Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let chat_state = chat::AppState::default();
+
     let api_routes = Router::new()
         .merge(adapter::routes())
         .merge(connection::routes())
-        .merge(model::routes());
+        .merge(model::routes())
+        .merge(chat::config_routes())
+        .nest("/chat", chat::routes().with_state(chat_state));
 
     let app = Router::new().nest("/api", api_routes).layer(cors);
 
