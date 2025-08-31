@@ -291,20 +291,20 @@ pub fn dependent_tables(sql: &str) -> Result<Vec<String>, String> {
         Err(e) => return Err(e.to_string()),
     };
 
-    if let Some(Statement::Query(query)) = ast.first() {
-        if let sqlparser::ast::SetExpr::Select(select) = query.body.as_ref() {
-            let mut tables = Vec::new();
+    if let Some(Statement::Query(query)) = ast.first()
+        && let sqlparser::ast::SetExpr::Select(select) = query.body.as_ref()
+    {
+        let mut tables = Vec::new();
 
-            for table in &select.from {
-                collect_table_names(&table.relation, &mut tables);
+        for table in &select.from {
+            collect_table_names(&table.relation, &mut tables);
 
-                for join in &table.joins {
-                    collect_table_names(&join.relation, &mut tables);
-                }
+            for join in &table.joins {
+                collect_table_names(&join.relation, &mut tables);
             }
-
-            return Ok(tables);
         }
+
+        return Ok(tables);
     }
 
     Ok(vec![])
@@ -420,6 +420,7 @@ mod tests {
             },
             adapters,
             models,
+            queries: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -495,6 +496,7 @@ mod tests {
             },
             adapters,
             models,
+            queries: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -542,6 +544,7 @@ mod tests {
             },
             adapters,
             models,
+            queries: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -607,6 +610,7 @@ mod tests {
             },
             adapters,
             models,
+            queries: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -651,6 +655,7 @@ mod tests {
             },
             adapters,
             models,
+            queries: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 

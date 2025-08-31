@@ -14,6 +14,7 @@
   import ModelForm from './lib/ModelForm.svelte';
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import AnalysisSession from './lib/AnalysisSession.svelte';
+  import QueryPanel from './lib/QueryPanel.svelte';
   import type {
     AdapterSummary,
     AdapterDetails,
@@ -445,6 +446,8 @@
             />
           </div>
         </div>
+      {:else if activeSection === 'query'}
+        <QueryPanel />
       {:else if activeSection === 'analysis'}
         <AnalysisSession />
       {:else if activeSection === 'settings'}

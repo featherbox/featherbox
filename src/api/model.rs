@@ -72,22 +72,22 @@ fn collect_models(
 
         if path.is_dir() {
             collect_models(base_dir, &path, models)?;
-        } else if path.extension().and_then(|s| s.to_str()) == Some("yml") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                let relative_path = path
-                    .strip_prefix(base_dir)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                let model_path = relative_path.to_string_lossy().replace(".yml", "");
+        } else if path.extension().and_then(|s| s.to_str()) == Some("yml")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            let relative_path = path
+                .strip_prefix(base_dir)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let model_path = relative_path.to_string_lossy().replace(".yml", "");
 
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(config) = parse_model_config(&content) {
-                        models.push(ModelSummary {
-                            name: stem.to_string(),
-                            path: model_path,
-                            description: config.description,
-                        });
-                    }
-                }
+            if let Ok(content) = fs::read_to_string(&path)
+                && let Ok(config) = parse_model_config(&content)
+            {
+                models.push(ModelSummary {
+                    name: stem.to_string(),
+                    path: model_path,
+                    description: config.description,
+                });
             }
         }
     }

@@ -12,16 +12,19 @@ pub fn load_from_directory(project_path: &Path) -> Result<Config> {
 pub mod adapter;
 pub mod model;
 pub mod project;
+pub mod query;
 
 pub use adapter::AdapterConfig;
 pub use model::ModelConfig;
 pub use project::ProjectConfig;
+pub use query::QueryConfig;
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub project: ProjectConfig,
     pub adapters: HashMap<String, AdapterConfig>,
     pub models: HashMap<String, ModelConfig>,
+    pub queries: HashMap<String, QueryConfig>,
     pub project_root: std::path::PathBuf,
 }
 
@@ -30,11 +33,13 @@ impl Config {
         let project_config = load_project_config(project_path)?;
         let adapters = load_adapters(project_path)?;
         let models = load_models(project_path)?;
+        let queries = load_queries(project_path)?;
 
         Ok(Config {
             project: project_config,
             adapters,
             models,
+            queries,
             project_root: project_path.to_path_buf(),
         })
     }
@@ -149,6 +154,15 @@ fn load_models(project_path: &Path) -> Result<HashMap<String, ModelConfig>> {
         &project_path.join("models"),
         "model",
         model::parse_model_config,
+        project_path,
+    )
+}
+
+fn load_queries(project_path: &Path) -> Result<HashMap<String, QueryConfig>> {
+    load_config_files_recursive(
+        &project_path.join("queries"),
+        "query",
+        query::parse_query_config,
         project_path,
     )
 }

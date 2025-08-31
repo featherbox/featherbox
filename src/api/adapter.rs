@@ -58,29 +58,27 @@ async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, StatusCode> {
         let entry = entry.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let path = entry.path();
 
-        if path.extension().and_then(|s| s.to_str()) == Some("yml") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                let adapter_name = stem.to_string();
+        if path.extension().and_then(|s| s.to_str()) == Some("yml")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            let adapter_name = stem.to_string();
 
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(config) = parse_adapter_config(&content) {
-                        let source_type = match &config.source {
-                            crate::config::adapter::AdapterSource::File { .. } => {
-                                "file".to_string()
-                            }
-                            crate::config::adapter::AdapterSource::Database { .. } => {
-                                "database".to_string()
-                            }
-                        };
-
-                        adapters.push(AdapterSummary {
-                            name: adapter_name,
-                            description: config.description,
-                            connection: config.connection,
-                            source_type,
-                        });
+            if let Ok(content) = fs::read_to_string(&path)
+                && let Ok(config) = parse_adapter_config(&content)
+            {
+                let source_type = match &config.source {
+                    crate::config::adapter::AdapterSource::File { .. } => "file".to_string(),
+                    crate::config::adapter::AdapterSource::Database { .. } => {
+                        "database".to_string()
                     }
-                }
+                };
+
+                adapters.push(AdapterSummary {
+                    name: adapter_name,
+                    description: config.description,
+                    connection: config.connection,
+                    source_type,
+                });
             }
         }
     }

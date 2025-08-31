@@ -80,7 +80,8 @@ enum Commands {
     Migrate,
     Run,
     Query {
-        sql: String,
+        #[command(subcommand)]
+        action: QueryAction,
     },
     Connection {
         #[command(subcommand)]
@@ -113,6 +114,27 @@ enum ConnectionAction {
 enum ModelAction {
     New,
     Delete,
+}
+
+#[derive(Subcommand)]
+enum QueryAction {
+    Execute { sql: String },
+    List,
+    Save {
+        name: String,
+        sql: String,
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    Run { name: String },
+    Delete { name: String },
+    Update {
+        name: String,
+        #[arg(long)]
+        sql: Option<String>,
+        #[arg(short, long)]
+        description: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -168,7 +190,18 @@ async fn main() -> Result<()> {
         },
         Commands::Migrate => commands::migrate::migrate(&current_dir).await,
         Commands::Run => commands::run::run(&current_dir).await,
-        Commands::Query { sql } => commands::query::execute_query(sql, &current_dir).await,
+        Commands::Query { action } => match action {
+            QueryAction::Execute { sql } => commands::query::execute_query(sql, &current_dir).await,
+            QueryAction::List => commands::query::list_queries(&current_dir),
+            QueryAction::Save { name, sql, description } => {
+                commands::query::save_query(name, sql, description.clone(), &current_dir)
+            }
+            QueryAction::Run { name } => commands::query::run_query(name, &current_dir).await,
+            QueryAction::Delete { name } => commands::query::delete_query(name, &current_dir),
+            QueryAction::Update { name, sql, description } => {
+                commands::query::update_query(name, sql.clone(), description.clone(), &current_dir)
+            }
+        },
         Commands::Connection { action } => match action {
             ConnectionAction::New => commands::connection::execute_connection(&current_dir).await,
             ConnectionAction::Delete => {

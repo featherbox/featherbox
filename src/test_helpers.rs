@@ -186,6 +186,7 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
         project: project_config.clone(),
         adapters: HashMap::new(),
         models: HashMap::new(),
+        queries: HashMap::new(),
         project_root: temp_dir.path().to_path_buf(),
     };
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Database, FileText, BarChart3, Settings, Link } from 'lucide-svelte';
+  import { Database, FileText, BarChart3, Settings, Link, Search } from 'lucide-svelte';
   import { t } from './i18n';
 
   let {
@@ -33,6 +33,14 @@
         title={$t('navigation.models')}
       >
         <FileText class="icon" />
+      </button>
+    </li>
+    <li class="nav-item" class:active={activeSection === 'query'}>
+      <button
+        onclick={() => (activeSection = 'query')}
+        title="Query"
+      >
+        <Search class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'analysis'}>

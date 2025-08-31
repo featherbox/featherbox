@@ -47,10 +47,10 @@ impl Adapter {
     ) -> Result<()> {
         let filesystem = self.create_filesystem(connections).await?;
 
-        if let Some(connection) = self.get_connection_if_exists(connections) {
-            if matches!(connection, ConnectionConfig::S3(_)) {
-                self.ducklake.configure_s3_connection(connection).await?;
-            }
+        if let Some(connection) = self.get_connection_if_exists(connections)
+            && matches!(connection, ConnectionConfig::S3(_))
+        {
+            self.ducklake.configure_s3_connection(connection).await?;
         }
 
         let file_paths = FileProcessor::files_for_processing(&self.config, &filesystem).await?;
@@ -231,10 +231,10 @@ impl Adapter {
         &self,
         connections: Option<&HashMap<String, ConnectionConfig>>,
     ) -> Result<FileSystem> {
-        if let Some(connections) = connections {
-            if let Some(connection) = connections.get(&self.config.connection) {
-                return FileSystem::from_connection(connection).await;
-            }
+        if let Some(connections) = connections
+            && let Some(connection) = connections.get(&self.config.connection)
+        {
+            return FileSystem::from_connection(connection).await;
         }
         Ok(FileSystem::new_local(None))
     }

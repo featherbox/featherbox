@@ -108,14 +108,14 @@ fn collect_yml_files_recursive(
 
         if path.is_dir() {
             collect_yml_files_recursive(base_dir, &path, model_files)?;
-        } else if let Some(extension) = path.extension() {
-            if extension == "yml" || extension == "yaml" {
-                let relative_path = path
-                    .strip_prefix(base_dir)
-                    .with_context(|| "Failed to create relative path")?;
-                let display_name = crate::config::generate_node_name_from_path(relative_path);
-                model_files.push(display_name);
-            }
+        } else if let Some(extension) = path.extension()
+            && (extension == "yml" || extension == "yaml")
+        {
+            let relative_path = path
+                .strip_prefix(base_dir)
+                .with_context(|| "Failed to create relative path")?;
+            let display_name = crate::config::generate_node_name_from_path(relative_path);
+            model_files.push(display_name);
         }
     }
 

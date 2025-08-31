@@ -98,10 +98,9 @@ pub async fn detect_changes(
                     } else if let (Ok(last_model), Ok(current_model)) = (
                         serde_json::from_str::<ModelConfig>(last_json),
                         serde_json::from_str::<ModelConfig>(current_json),
-                    ) {
-                        if last_model.has_changed(&current_model) {
-                            config_changed_nodes.push(node_name.clone());
-                        }
+                    ) && last_model.has_changed(&current_model)
+                    {
+                        config_changed_nodes.push(node_name.clone());
                     }
                 }
                 (None, Some(_)) | (Some(_), None) => {
@@ -416,6 +415,7 @@ mod tests {
             },
             adapters: HashMap::new(),
             models: HashMap::new(),
+            queries: HashMap::new(),
             project_root: std::path::PathBuf::from("."),
         }
     }

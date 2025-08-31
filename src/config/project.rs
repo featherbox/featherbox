@@ -15,10 +15,10 @@ impl ProjectConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if let StorageConfig::LocalFile { path } = &self.storage {
-            if path.is_empty() {
-                return Err(anyhow::anyhow!("Storage path cannot be empty"));
-            }
+        if let StorageConfig::LocalFile { path } = &self.storage
+            && path.is_empty()
+        {
+            return Err(anyhow::anyhow!("Storage path cannot be empty"));
         }
 
         if let StorageConfig::S3(s3_config) = &self.storage {

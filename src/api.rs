@@ -7,6 +7,7 @@ mod adapter;
 mod chat;
 mod connection;
 mod model;
+mod query;
 
 pub async fn main() -> Result<()> {
     let cors = CorsLayer::new()
@@ -20,6 +21,7 @@ pub async fn main() -> Result<()> {
         .merge(adapter::routes())
         .merge(connection::routes())
         .merge(model::routes())
+        .merge(query::routes())
         .merge(chat::config_routes())
         .nest("/chat", chat::routes().with_state(chat_state));
 
