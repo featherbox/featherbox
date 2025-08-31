@@ -1,9 +1,11 @@
 use crate::commands::workspace::find_project_root;
 use crate::config::project::{ConnectionConfig, parse_project_config};
+use crate::secret::SecretManager;
 use anyhow::Result;
 use axum::extract::Path;
 use axum::response::Json;
 use axum::{Router, http::StatusCode, routing::get};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -170,11 +172,60 @@ async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, Statu
         return Err(StatusCode::NOT_FOUND);
     }
 
+    let connection_config = config.connections.get(&name).unwrap();
+    let secret_keys = extract_secret_keys_from_connection(connection_config);
+
     config.connections.remove(&name);
 
     let yaml_content =
         serde_yml::to_string(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     fs::write(&project_yml, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let manager =
+        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for secret_key in secret_keys {
+        let _ = manager.delete_secret(&secret_key);
+    }
+
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn extract_secret_keys_from_connection(config: &ConnectionConfig) -> Vec<String> {
+    let mut secret_keys = Vec::new();
+    let secret_regex = Regex::new(r"\$\{SECRET_([a-zA-Z][a-zA-Z0-9_]*)\}").unwrap();
+
+    match config {
+        ConnectionConfig::MySql { password, .. } => {
+            if let Some(key) = extract_secret_key_from_value(password, &secret_regex) {
+                secret_keys.push(key);
+            }
+        }
+        ConnectionConfig::PostgreSql { password, .. } => {
+            if let Some(key) = extract_secret_key_from_value(password, &secret_regex) {
+                secret_keys.push(key);
+            }
+        }
+        ConnectionConfig::S3(s3_config) => {
+            if let Some(key) =
+                extract_secret_key_from_value(&s3_config.secret_access_key, &secret_regex)
+            {
+                secret_keys.push(key);
+            }
+            if let Some(session_token) = &s3_config.session_token
+                && let Some(key) = extract_secret_key_from_value(session_token, &secret_regex)
+            {
+                secret_keys.push(key);
+            }
+        }
+        _ => {}
+    }
+
+    secret_keys
+}
+
+fn extract_secret_key_from_value(value: &str, regex: &Regex) -> Option<String> {
+    regex
+        .captures(value)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
 }

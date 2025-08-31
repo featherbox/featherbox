@@ -12,7 +12,8 @@ name = "fbox"
 path = "src/main.rs"
 
 [dependencies]
-age = "0.10"
+ring = "0.17"
+base64 = "0.22"
 anyhow = "1.0.98"
 aws-config = "1.0"
 aws-sdk-s3 = "1.0"

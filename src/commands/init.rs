@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::ProjectConfig;
-use age::secrecy::ExposeSecret;
 
 pub struct ProjectBuilder {
     pub project_name: String,
@@ -101,11 +100,15 @@ fn ensure_secret_key(project_path: &std::path::Path) -> Result<()> {
 }
 
 fn generate_secret_key(key_path: &std::path::Path) -> Result<()> {
-    let passphrase = age::secrecy::Secret::new(
-        std::iter::repeat_with(fastrand::alphanumeric)
-            .take(32)
-            .collect::<String>(),
-    );
+    use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+    use ring::rand::{SecureRandom, SystemRandom};
+
+    let mut key_bytes = [0u8; 32];
+    let rng = SystemRandom::new();
+    rng.fill(&mut key_bytes)
+        .map_err(|_| anyhow::anyhow!("Failed to generate random key"))?;
+
+    let key_base64 = BASE64.encode(key_bytes);
 
     let key_content = format!(
         "# FeatherBox Secret Key\n# DO NOT share publicly\n# Generated: {}\n\n{}",
@@ -113,7 +116,7 @@ fn generate_secret_key(key_path: &std::path::Path) -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
-        passphrase.expose_secret()
+        key_base64
     );
 
     fs::write(key_path, key_content)

@@ -1,11 +1,25 @@
-use age::secrecy::ExposeSecret;
 use anyhow::{Context, Result};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use regex::Regex;
+use ring::aead::{
+    AES_256_GCM, Aad, BoundKey, Nonce, NonceSequence, OpeningKey, SealingKey, UnboundKey,
+};
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+struct CountingNonceSequence(u32);
+
+impl NonceSequence for CountingNonceSequence {
+    fn advance(&mut self) -> Result<Nonce, ring::error::Unspecified> {
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes[8..].copy_from_slice(&self.0.to_be_bytes());
+        self.0 += 1;
+        Nonce::try_assume_unique_for_key(&nonce_bytes)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct SecretData {
@@ -34,11 +48,12 @@ impl SecretManager {
     }
 
     pub fn generate_key(&self) -> Result<()> {
-        let passphrase = age::secrecy::Secret::new(
-            std::iter::repeat_with(fastrand::alphanumeric)
-                .take(32)
-                .collect::<String>(),
-        );
+        let mut key_bytes = [0u8; 32];
+        let rng = SystemRandom::new();
+        rng.fill(&mut key_bytes)
+            .map_err(|_| anyhow::anyhow!("Failed to generate random key"))?;
+
+        let key_base64 = BASE64.encode(key_bytes);
 
         let key_content = format!(
             "# FeatherBox Secret Key File\n# \n# This file contains the encryption key for your project secrets.\n# \n# SECURITY WARNINGS:\n# - DO NOT commit this file to version control (Git, SVN, etc.)\n# - DO NOT share via email, chat, or public platforms\n# - DO NOT copy to shared drives or cloud storage\n# \n# TEAM SHARING:\n# - Share this key securely through encrypted channels only\n# - All team members need the same key to access project secrets\n# - Store backup copies in secure password managers\n# \n# USAGE:\n# - Keep this file at <project-directory>/.secret.key\n# - Use 'fbox secret' commands to manage encrypted credentials\n# - If lost, use 'fbox secret gen-key' to regenerate (existing secrets will be lost)\n# \n# Generated: {}\n\n{}",
@@ -46,7 +61,7 @@ impl SecretManager {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            passphrase.expose_secret()
+            key_base64
         );
 
         fs::write(&self.key_file_path, key_content).with_context(|| {
@@ -60,7 +75,7 @@ impl SecretManager {
         self.key_file_path.exists()
     }
 
-    fn load_passphrase(&self) -> Result<age::secrecy::Secret<String>> {
+    fn load_key(&self) -> Result<[u8; 32]> {
         if !self.key_exists() {
             return Err(anyhow::anyhow!(
                 "Secret key not found. Run 'fbox secret gen-key' first."
@@ -76,7 +91,70 @@ impl SecretManager {
             .find(|line| !line.trim().starts_with('#') && !line.trim().is_empty())
             .context("No valid key found in secret file")?;
 
-        Ok(age::secrecy::Secret::new(key_line.to_string()))
+        let key_bytes = BASE64
+            .decode(key_line.trim())
+            .context("Failed to decode base64 key")?;
+
+        if key_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("Invalid key length, expected 32 bytes"));
+        }
+
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&key_bytes);
+        Ok(key)
+    }
+
+    fn encrypt(&self, data: &str) -> Result<String> {
+        let key = self.load_key()?;
+        let unbound_key = UnboundKey::new(&AES_256_GCM, &key)
+            .map_err(|_| anyhow::anyhow!("Failed to create encryption key"))?;
+
+        let mut nonce_bytes = [0u8; 12];
+        let rng = SystemRandom::new();
+        rng.fill(&mut nonce_bytes)
+            .map_err(|_| anyhow::anyhow!("Failed to generate nonce"))?;
+
+        let mut sealing_key = SealingKey::new(unbound_key, CountingNonceSequence(0));
+
+        let mut in_out = data.as_bytes().to_vec();
+        let tag = sealing_key
+            .seal_in_place_separate_tag(Aad::empty(), &mut in_out)
+            .map_err(|_| anyhow::anyhow!("Failed to encrypt data"))?;
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&nonce_bytes);
+        payload.extend_from_slice(&in_out);
+        payload.extend_from_slice(tag.as_ref());
+
+        Ok(BASE64.encode(payload))
+    }
+
+    fn decrypt(&self, encrypted_data: &str) -> Result<String> {
+        let key = self.load_key()?;
+        let payload = BASE64
+            .decode(encrypted_data.trim())
+            .context("Failed to decode base64 encrypted data")?;
+
+        if payload.len() < 28 {
+            return Err(anyhow::anyhow!("Invalid encrypted data: too short"));
+        }
+
+        let tag_start = payload.len() - 16;
+        let ciphertext = &payload[12..tag_start];
+
+        let unbound_key = UnboundKey::new(&AES_256_GCM, &key)
+            .map_err(|_| anyhow::anyhow!("Failed to create decryption key"))?;
+        let mut opening_key = OpeningKey::new(unbound_key, CountingNonceSequence(0));
+
+        let mut ciphertext_and_tag = Vec::new();
+        ciphertext_and_tag.extend_from_slice(ciphertext);
+        ciphertext_and_tag.extend_from_slice(&payload[tag_start..]);
+
+        let decrypted = opening_key
+            .open_in_place(Aad::empty(), &mut ciphertext_and_tag)
+            .map_err(|_| anyhow::anyhow!("Failed to decrypt data"))?;
+
+        String::from_utf8(decrypted.to_vec()).context("Decrypted data is not valid UTF-8")
     }
 
     fn load_secrets(&self) -> Result<SecretData> {
@@ -84,56 +162,26 @@ impl SecretManager {
             return Ok(SecretData::default());
         }
 
-        let encrypted_content = fs::read(&self.secrets_file_path).with_context(|| {
+        let encrypted_content = fs::read_to_string(&self.secrets_file_path).with_context(|| {
             format!(
                 "Failed to read secrets file: {}",
                 self.secrets_file_path.display()
             )
         })?;
 
-        if encrypted_content.is_empty() {
+        if encrypted_content.trim().is_empty() {
             return Ok(SecretData::default());
         }
 
-        let passphrase = self.load_passphrase()?;
-        let decryptor = match age::Decryptor::new(&encrypted_content[..]) {
-            Ok(age::Decryptor::Passphrase(d)) => d,
-            Ok(_) => return Err(anyhow::anyhow!("Unexpected decryptor type")),
-            Err(e) => return Err(anyhow::anyhow!("Failed to create decryptor: {}", e)),
-        };
-
-        let mut decrypted_content = Vec::new();
-        let mut reader = decryptor
-            .decrypt(&passphrase, None)
-            .context("Failed to decrypt secrets")?;
-
-        reader
-            .read_to_end(&mut decrypted_content)
-            .context("Failed to read decrypted content")?;
-
-        let json_str =
-            String::from_utf8(decrypted_content).context("Decrypted content is not valid UTF-8")?;
-
-        serde_json::from_str(&json_str).context("Failed to parse secrets JSON")
+        let decrypted_content = self.decrypt(&encrypted_content)?;
+        serde_json::from_str(&decrypted_content).context("Failed to parse secrets JSON")
     }
 
     fn save_secrets(&self, data: &SecretData) -> Result<()> {
         let json_content =
             serde_json::to_string_pretty(data).context("Failed to serialize secrets to JSON")?;
 
-        let passphrase = self.load_passphrase()?;
-        let encryptor = age::Encryptor::with_user_passphrase(passphrase.clone());
-
-        let mut encrypted_content = Vec::new();
-        let mut writer = encryptor
-            .wrap_output(&mut encrypted_content)
-            .context("Failed to create encrypted writer")?;
-
-        writer
-            .write_all(json_content.as_bytes())
-            .context("Failed to write content to encryptor")?;
-
-        writer.finish().context("Failed to finalize encryption")?;
+        let encrypted_content = self.encrypt(&json_content)?;
 
         fs::write(&self.secrets_file_path, encrypted_content).with_context(|| {
             format!(
@@ -237,7 +285,7 @@ mod tests {
         manager.generate_key()?;
         assert!(manager.key_exists());
 
-        let _passphrase = manager.load_passphrase()?;
+        let _key = manager.load_key()?;
 
         Ok(())
     }

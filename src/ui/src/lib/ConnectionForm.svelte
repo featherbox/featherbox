@@ -2,6 +2,16 @@
   import { createEventDispatcher } from 'svelte';
   import { Database, Folder, Cloud, Server } from 'lucide-svelte';
   import type { ConnectionDetails } from './types';
+  import {
+    createSecret,
+    updateSecret,
+    deleteSecret,
+    getSecretInfo,
+    generateUniqueSecretKey,
+    extractSecretKey,
+    createSecretReference,
+    isSecretReference,
+  } from './secretUtils';
 
   const dispatch = createEventDispatcher();
 
@@ -40,6 +50,14 @@
   let s3SecretAccessKey = $state('');
   let s3PathStyleAccess = $state(false);
 
+  let mysqlPasswordSecret = $state('');
+  let postgresPasswordSecret = $state('');
+  let s3SecretAccessKeySecret = $state('');
+
+  let mysqlPasswordChanged = $state(false);
+  let postgresPasswordChanged = $state(false);
+  let s3SecretAccessKeyChanged = $state(false);
+
   $effect(() => {
     if (initialData && mode === 'edit') {
       name = initialData.name;
@@ -54,26 +72,160 @@
         mysqlPort = initialData.port || 3306;
         mysqlDatabase = initialData.database || '';
         mysqlUsername = initialData.username || '';
-        mysqlPassword = initialData.password || '';
+
+        const passwordValue = initialData.password || '';
+        if (isSecretReference(passwordValue)) {
+          mysqlPasswordSecret = extractSecretKey(passwordValue) || '';
+          mysqlPassword = '';
+          loadSecretValue('mysql', 'password');
+        } else {
+          mysqlPassword = passwordValue;
+          mysqlPasswordSecret = '';
+        }
       } else if (connectionType === 'postgresql') {
         postgresHost = initialData.host || 'localhost';
         postgresPort = initialData.port || 5432;
         postgresDatabase = initialData.database || '';
         postgresUsername = initialData.username || '';
-        postgresPassword = initialData.password || '';
+
+        const passwordValue = initialData.password || '';
+        if (isSecretReference(passwordValue)) {
+          postgresPasswordSecret = extractSecretKey(passwordValue) || '';
+          postgresPassword = '';
+          loadSecretValue('postgresql', 'password');
+        } else {
+          postgresPassword = passwordValue;
+          postgresPasswordSecret = '';
+        }
       } else if (connectionType === 's3') {
         s3Bucket = initialData.bucket || '';
         s3Region = initialData.region || 'us-east-1';
         s3EndpointUrl = initialData.endpoint_url || '';
         s3AuthMethod = initialData.auth_method || 'credential_chain';
         s3AccessKeyId = initialData.access_key_id || '';
-        s3SecretAccessKey = initialData.secret_access_key || '';
+
+        const secretAccessKeyValue = initialData.secret_access_key || '';
+        if (isSecretReference(secretAccessKeyValue)) {
+          s3SecretAccessKeySecret =
+            extractSecretKey(secretAccessKeyValue) || '';
+          s3SecretAccessKey = '';
+          loadSecretValue('s3', 'secret_access_key');
+        } else {
+          s3SecretAccessKey = secretAccessKeyValue;
+          s3SecretAccessKeySecret = '';
+        }
+
         s3PathStyleAccess = initialData.path_style_access || false;
       }
     }
   });
 
-  function handleSubmit() {
+  async function loadSecretValue(connType: string, field: string) {
+    let secretKey = '';
+    if (connType === 'mysql' && field === 'password') {
+      secretKey = mysqlPasswordSecret;
+    } else if (connType === 'postgresql' && field === 'password') {
+      secretKey = postgresPasswordSecret;
+    } else if (connType === 's3' && field === 'secret_access_key') {
+      secretKey = s3SecretAccessKeySecret;
+    }
+
+    if (secretKey) {
+      const secretInfo = await getSecretInfo(secretKey);
+      if (secretInfo) {
+        if (connType === 'mysql' && field === 'password') {
+          mysqlPassword = `[${secretInfo.masked_value}]`;
+        } else if (connType === 'postgresql' && field === 'password') {
+          postgresPassword = `[${secretInfo.masked_value}]`;
+        } else if (connType === 's3' && field === 'secret_access_key') {
+          s3SecretAccessKey = `[${secretInfo.masked_value}]`;
+        }
+      }
+    }
+  }
+
+  async function handleSecretCreation() {
+    const secretsToProcess = [];
+
+    if (connectionType === 'mysql' && mysqlPassword && mysqlPasswordChanged) {
+      const secretKey = await generateUniqueSecretKey(
+        name,
+        'mysql',
+        'password',
+      );
+      secretsToProcess.push({
+        key: secretKey,
+        value: mysqlPassword,
+        field: 'mysql_password',
+      });
+    }
+
+    if (
+      connectionType === 'postgresql' &&
+      postgresPassword &&
+      postgresPasswordChanged
+    ) {
+      const secretKey = await generateUniqueSecretKey(
+        name,
+        'postgresql',
+        'password',
+      );
+      secretsToProcess.push({
+        key: secretKey,
+        value: postgresPassword,
+        field: 'postgres_password',
+      });
+    }
+
+    if (
+      connectionType === 's3' &&
+      s3AuthMethod === 'explicit' &&
+      s3SecretAccessKey &&
+      s3SecretAccessKeyChanged
+    ) {
+      const secretKey = await generateUniqueSecretKey(
+        name,
+        's3',
+        'secret_access_key',
+      );
+      secretsToProcess.push({
+        key: secretKey,
+        value: s3SecretAccessKey,
+        field: 's3_secret_access_key',
+      });
+    }
+
+    for (const secret of secretsToProcess) {
+      if (mode === 'edit') {
+        let existingKey = '';
+        if (secret.field === 'mysql_password') {
+          existingKey = mysqlPasswordSecret;
+        } else if (secret.field === 'postgres_password') {
+          existingKey = postgresPasswordSecret;
+        } else if (secret.field === 's3_secret_access_key') {
+          existingKey = s3SecretAccessKeySecret;
+        }
+
+        if (existingKey) {
+          await updateSecret(existingKey, secret.value);
+          continue;
+        }
+      }
+
+      const success = await createSecret(secret.key, secret.value);
+      if (success) {
+        if (secret.field === 'mysql_password') {
+          mysqlPasswordSecret = secret.key;
+        } else if (secret.field === 'postgres_password') {
+          postgresPasswordSecret = secret.key;
+        } else if (secret.field === 's3_secret_access_key') {
+          s3SecretAccessKeySecret = secret.key;
+        }
+      }
+    }
+  }
+
+  async function handleSubmit() {
     let config: any = { type: connectionType };
 
     if (connectionType === 'sqlite') {
@@ -85,13 +237,19 @@
       config.port = mysqlPort;
       config.database = mysqlDatabase;
       config.username = mysqlUsername;
-      config.password = mysqlPassword;
+      await handleSecretCreation();
+      config.password = mysqlPasswordSecret
+        ? createSecretReference(mysqlPasswordSecret)
+        : mysqlPassword;
     } else if (connectionType === 'postgresql') {
       config.host = postgresHost;
       config.port = postgresPort;
       config.database = postgresDatabase;
       config.username = postgresUsername;
-      config.password = postgresPassword;
+      await handleSecretCreation();
+      config.password = postgresPasswordSecret
+        ? createSecretReference(postgresPasswordSecret)
+        : postgresPassword;
     } else if (connectionType === 's3') {
       config.bucket = s3Bucket;
       config.region = s3Region;
@@ -99,7 +257,10 @@
       config.auth_method = s3AuthMethod;
       if (s3AuthMethod === 'explicit') {
         config.access_key_id = s3AccessKeyId;
-        config.secret_access_key = s3SecretAccessKey;
+        await handleSecretCreation();
+        config.secret_access_key = s3SecretAccessKeySecret
+          ? createSecretReference(s3SecretAccessKeySecret)
+          : s3SecretAccessKey;
       }
       if (s3PathStyleAccess) config.path_style_access = true;
     }
@@ -305,7 +466,13 @@
               type="password"
               bind:value={mysqlPassword}
               placeholder="パスワード"
+              oninput={() => (mysqlPasswordChanged = true)}
             />
+            {#if mysqlPasswordSecret && !mysqlPasswordChanged}
+              <div class="help-text secret-info">
+                🔒 シークレットで管理されています
+              </div>
+            {/if}
           </div>
         {:else if connectionType === 'postgresql'}
           <div class="form-group">
@@ -351,7 +518,13 @@
               type="password"
               bind:value={postgresPassword}
               placeholder="パスワード"
+              oninput={() => (postgresPasswordChanged = true)}
             />
+            {#if postgresPasswordSecret && !postgresPasswordChanged}
+              <div class="help-text secret-info">
+                🔒 シークレットで管理されています
+              </div>
+            {/if}
           </div>
         {:else if connectionType === 's3'}
           <div class="form-group">
@@ -421,7 +594,13 @@
                 type="password"
                 bind:value={s3SecretAccessKey}
                 placeholder="シークレットキー"
+                oninput={() => (s3SecretAccessKeyChanged = true)}
               />
+              {#if s3SecretAccessKeySecret && !s3SecretAccessKeyChanged}
+                <div class="help-text secret-info">
+                  🔒 シークレットで管理されています
+                </div>
+              {/if}
             </div>
           {/if}
           <div class="form-group">
@@ -634,6 +813,15 @@
     margin-top: 4px;
     font-size: 0.85rem;
     color: #666;
+  }
+
+  .secret-info {
+    color: #27ae60;
+    font-weight: 500;
+    background: #e8f5e9;
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: inline-block;
   }
 
   .modal-footer {
