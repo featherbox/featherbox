@@ -152,7 +152,6 @@ mod tests {
         let content = fs::read_to_string(project_path.join("project.yml"))?;
         assert!(content.contains("storage:"));
         assert!(content.contains("database:"));
-        assert!(content.contains("deployments:"));
         assert!(content.contains("connections: {}"));
 
         assert!(project_path.join(".secret.key").exists());
@@ -227,15 +226,6 @@ mod tests {
         config.storage = StorageConfig::LocalFile {
             path: "./storage".to_string(),
         };
-        config.deployments.timeout = 0;
-        assert!(config.validate().is_err());
-        assert!(
-            config
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("Deployment timeout must be greater than 0")
-        );
 
         Ok(())
     }

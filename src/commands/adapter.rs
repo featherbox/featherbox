@@ -669,8 +669,6 @@ storage:
 database:
   type: sqlite
   path: ./database.db
-deployments:
-  timeout: 600
 connections:
   test_connection:
     type: localfile

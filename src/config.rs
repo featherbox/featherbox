@@ -174,8 +174,6 @@ mod tests {
             database:
               type: sqlite
               path: ./database.db
-            deployments:
-              timeout: 600
             connections: {}
             secret_key_path: secret.key"#;
         fs::write(project_path.join("project.yml"), project_yml)?;
@@ -265,8 +263,6 @@ mod tests {
             database:
               type: sqlite
               path: ./database.db
-            deployments:
-              timeout: 600
             connections: {}"#;
         fs::write(project_path.join("project.yml"), project_yml)?;
 

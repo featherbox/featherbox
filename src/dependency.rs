@@ -287,7 +287,6 @@ mod tests {
                     password: None,
                     username: None,
                 },
-                deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
                 connections: HashMap::new(),
             },
             adapters: HashMap::new(),
@@ -297,9 +296,7 @@ mod tests {
     }
 
     async fn setup_test_db() -> Result<sea_orm::DatabaseConnection> {
-        use crate::config::project::{
-            DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
-        };
+        use crate::config::project::{DatabaseConfig, DatabaseType, ProjectConfig, StorageConfig};
         use crate::database::connection::connect_app_db;
         use tempfile;
 
@@ -319,7 +316,6 @@ mod tests {
                 password: None,
                 username: None,
             },
-            deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 

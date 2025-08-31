@@ -204,8 +204,6 @@ mod tests {
             database:
               type: sqlite
               path: {}/database.db
-            deployments:
-              timeout: 600
             connections: {{}}"#,
             project_path.display(),
             project_path.display()
@@ -233,8 +231,6 @@ mod tests {
             database:
               type: sqlite
               path: {}/database.db
-            deployments:
-              timeout: 600
             connections: {{}}"#,
             project_path.display(),
             project_path.display()
@@ -310,8 +306,6 @@ mod tests {
             database:
               type: sqlite
               path: {}/database.db
-            deployments:
-              timeout: 600
             connections: {{}}"#,
             project_path.display(),
             project_path.display()
@@ -408,8 +402,6 @@ mod tests {
             database:
               type: sqlite
               path: {}/database.db
-            deployments:
-              timeout: 600
             connections:
               s3_data:
                 type: s3
@@ -461,8 +453,6 @@ mod tests {
             database:
               type: sqlite
               path: {}/database.db
-            deployments:
-              timeout: 600
             connections: {{}}"#,
             project_path.display(),
             project_path.display()

@@ -6,7 +6,6 @@ use std::collections::HashMap;
 pub struct ProjectConfig {
     pub storage: StorageConfig,
     pub database: DatabaseConfig,
-    pub deployments: DeploymentsConfig,
     pub connections: HashMap<String, ConnectionConfig>,
 }
 
@@ -47,10 +46,6 @@ impl ProjectConfig {
             }
         }
 
-        if self.deployments.timeout == 0 {
-            return Err(anyhow::anyhow!("Deployment timeout must be greater than 0"));
-        }
-
         Ok(())
     }
 }
@@ -70,7 +65,6 @@ impl Default for ProjectConfig {
                 username: None,
                 password: None,
             },
-            deployments: DeploymentsConfig { timeout: 600 },
             connections: HashMap::new(),
         }
     }
@@ -113,11 +107,6 @@ pub struct DatabaseConfig {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeploymentsConfig {
-    pub timeout: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -214,8 +214,6 @@ fn create_project_config_with_storage(
 
 {}
 
-deployments:
-  timeout: 600
 
 connections:
 {}

@@ -133,7 +133,6 @@ mod tests {
                 password: None,
                 username: None,
             },
-            deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 
@@ -161,7 +160,6 @@ mod tests {
                 password: None,
                 username: None,
             },
-            deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 
@@ -186,7 +184,6 @@ mod tests {
                 username: Some("featherbox".to_string()),
                 password: Some("testpass".to_string()),
             },
-            deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 
@@ -213,7 +210,6 @@ mod tests {
                 username: Some("featherbox".to_string()),
                 password: Some("testpass".to_string()),
             },
-            deployments: crate::config::project::DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 

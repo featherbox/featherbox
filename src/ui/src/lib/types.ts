@@ -1,7 +1,6 @@
 export interface ProjectConfig {
   storage: StorageConfig;
   database: DatabaseConfig;
-  deployments: DeploymentsConfig;
   connections: Record<string, ConnectionConfig>;
   secret_key_path?: string;
 }
@@ -29,9 +28,6 @@ export interface DatabaseConfig {
   password?: string;
 }
 
-export interface DeploymentsConfig {
-  timeout: number;
-}
 
 export interface ConnectionConfig {
   type: 'localfile' | 's3' | 'sqlite' | 'mysql' | 'postgresql';

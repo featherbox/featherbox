@@ -58,9 +58,7 @@ mod tests {
     use tempfile;
     async fn setup_test_db_with_config()
     -> Result<(sea_orm::DatabaseConnection, crate::config::Config)> {
-        use crate::config::project::{
-            DatabaseConfig, DatabaseType, DeploymentsConfig, StorageConfig,
-        };
+        use crate::config::project::{DatabaseConfig, DatabaseType, StorageConfig};
         use crate::database::connection::connect_app_db;
 
         let temp_dir = tempfile::tempdir()?;
@@ -79,7 +77,6 @@ mod tests {
                 password: None,
                 username: None,
             },
-            deployments: DeploymentsConfig { timeout: 600 },
             connections: std::collections::HashMap::new(),
         };
 

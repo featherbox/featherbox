@@ -2,7 +2,7 @@
 use crate::config::Config;
 #[cfg(test)]
 use crate::config::project::{
-    ConnectionConfig, DatabaseConfig, DatabaseType, DeploymentsConfig, ProjectConfig, StorageConfig,
+    ConnectionConfig, DatabaseConfig, DatabaseType, ProjectConfig, StorageConfig,
 };
 #[cfg(test)]
 use crate::database::connection::connect_app_db;
@@ -54,7 +54,6 @@ pub fn create_default_project_config() -> ProjectConfig {
             password: None,
             username: None,
         },
-        deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
     }
 }
@@ -76,7 +75,6 @@ pub fn create_project_config_with_connections(
             password: None,
             username: None,
         },
-        deployments: DeploymentsConfig { timeout: 600 },
         connections,
     }
 }
@@ -155,7 +153,6 @@ pub async fn setup_test_db_connection() -> Result<DatabaseConnection> {
             password: None,
             username: None,
         },
-        deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
     };
 
@@ -182,7 +179,6 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
             password: None,
             username: None,
         },
-        deployments: DeploymentsConfig { timeout: 600 },
         connections: HashMap::new(),
     };
 

@@ -6,8 +6,6 @@ database:
   type: sqlite
   path: ./database.db
 
-deployments:
-  timeout: 600
 
 connections:
   test_data:
