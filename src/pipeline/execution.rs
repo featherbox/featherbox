@@ -23,12 +23,14 @@ struct ExecutionContext {
     logger: Arc<Logger>,
     adapters: Arc<HashMap<String, Adapter>>,
     models: Arc<HashMap<String, Model>>,
+    app_db: Arc<sea_orm::DatabaseConnection>,
 }
 
 enum TaskResult {
     Success {
         table_name: String,
         execution_time_ms: u64,
+        execution_start_time: chrono::NaiveDateTime,
     },
     Failed {
         table_name: String,
@@ -84,6 +86,7 @@ impl Pipeline {
             logger: shared_logger.clone(),
             adapters: shared_adapters,
             models: shared_models,
+            app_db: Arc::new(app_db.clone()),
         };
 
         context
@@ -111,6 +114,7 @@ impl Pipeline {
                     TaskResult::Success {
                         table_name,
                         execution_time_ms,
+                        execution_start_time,
                     } => {
                         println!(
                             "Task completed successfully: {table_name} ({execution_time_ms}ms)"
@@ -126,6 +130,16 @@ impl Pipeline {
                                 execution_time_ms,
                             )
                             .context("Failed to log successful task execution")?;
+
+                        if let Err(e) = crate::dependency::update_node_timestamp(
+                            &context.app_db,
+                            &table_name,
+                            execution_start_time,
+                        )
+                        .await
+                        {
+                            eprintln!("Failed to update timestamp for {table_name}: {e}");
+                        }
                     }
                     TaskResult::Failed {
                         table_name,
@@ -308,6 +322,7 @@ impl Pipeline {
         if let Some(adapter) = context.adapters.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
+                let execution_start_time = chrono::Utc::now().naive_utc();
                 match adapter
                     .execute_import(&table_name, Some(&connections))
                     .await
@@ -315,6 +330,7 @@ impl Pipeline {
                     Ok(_) => TaskResult::Success {
                         table_name,
                         execution_time_ms: start_time.elapsed().as_millis() as u64,
+                        execution_start_time,
                     },
                     Err(error) => TaskResult::Failed {
                         table_name,
@@ -324,12 +340,27 @@ impl Pipeline {
                 }
             }))
         } else if let Some(model) = context.models.get(&action.table_name).cloned() {
+            let app_db = Arc::clone(&context.app_db);
+            let graph = Arc::clone(&context.graph);
+            let table_name_for_deps = table_name.clone();
+
             Ok(tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
+
+                let dependency_timestamp = crate::dependency::get_oldest_dependency_timestamp(
+                    &app_db,
+                    &table_name_for_deps,
+                    &graph,
+                )
+                .await
+                .unwrap_or(None);
+
                 match model.execute_transform(&table_name).await {
                     Ok(_) => TaskResult::Success {
                         table_name,
                         execution_time_ms: start_time.elapsed().as_millis() as u64,
+                        execution_start_time: dependency_timestamp
+                            .unwrap_or(chrono::Utc::now().naive_utc()),
                     },
                     Err(error) => TaskResult::Failed {
                         table_name,

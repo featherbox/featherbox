@@ -5,7 +5,7 @@ use crate::{
     commands::workspace::ensure_project_directory,
     config::Config,
     database::connect_app_db,
-    dependency::{Graph, detect_changes, save_graph_if_changed},
+    dependency::{Graph, detect_changes, save_graph_with_changes},
 };
 use sea_orm::DatabaseConnection;
 
@@ -45,7 +45,7 @@ pub async fn migrate_from_config(
     }
 
     Ok(Some(
-        save_graph_if_changed(app_db, &current_graph, config).await?,
+        save_graph_with_changes(app_db, &current_graph, config, changes.as_ref()).await?,
     ))
 }
 
@@ -170,6 +170,159 @@ mod tests {
         assert_eq!(third_edges[0].to_node, "user_stats");
 
         assert_ne!(first_graph_id, third_graph_id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_migrate_new_adapter_creates_null_timestamp() -> Result<()> {
+        let (app_db, mut config) = setup_test_db_with_config().await?;
+
+        config.adapters.insert(
+            "users_adapter".to_string(),
+            AdapterConfig {
+                connection: "test".to_string(),
+                description: Some("Users adapter".to_string()),
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "users.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        has_header: Some(true),
+                        delimiter: None,
+                        null_value: None,
+                    },
+                },
+                columns: vec![],
+            },
+        );
+
+        let result = migrate_from_config(&config, &app_db).await?;
+        let graph_id = result.unwrap();
+
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(graph_id))
+            .all(&app_db)
+            .await?;
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "users_adapter");
+        assert!(nodes[0].last_updated_at.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_migrate_preserves_existing_node_timestamp() -> Result<()> {
+        let (app_db, mut config) = setup_test_db_with_config().await?;
+
+        config.adapters.insert(
+            "users_adapter".to_string(),
+            AdapterConfig {
+                connection: "test".to_string(),
+                description: Some("Users adapter".to_string()),
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "users.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        has_header: Some(true),
+                        delimiter: None,
+                        null_value: None,
+                    },
+                },
+                columns: vec![],
+            },
+        );
+
+        let first_result = migrate_from_config(&config, &app_db).await?;
+        first_result.unwrap();
+
+        let test_time =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        crate::dependency::update_node_timestamp(&app_db, "users_adapter", test_time).await?;
+
+        config.models.insert(
+            "user_stats".to_string(),
+            ModelConfig {
+                description: Some("User statistics".to_string()),
+                sql: "SELECT COUNT(*) FROM users_adapter".to_string(),
+            },
+        );
+
+        let second_result = migrate_from_config(&config, &app_db).await?;
+        let graph_id = second_result.unwrap();
+
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(graph_id))
+            .all(&app_db)
+            .await?;
+
+        assert_eq!(nodes.len(), 2);
+
+        let users_adapter_node = nodes.iter().find(|n| n.name == "users_adapter").unwrap();
+        assert_eq!(users_adapter_node.last_updated_at, Some(test_time));
+
+        let user_stats_node = nodes.iter().find(|n| n.name == "user_stats").unwrap();
+        assert!(user_stats_node.last_updated_at.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_migrate_config_change_resets_timestamp() -> Result<()> {
+        let (app_db, mut config) = setup_test_db_with_config().await?;
+
+        config.adapters.insert(
+            "users_adapter".to_string(),
+            AdapterConfig {
+                connection: "test".to_string(),
+                description: Some("Users adapter".to_string()),
+                source: crate::config::adapter::AdapterSource::File {
+                    file: crate::config::adapter::FileConfig {
+                        path: "users.csv".to_string(),
+                        compression: None,
+                        max_batch_size: None,
+                    },
+                    format: crate::config::adapter::FormatConfig {
+                        ty: "csv".to_string(),
+                        has_header: Some(true),
+                        delimiter: None,
+                        null_value: None,
+                    },
+                },
+                columns: vec![],
+            },
+        );
+
+        let first_result = migrate_from_config(&config, &app_db).await?;
+        first_result.unwrap();
+
+        let test_time =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        crate::dependency::update_node_timestamp(&app_db, "users_adapter", test_time).await?;
+
+        config.adapters.get_mut("users_adapter").unwrap().connection =
+            "updated_connection".to_string();
+
+        let second_result = migrate_from_config(&config, &app_db).await?;
+        let graph_id = second_result.unwrap();
+
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(graph_id))
+            .all(&app_db)
+            .await?;
+
+        let modified_adapter = nodes.iter().find(|n| n.name == "users_adapter").unwrap();
+        assert!(modified_adapter.last_updated_at.is_none());
 
         Ok(())
     }

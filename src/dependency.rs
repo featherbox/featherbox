@@ -153,6 +153,7 @@ pub async fn save_execution_history(
             graph_id: Set(saved_graph.id),
             name: Set(node.name.clone()),
             config_json: Set(config_json),
+            last_updated_at: Set(None),
         };
         node_model.insert(db).await?;
     }
@@ -193,6 +194,17 @@ pub async fn save_graph_if_changed(
     current_graph: &graph::Graph,
     config: &Config,
 ) -> Result<i32> {
+    save_graph_with_changes(db, current_graph, config, None).await
+}
+
+pub async fn save_graph_with_changes(
+    db: &DatabaseConnection,
+    current_graph: &graph::Graph,
+    config: &Config,
+    changes: Option<&graph::GraphChanges>,
+) -> Result<i32> {
+    let previous_timestamps = get_previous_node_timestamps(db).await?;
+
     let graph_model = graphs::ActiveModel {
         id: NotSet,
         created_at: Set(chrono::Utc::now().naive_utc()),
@@ -208,11 +220,14 @@ pub async fn save_graph_if_changed(
             None
         };
 
+        let last_updated_at = determine_node_timestamp(&node.name, changes, &previous_timestamps);
+
         let node_model = nodes::ActiveModel {
             id: NotSet,
             graph_id: Set(saved_graph.id),
             name: Set(node.name.clone()),
             config_json: Set(config_json),
+            last_updated_at: Set(last_updated_at),
         };
         node_model.insert(db).await?;
     }
@@ -228,6 +243,53 @@ pub async fn save_graph_if_changed(
     }
 
     Ok(saved_graph.id)
+}
+
+async fn get_previous_node_timestamps(
+    db: &DatabaseConnection,
+) -> Result<std::collections::HashMap<String, Option<chrono::NaiveDateTime>>> {
+    let last_graph = graphs::Entity::find()
+        .order_by_desc(graphs::Column::CreatedAt)
+        .one(db)
+        .await?;
+
+    let mut timestamps = std::collections::HashMap::new();
+
+    if let Some(last_graph) = last_graph {
+        let previous_nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(last_graph.id))
+            .all(db)
+            .await?;
+
+        for node in previous_nodes {
+            timestamps.insert(node.name, node.last_updated_at);
+        }
+    }
+
+    Ok(timestamps)
+}
+
+fn determine_node_timestamp(
+    node_name: &str,
+    changes: Option<&graph::GraphChanges>,
+    previous_timestamps: &std::collections::HashMap<String, Option<chrono::NaiveDateTime>>,
+) -> Option<chrono::NaiveDateTime> {
+    if let Some(changes) = changes {
+        if changes.added_nodes.contains(&node_name.to_string()) {
+            return None;
+        }
+
+        if changes
+            .config_changed_nodes
+            .contains(&node_name.to_string())
+        {
+            return None;
+        }
+    }
+
+    previous_timestamps
+        .get(node_name)
+        .and_then(|timestamp| *timestamp)
 }
 
 pub async fn latest_graph_id(db: &DatabaseConnection) -> Result<Option<i32>> {
@@ -263,6 +325,69 @@ pub async fn save_pipeline_execution(
     }
 
     Ok(())
+}
+
+pub async fn update_node_timestamp(
+    db: &DatabaseConnection,
+    node_name: &str,
+    timestamp: chrono::NaiveDateTime,
+) -> Result<()> {
+    let latest_graph_id = latest_graph_id(db).await?;
+
+    if let Some(graph_id) = latest_graph_id {
+        let node = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(graph_id))
+            .filter(nodes::Column::Name.eq(node_name))
+            .one(db)
+            .await?;
+
+        if let Some(node) = node {
+            let mut active_node: nodes::ActiveModel = node.into();
+            active_node.last_updated_at = Set(Some(timestamp));
+            active_node.update(db).await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn get_oldest_dependency_timestamp(
+    db: &DatabaseConnection,
+    node_name: &str,
+    graph: &Graph,
+) -> Result<Option<chrono::NaiveDateTime>> {
+    let latest_graph_id = latest_graph_id(db).await?;
+
+    if let Some(graph_id) = latest_graph_id {
+        let mut dependency_timestamps = Vec::new();
+
+        for edge in &graph.edges {
+            if edge.to == node_name {
+                let dependency_node = nodes::Entity::find()
+                    .filter(nodes::Column::GraphId.eq(graph_id))
+                    .filter(nodes::Column::Name.eq(&edge.from))
+                    .one(db)
+                    .await?;
+
+                if let Some(node) = dependency_node {
+                    if let Some(timestamp) = node.last_updated_at {
+                        dependency_timestamps.push(timestamp);
+                    } else {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        if dependency_timestamps.is_empty() {
+            return Ok(None);
+        }
+
+        let oldest_timestamp = dependency_timestamps.into_iter().min();
+        return Ok(oldest_timestamp);
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -901,6 +1026,270 @@ mod tests {
         assert!(affected.contains(&"users".to_string()));
         assert!(affected.contains(&"user_stats".to_string()));
         assert!(affected.contains(&"reports".to_string()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_timestamp_management_new_nodes() -> Result<()> {
+        let db = setup_test_db().await?;
+
+        let graph = graph::Graph {
+            nodes: vec![Node {
+                name: "users".to_string(),
+            }],
+            edges: vec![],
+        };
+
+        let changes = graph::GraphChanges {
+            added_nodes: vec!["users".to_string()],
+            removed_nodes: vec![],
+            added_edges: vec![],
+            removed_edges: vec![],
+            config_changed_nodes: vec![],
+        };
+
+        let config = create_test_config();
+        let graph_id = save_graph_with_changes(&db, &graph, &config, Some(&changes)).await?;
+
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(graph_id))
+            .all(&db)
+            .await?;
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "users");
+        assert!(nodes[0].last_updated_at.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_timestamp_management_config_changed_nodes() -> Result<()> {
+        let db = setup_test_db().await?;
+
+        let initial_graph = graph::Graph {
+            nodes: vec![Node {
+                name: "users".to_string(),
+            }],
+            edges: vec![],
+        };
+
+        let config = create_test_config();
+        let initial_pipeline = Pipeline {
+            levels: vec![vec![Action {
+                table_name: "users".to_string(),
+            }]],
+        };
+
+        save_execution_history(&db, &initial_graph, &initial_pipeline, &config).await?;
+
+        let test_time =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        update_node_timestamp(&db, "users", test_time).await?;
+
+        let changes = graph::GraphChanges {
+            added_nodes: vec![],
+            removed_nodes: vec![],
+            added_edges: vec![],
+            removed_edges: vec![],
+            config_changed_nodes: vec!["users".to_string()],
+        };
+
+        let new_graph_id =
+            save_graph_with_changes(&db, &initial_graph, &config, Some(&changes)).await?;
+
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(new_graph_id))
+            .all(&db)
+            .await?;
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "users");
+        assert!(nodes[0].last_updated_at.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_timestamp_management_preserved_nodes() -> Result<()> {
+        let db = setup_test_db().await?;
+
+        let initial_graph = graph::Graph {
+            nodes: vec![
+                Node {
+                    name: "users".to_string(),
+                },
+                Node {
+                    name: "orders".to_string(),
+                },
+            ],
+            edges: vec![],
+        };
+
+        let config = create_test_config();
+        let initial_pipeline = Pipeline {
+            levels: vec![vec![
+                Action {
+                    table_name: "users".to_string(),
+                },
+                Action {
+                    table_name: "orders".to_string(),
+                },
+            ]],
+        };
+
+        save_execution_history(&db, &initial_graph, &initial_pipeline, &config).await?;
+
+        let test_time =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        update_node_timestamp(&db, "users", test_time).await?;
+
+        let changes = graph::GraphChanges {
+            added_nodes: vec!["new_table".to_string()],
+            removed_nodes: vec![],
+            added_edges: vec![],
+            removed_edges: vec![],
+            config_changed_nodes: vec![],
+        };
+
+        let new_graph = graph::Graph {
+            nodes: vec![
+                Node {
+                    name: "users".to_string(),
+                },
+                Node {
+                    name: "orders".to_string(),
+                },
+                Node {
+                    name: "new_table".to_string(),
+                },
+            ],
+            edges: vec![],
+        };
+
+        let new_graph_id =
+            save_graph_with_changes(&db, &new_graph, &config, Some(&changes)).await?;
+
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(new_graph_id))
+            .all(&db)
+            .await?;
+
+        assert_eq!(nodes.len(), 3);
+
+        let users_node = nodes.iter().find(|n| n.name == "users").unwrap();
+        assert_eq!(users_node.last_updated_at, Some(test_time));
+
+        let orders_node = nodes.iter().find(|n| n.name == "orders").unwrap();
+        assert!(orders_node.last_updated_at.is_none());
+
+        let new_table_node = nodes.iter().find(|n| n.name == "new_table").unwrap();
+        assert!(new_table_node.last_updated_at.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_update_node_timestamp() -> Result<()> {
+        let db = setup_test_db().await?;
+
+        let graph = graph::Graph {
+            nodes: vec![Node {
+                name: "users".to_string(),
+            }],
+            edges: vec![],
+        };
+
+        let config = create_test_config();
+        let pipeline = Pipeline {
+            levels: vec![vec![Action {
+                table_name: "users".to_string(),
+            }]],
+        };
+
+        save_execution_history(&db, &graph, &pipeline, &config).await?;
+
+        let test_time =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 12:30:45", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        update_node_timestamp(&db, "users", test_time).await?;
+
+        let latest_graph_id = latest_graph_id(&db).await?.unwrap();
+        let nodes = nodes::Entity::find()
+            .filter(nodes::Column::GraphId.eq(latest_graph_id))
+            .filter(nodes::Column::Name.eq("users"))
+            .one(&db)
+            .await?;
+
+        let node = nodes.unwrap();
+        assert_eq!(node.last_updated_at, Some(test_time));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_oldest_dependency_timestamp() -> Result<()> {
+        use crate::dependency::graph::Edge;
+
+        let db = setup_test_db().await?;
+
+        let graph = graph::Graph {
+            nodes: vec![
+                Node {
+                    name: "adapter_a".to_string(),
+                },
+                Node {
+                    name: "adapter_b".to_string(),
+                },
+                Node {
+                    name: "model_c".to_string(),
+                },
+            ],
+            edges: vec![
+                Edge {
+                    from: "adapter_a".to_string(),
+                    to: "model_c".to_string(),
+                },
+                Edge {
+                    from: "adapter_b".to_string(),
+                    to: "model_c".to_string(),
+                },
+            ],
+        };
+
+        let config = create_test_config();
+        let pipeline = Pipeline {
+            levels: vec![vec![
+                Action {
+                    table_name: "adapter_a".to_string(),
+                },
+                Action {
+                    table_name: "adapter_b".to_string(),
+                },
+                Action {
+                    table_name: "model_c".to_string(),
+                },
+            ]],
+        };
+
+        save_execution_history(&db, &graph, &pipeline, &config).await?;
+
+        let time_a =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        let time_b =
+            chrono::NaiveDateTime::parse_from_str("2024-01-01 11:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+
+        update_node_timestamp(&db, "adapter_a", time_a).await?;
+        update_node_timestamp(&db, "adapter_b", time_b).await?;
+
+        let oldest_timestamp = get_oldest_dependency_timestamp(&db, "model_c", &graph).await?;
+
+        assert_eq!(oldest_timestamp, Some(time_a));
 
         Ok(())
     }
