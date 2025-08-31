@@ -26,6 +26,9 @@ importers:
       '@tsconfig/svelte':
         specifier: ^5.0.4
         version: 5.0.5
+      '@types/cytoscape':
+        specifier: ^3.21.9
+        version: 3.21.9
       prettier:
         specifier: ^3.6.2
         version: 3.6.2
@@ -741,6 +744,12 @@ packages:
     resolution:
       {
         integrity: sha512-48fAnUjKye38FvMiNOj0J9I/4XlQQiZlpe9xaNPfe8vy2Y1hFBt8g1yqf2EGjVvHavo4jf2lC+TQyENCr4BJBQ==,
+      }
+
+  '@types/cytoscape@3.21.9':
+    resolution:
+      {
+        integrity: sha512-JyrG4tllI6jvuISPjHK9j2Xv/LTbnLekLke5otGStjFluIyA9JjgnvgZrSBsp8cEDpiTjwgZUZwpPv8TSBcoLw==,
       }
 
   '@types/estree@1.0.8':
@@ -1527,6 +1536,8 @@ snapshots:
       - supports-color
 
   '@tsconfig/svelte@5.0.5': {}
+
+  '@types/cytoscape@3.21.9': {}
 
   '@types/estree@1.0.8': {}
 

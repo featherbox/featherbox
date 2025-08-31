@@ -3,6 +3,7 @@
     "connections": "Connections",
     "adapters": "Adapters",
     "models": "Models",
+    "query": "Query",
     "pipeline": "Pipeline",
     "analysis": "Analysis",
     "settings": "Settings"
@@ -124,13 +125,37 @@
     "run_tooltip": "Execute pipeline with current configuration",
     "refresh_tooltip": "Refresh pipeline graph"
   },
+  "query": {
+    "title": "Query Panel",
+    "execute": "Execute",
+    "executing": "Executing...",
+    "save_query": "Save Query",
+    "saved_queries": "Saved Queries",
+    "query_name": "Query Name",
+    "query_description": "Description (optional)",
+    "sql_placeholder": "Enter your SQL query here... (Ctrl+Enter to execute)",
+    "name_placeholder": "Enter query name",
+    "description_placeholder": "Enter description (optional)",
+    "query_required": "SQL query is required",
+    "name_required": "Query name is required",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "no_results": "No results",
+    "error": "Query execution failed",
+    "delete_confirm": "Are you sure you want to delete query \"{name}\"?"
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
     "submit": "Submit",
+    "loading": "Loading...",
     "select_connection": "Select a connection",
     "select_adapter": "Select an adapter",
-    "select_model": "Select a model"
+    "select_model": "Select a model",
+    "select_adapter_aria": "Select adapter {name}",
+    "select_connection_aria": "Select connection {name}",
+    "select_model_aria": "Select model {path}",
+    "close_modal_aria": "Close modal"
   }
 }

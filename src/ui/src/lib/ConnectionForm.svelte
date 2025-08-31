@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { Database, Folder, Cloud, Server } from 'lucide-svelte';
+  import { t } from './i18n';
   import type { ConnectionDetails } from './types';
   import {
     createSecret,
@@ -326,7 +327,7 @@
     onkeydown={(e) => e.key === 'Escape' && handleClose()}
     tabindex="0"
     role="button"
-    aria-label="Close modal"
+    aria-label={$t('common.close_modal_aria')}
   >
     <div
       class="modal"

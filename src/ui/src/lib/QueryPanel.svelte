@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from './i18n';
+
   interface QueryResult {
     results: string[][];
     column_count: number;
@@ -26,7 +28,7 @@
 
   async function executeQuery() {
     if (!sql.trim()) {
-      error = 'SQL query is required';
+      error = $t('query.query_required');
       return;
     }
 
@@ -47,7 +49,7 @@
         results = await response.json();
       } else {
         const errorData = await response.json();
-        error = errorData.error || 'Query execution failed';
+        error = errorData.error || $t('query.error');
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Network error occurred';
@@ -79,7 +81,7 @@
 
   async function saveQuery() {
     if (!saveQueryName.trim() || !sql.trim()) {
-      error = 'Query name and SQL are required';
+      error = $t('query.name_required');
       return;
     }
 
@@ -103,7 +105,7 @@
         await loadSavedQueries();
       } else {
         const errorData = await response.json();
-        error = errorData.error || 'Failed to save query';
+        error = errorData.error || $t('query.error');
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Network error occurred';
@@ -119,7 +121,7 @@
   }
 
   async function deleteQuery(queryName: string) {
-    if (!confirm(`Are you sure you want to delete query "${queryName}"?`)) {
+    if (!confirm($t('query.delete_confirm', { values: { name: queryName } }))) {
       return;
     }
 
@@ -138,7 +140,7 @@
         }
       } else {
         const errorData = await response.json();
-        error = errorData.error || 'Failed to delete query';
+        error = errorData.error || $t('query.error');
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Network error occurred';
@@ -164,30 +166,34 @@
   <div class="sidebar">
     <div class="saved-queries">
       <div class="section-header">
-        <h3>Saved Queries</h3>
-        <button class="btn-small" on:click={loadSavedQueries} title="Refresh">
+        <h3>{$t('query.saved_queries')}</h3>
+        <button
+          class="btn-small"
+          onclick={loadSavedQueries}
+          title={$t('query.refresh')}
+        >
           ↻
         </button>
       </div>
       <div class="queries-list">
         {#each Object.entries(savedQueries) as [name, query]}
           <div class="query-item" class:selected={selectedQuery === name}>
-            <div class="query-info" on:click={() => loadQuery(name)}>
+            <button class="query-info" onclick={() => loadQuery(name)}>
               <div class="query-name">{query.name}</div>
               {#if query.description}
                 <div class="query-description">{query.description}</div>
               {/if}
-            </div>
+            </button>
             <button
               class="delete-btn"
-              on:click={() => deleteQuery(name)}
-              title="Delete"
+              onclick={() => deleteQuery(name)}
+              title={$t('query.delete')}
             >
               ×
             </button>
           </div>
         {:else}
-          <div class="empty-state">No saved queries</div>
+          <div class="empty-state">{$t('query.no_results')}</div>
         {/each}
       </div>
     </div>
@@ -196,29 +202,29 @@
   <div class="main-content">
     <div class="query-editor">
       <div class="editor-header">
-        <h2>SQL Query</h2>
+        <h2>{$t('query.title')}</h2>
         <div class="editor-actions">
           <button
             class="btn-secondary"
-            on:click={openSaveDialog}
+            onclick={openSaveDialog}
             disabled={!sql.trim()}
           >
-            Save Query
+            {$t('query.save_query')}
           </button>
         </div>
       </div>
       <div class="editor-container">
         <textarea
           bind:value={sql}
-          on:keydown={handleKeydown}
-          placeholder="Enter your SQL query here... (Ctrl+Enter to execute)"
+          onkeydown={handleKeydown}
+          placeholder={$t('query.sql_placeholder')}
           rows="8"
           disabled={loading}
         ></textarea>
       </div>
       <div class="actions">
-        <button on:click={executeQuery} disabled={loading}>
-          {loading ? 'Executing...' : 'Execute Query'}
+        <button onclick={executeQuery} disabled={loading}>
+          {loading ? $t('query.executing') : $t('query.execute')}
         </button>
         <span class="hint">Ctrl+Enter</span>
       </div>
@@ -276,40 +282,40 @@
 </div>
 
 {#if showSaveDialog}
-  <div class="modal-overlay" on:click={closeSaveDialog}>
-    <div class="modal" on:click|stopPropagation>
+  <div class="modal-overlay" role="presentation" onclick={closeSaveDialog}>
+    <div class="modal" onclick={(e) => e.stopPropagation()}>
       <div class="modal-header">
-        <h3>Save Query</h3>
-        <button class="close-btn" on:click={closeSaveDialog}>×</button>
+        <h3>{$t('query.save_query')}</h3>
+        <button class="close-btn" onclick={closeSaveDialog}>×</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label for="query-name">Query Name *</label>
+          <label for="query-name">{$t('query.query_name')} *</label>
           <input
             id="query-name"
             type="text"
             bind:value={saveQueryName}
-            placeholder="Enter query name"
+            placeholder={$t('query.name_placeholder')}
             required
           />
         </div>
         <div class="form-group">
-          <label for="query-description">Description</label>
+          <label for="query-description">{$t('query.query_description')}</label>
           <input
             id="query-description"
             type="text"
             bind:value={saveQueryDescription}
-            placeholder="Enter description (optional)"
+            placeholder={$t('query.description_placeholder')}
           />
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn-secondary" on:click={closeSaveDialog}>
+        <button class="btn-secondary" onclick={closeSaveDialog}>
           Cancel
         </button>
         <button
           class="btn-primary"
-          on:click={saveQuery}
+          onclick={saveQuery}
           disabled={!saveQueryName.trim()}
         >
           Save
@@ -396,6 +402,11 @@
 
   .query-info {
     flex: 1;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
   }
 
   .query-name {

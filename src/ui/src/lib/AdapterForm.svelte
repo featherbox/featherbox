@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { t } from './i18n';
   import type { AdapterConfig } from './types';
 
   const dispatch = createEventDispatcher();
@@ -87,7 +88,7 @@
     onkeydown={(e) => e.key === 'Escape' && handleClose()}
     tabindex="0"
     role="button"
-    aria-label="Close modal"
+    aria-label={$t('common.close_modal_aria')}
   >
     <div
       class="modal"

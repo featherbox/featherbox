@@ -483,7 +483,7 @@
     on:close={() => (showModelForm = false)}
   />
 {:else}
-  <div class="loading">Loading...</div>
+  <div class="loading">{$t('common.loading')}</div>
 {/if}
 
 <style>

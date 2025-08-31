@@ -22,7 +22,7 @@ init({
 });
 
 if (typeof window !== 'undefined') {
-  locale.subscribe((value) => {
+  locale.subscribe((value: string | null | undefined) => {
     if (value) {
       localStorage.setItem('locale', value);
     }

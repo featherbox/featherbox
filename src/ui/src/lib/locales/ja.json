@@ -3,6 +3,7 @@
     "connections": "接続",
     "adapters": "アダプター",
     "models": "モデル",
+    "query": "クエリ",
     "pipeline": "パイプライン",
     "analysis": "分析",
     "settings": "設定"
@@ -124,13 +125,37 @@
     "run_tooltip": "現在の設定でパイプラインを実行します",
     "refresh_tooltip": "パイプライングラフを再読み込みします"
   },
+  "query": {
+    "title": "クエリパネル",
+    "execute": "実行",
+    "executing": "実行中...",
+    "save_query": "クエリを保存",
+    "saved_queries": "保存済みクエリ",
+    "query_name": "クエリ名",
+    "query_description": "説明（任意）",
+    "sql_placeholder": "SQLクエリを入力してください... (Ctrl+Enterで実行)",
+    "name_placeholder": "クエリ名を入力",
+    "description_placeholder": "説明を入力（任意）",
+    "query_required": "SQLクエリが必要です",
+    "name_required": "クエリ名が必要です",
+    "delete": "削除",
+    "refresh": "再読み込み",
+    "no_results": "結果がありません",
+    "error": "クエリの実行に失敗しました",
+    "delete_confirm": "クエリ「{name}」を削除しますか？"
+  },
   "common": {
     "save": "保存",
     "cancel": "キャンセル",
     "close": "閉じる",
     "submit": "送信",
+    "loading": "読み込み中...",
     "select_connection": "接続を選択してください",
     "select_adapter": "アダプターを選択してください",
-    "select_model": "モデルを選択してください"
+    "select_model": "モデルを選択してください",
+    "select_adapter_aria": "アダプター{name}を選択",
+    "select_connection_aria": "接続{name}を選択",
+    "select_model_aria": "モデル{path}を選択",
+    "close_modal_aria": "モーダルを閉じる"
   }
 }

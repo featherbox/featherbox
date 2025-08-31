@@ -91,7 +91,7 @@
       } as any,
     });
 
-    cy.on('tap', 'node', (event) => {
+    cy.on('tap', 'node', (event: cytoscape.EventObject) => {
       const nodeName = event.target.data('id');
       onNodeClick?.(nodeName);
     });

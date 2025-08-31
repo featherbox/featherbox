@@ -41,7 +41,9 @@
         onclick={() => selectAdapter(adapter.name)}
         type="button"
         aria-pressed={selectedAdapter === adapter.name}
-        aria-label="Select adapter {adapter.name}"
+        aria-label={$t('common.select_adapter_aria', {
+          values: { name: adapter.name },
+        })}
       >
         <div class="adapter-name">{adapter.name}</div>
         <div class="adapter-meta">

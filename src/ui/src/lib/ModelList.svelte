@@ -71,7 +71,9 @@
           onclick={() => selectModel(model.path)}
           type="button"
           aria-pressed={selectedModel === model.path}
-          aria-label="Select model {model.path}"
+          aria-label={$t('common.select_model_aria', {
+            values: { path: model.path },
+          })}
         >
           <div class="model-header">
             <FileText size={18} />

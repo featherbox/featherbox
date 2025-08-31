@@ -232,6 +232,45 @@ queries/             # Saved SQL queries
 - **YAML string indentation**: In tests and template strings, use consistent indentation that matches the surrounding code context. Multi-line YAML strings should be indented to align with the code structure for better readability
 - **Domain-driven organization**: Keep related functionality within the same domain directory; cross-domain communication should be explicit and minimal
 
+## Internationalization Guidelines
+
+The web UI supports multiple languages (English and Japanese) using svelte-i18n. All user-facing text must be internationalized:
+
+### Translation Files
+- **Location**: `src/ui/src/lib/locales/`
+- **Languages**: `en.json` (English), `ja.json` (Japanese)
+- **Structure**: Hierarchical JSON with domain-based organization (e.g., `navigation.connections`, `query.execute`)
+
+### Implementation Rules
+- **NO hardcoded strings**: All user-visible text must use `$t('translation.key')` function
+- **Translation keys**: Use descriptive, hierarchical keys that reflect the UI structure
+- **Parameter interpolation**: Use `$t('key', { values: { param: value } })` for dynamic content
+- **Consistency**: Maintain parallel structure between English and Japanese translation files
+- **aria-label attributes**: All accessibility labels must be internationalized using `$t()` function
+- **Placeholders and tooltips**: All form placeholders and button tooltips must use translation keys
+
+### Translation Key Structure
+```
+{
+  "navigation": { ... },      // Navigation menu items
+  "connections": { ... },     // Connection management
+  "adapters": { ... },        // Adapter management  
+  "models": { ... },          // Model management
+  "query": { ... },          // Query panel functionality
+  "pipeline": { ... },        // Pipeline operations
+  "analysis": { ... },        // Analysis sessions
+  "chat": { ... },           // Chat functionality
+  "settings": { ... },        // Settings panel
+  "common": { ... }          // Shared UI elements
+}
+```
+
+### Validation Requirements
+- **Complete coverage**: Every user-visible string must have translations in both languages
+- **Parameter consistency**: Interpolation parameters must match between language files
+- **Testing**: Verify UI functionality in both languages during development
+- **No fallback strings**: Avoid hardcoded fallback text; use proper translation keys
+
 ## Directory Structure Guidelines
 
 ### Domain Organization

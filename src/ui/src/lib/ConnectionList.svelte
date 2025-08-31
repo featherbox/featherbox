@@ -57,7 +57,9 @@
         onclick={() => selectConnection(connection.name)}
         type="button"
         aria-pressed={selectedConnection === connection.name}
-        aria-label="Select connection {connection.name}"
+        aria-label={$t('common.select_connection_aria', {
+          values: { name: connection.name },
+        })}
       >
         <div class="connection-header">
           <span class="connection-icon"
