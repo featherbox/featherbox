@@ -1,10 +1,10 @@
 [package]
-name = "featherbox-core"
+name = "featherbox"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "featherbox_core"
+name = "featherbox"
 path = "src/lib.rs"
 
 [[bin]]

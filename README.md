@@ -7,16 +7,40 @@ A lightweight data pipeline framework built in Rust for Extract, Load, Transform
 - **Single Binary**: No dependencies, CI/CD friendly
 - **High Performance**: DuckDB + DuckLake integration
 - **Automatic Pipeline Management**: Define adapters and models only
+- **Web UI**: Visual interface for configuration and monitoring
 
 ## Commands
 
 ```bash
-fbox init [project_name]   # Initialize new project
+# Project Management
+fbox new [project_name]    # Initialize new project
+fbox start <project_name>  # Start web UI and API server
+
+# CLI Configuration (optional - can also use web UI)
 fbox adapter new <name>    # Create adapter configuration
 fbox model new <name>      # Create model configuration
 fbox migrate               # Run database migrations
 fbox run                   # Execute pipeline with differential execution
+
+# Server Mode
+fbox server                # Start API server only (port 3000)
 ```
+
+## Getting Started
+
+### Quick Start with Web UI
+```bash
+# Create a new project
+fbox new my-project
+
+# Start the web interface
+fbox start my-project
+```
+
+This will:
+- Start the API server on http://localhost:3000
+- Start the web UI on http://localhost:5173  
+- Automatically open your browser to the UI
 
 ## Configuration Examples
 

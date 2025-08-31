@@ -65,3 +65,78 @@ export interface ApiError {
   message: string;
   status?: number;
 }
+
+export interface AdapterSummary {
+  name: string;
+  description?: string;
+  connection: string;
+  source_type: string;
+}
+
+export interface AdapterConfig {
+  connection: string;
+  description?: string;
+  source: AdapterSource;
+  columns: ColumnConfig[];
+}
+
+export interface AdapterSource {
+  type: 'file' | 'database';
+  file?: FileConfig;
+  format?: FormatConfig;
+  table_name?: string;
+}
+
+export interface FileConfig {
+  path: string;
+  compression?: string;
+  max_batch_size?: string;
+}
+
+export interface FormatConfig {
+  type: string;
+  delimiter?: string;
+  null_value?: string;
+  has_header?: boolean;
+}
+
+export interface ColumnConfig {
+  name: string;
+  type: string;
+  description?: string;
+}
+
+export interface AdapterDetails {
+  name: string;
+  config: AdapterConfig;
+}
+
+export interface ModelSummary {
+  name: string;
+  path: string;
+  description?: string;
+}
+
+export interface ModelConfig {
+  sql: string;
+  description?: string;
+  depends?: string[];
+}
+
+export interface ModelDetails {
+  name: string;
+  path: string;
+  config: ModelConfig;
+}
+
+export interface ConnectionSummary {
+  name: string;
+  connection_type: string;
+  details: string;
+}
+
+export interface ConnectionDetails {
+  name: string;
+  type: string;
+  [key: string]: any; // 接続タイプによって異なるプロパティ
+}

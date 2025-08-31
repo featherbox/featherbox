@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FeatherBox is a lightweight data pipeline framework built in Rust that enables Extract, Load, Transform (ELT) operations using DuckDB and DuckLake. It provides a single binary CLI tool for creating and managing data pipelines with automatic dependency resolution and differential execution.
+FeatherBox is a lightweight data pipeline framework built in Rust that enables Extract, Load, Transform (ELT) operations using DuckDB and DuckLake. It provides a single binary CLI tool for creating and managing data pipelines with automatic dependency resolution and differential execution, along with a web-based UI for visual management and monitoring.
 
 ## Key Commands
 
@@ -15,7 +15,9 @@ nix develop --command cargo test  # ALWAYS use this for testing - required for p
 cargo test                     # DO NOT use this directly - may fail due to missing dependencies
 
 # CLI Usage
-target/debug/fbox init <project>          # Initialize new project
+target/debug/fbox new <project>           # Initialize new project
+target/debug/fbox start <project>         # Start web UI and API server for project
+target/debug/fbox server                  # Start API server only (port 3000)
 target/debug/fbox connection new <name>   # Create connection configuration
 target/debug/fbox adapter new <name>      # Create adapter configuration
 target/debug/fbox model new <name>        # Create model configuration
@@ -33,7 +35,7 @@ FeatherBox follows domain-driven design principles with clear separation of conc
 
 1. **CLI Commands Domain (`src/commands/`)**: Command interface and workspace management
    - `workspace.rs`: Project directory detection and workspace management
-   - `init.rs`, `adapter.rs`, `model.rs`, `run.rs`, `migrate.rs`, `connection.rs`, `secret.rs`, `query.rs`: Individual command implementations
+   - `init.rs`, `adapter.rs`, `model.rs`, `run.rs`, `migrate.rs`, `connection.rs`, `secret.rs`, `query.rs`, `start.rs`: Individual command implementations
    - `templates/`: YAML templates for configuration generation
 
 2. **Configuration Domain (`src/config/`)**: YAML-based configuration management
@@ -61,6 +63,13 @@ FeatherBox follows domain-driven design principles with clear separation of conc
 6. **Supporting Infrastructure**:
    - `s3_client.rs`: AWS S3 integration for remote storage
    - `secret.rs`: Encrypted secret management using age encryption
+   - `api.rs`: RESTful API server for web UI integration
+
+7. **Web UI (`src/ui/`)**: Svelte-based web interface
+   - Svelte frontend application for visual management
+   - Provides forms for adapter, model, and connection configuration
+   - Real-time pipeline execution monitoring
+   - Accessible at http://localhost:5173 when started
 
 ### Data Flow
 
@@ -186,8 +195,10 @@ src/
 ├── main.rs                      # Application entry point
 ├── commands.rs                  # CLI coordination and shared utilities
 ├── config.rs                    # Configuration integration
+├── api.rs                       # RESTful API server
 ├── commands/                    # CLI Commands Domain
 │   ├── workspace.rs            # Project workspace management
+│   ├── start.rs               # Web UI and server startup
 │   ├── [command].rs            # Individual command implementations
 │   └── templates/              # Configuration templates
 ├── config/                      # Configuration Domain
@@ -207,6 +218,10 @@ src/
 │   ├── connection.rs         # Database connection management
 │   ├── entities/             # ORM entity definitions  
 │   └── migration/            # Schema migrations
+├── ui/                          # Web UI (Svelte application)
+│   ├── src/                   # Frontend source code
+│   ├── public/                # Static assets
+│   └── package.json           # Frontend dependencies
 ├── s3_client.rs              # AWS S3 integration
 └── secret.rs                 # Encrypted secret management
 ```
@@ -227,3 +242,5 @@ src/
 - All user data operations go through DuckDB for performance
 - Metadata operations use SQLite via Sea-ORM for reliability
 - Graph migration (`fbox migrate`) must be run before pipeline execution (`fbox run`)
+- Web UI runs on port 5173, API server runs on port 3000
+- Use `fbox start <project>` to launch both UI and API server together

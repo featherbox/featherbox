@@ -1,28 +1,40 @@
 <script lang="ts">
-  import { Database, FileText, BarChart3, Settings } from 'lucide-svelte';
-  
-  export let activeSection: string = 'adapters';
+  import { Database, FileText, BarChart3, Settings, Link } from 'lucide-svelte';
+
+  let {
+    activeSection = $bindable('connections'),
+  }: {
+    activeSection?: string;
+  } = $props();
 </script>
 
 <nav class="navigation">
   <ul class="nav-items">
+    <li class="nav-item" class:active={activeSection === 'connections'}>
+      <button
+        onclick={() => (activeSection = 'connections')}
+        title="Connections"
+      >
+        <Link class="icon" />
+      </button>
+    </li>
     <li class="nav-item" class:active={activeSection === 'adapters'}>
-      <button on:click={() => activeSection = 'adapters'} title="Adapters">
+      <button onclick={() => (activeSection = 'adapters')} title="Adapters">
         <Database class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'models'}>
-      <button on:click={() => activeSection = 'models'} title="Models">
+      <button onclick={() => (activeSection = 'models')} title="Models">
         <FileText class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'analysis'}>
-      <button on:click={() => activeSection = 'analysis'} title="Analysis">
+      <button onclick={() => (activeSection = 'analysis')} title="Analysis">
         <BarChart3 class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'settings'}>
-      <button on:click={() => activeSection = 'settings'} title="Settings">
+      <button onclick={() => (activeSection = 'settings')} title="Settings">
         <Settings class="icon" />
       </button>
     </li>
