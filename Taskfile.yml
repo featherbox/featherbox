@@ -26,3 +26,21 @@ tasks:
     cmds:
       - echo 'use flake .' > .envrc
       - direnv allow
+
+  dev:
+    desc: Start development environment with test project
+    cmds:
+      - |
+        cd /tmp
+        PROJECT_NAME="test_$(date +%Y%m%d_%H%M%S)"
+        echo "Creating test project: $PROJECT_NAME"
+        cargo run --manifest-path {{.USER_WORKING_DIR}}/Cargo.toml -- new $PROJECT_NAME
+        cd $PROJECT_NAME
+        echo "Starting API server..."
+        cargo run --manifest-path {{.USER_WORKING_DIR}}/Cargo.toml -- server &
+        SERVER_PID=$!
+        echo "Server started with PID: $SERVER_PID"
+        sleep 3
+        cd {{.USER_WORKING_DIR}}/src/ui
+        echo "Starting Vite dev server..."
+        pnpm run dev

@@ -93,7 +93,7 @@ enum Commands {
     },
     Start {
         project_name: String,
-        #[arg(short, long, default_value = "3000")]
+        #[arg(short, long, default_value = "3015")]
         port: u16,
     },
 }

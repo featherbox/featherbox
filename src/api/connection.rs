@@ -1,6 +1,6 @@
 use crate::commands::workspace::find_project_root;
 use crate::config::project::{ConnectionConfig, parse_project_config};
-use crate::secret::SecretManager;
+use crate::secret::{SecretManager, expand_secrets_in_text};
 use anyhow::Result;
 use axum::extract::Path;
 use axum::response::Json;
@@ -51,7 +51,12 @@ async fn list_connections() -> Result<Json<Vec<ConnectionSummary>>, StatusCode> 
 
     let content =
         fs::read_to_string(&project_yml).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let config = parse_project_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let expanded_content = expand_secrets_in_text(&content, &project_root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let config =
+        parse_project_config(&expanded_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut connections = Vec::new();
     for (name, conn_config) in &config.connections {
@@ -90,7 +95,10 @@ async fn get_connection(Path(name): Path<String>) -> Result<Json<ConnectionConfi
 
     let content =
         fs::read_to_string(&project_yml).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let config = parse_project_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let expanded_content = expand_secrets_in_text(&content, &project_root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let config =
+        parse_project_config(&expanded_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match config.connections.get(&name) {
         Some(conn_config) => Ok(Json(conn_config.clone())),
@@ -110,8 +118,10 @@ async fn create_connection(
 
     let content =
         fs::read_to_string(&project_yml).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let expanded_content = expand_secrets_in_text(&content, &project_root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut config =
-        parse_project_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        parse_project_config(&expanded_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if config.connections.contains_key(&req.name) {
         return Err(StatusCode::CONFLICT);
@@ -139,8 +149,10 @@ async fn update_connection(
 
     let content =
         fs::read_to_string(&project_yml).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let expanded_content = expand_secrets_in_text(&content, &project_root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut config =
-        parse_project_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        parse_project_config(&expanded_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if !config.connections.contains_key(&name) {
         return Err(StatusCode::NOT_FOUND);
@@ -165,8 +177,10 @@ async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, Statu
 
     let content =
         fs::read_to_string(&project_yml).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let expanded_content = expand_secrets_in_text(&content, &project_root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut config =
-        parse_project_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        parse_project_config(&expanded_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if !config.connections.contains_key(&name) {
         return Err(StatusCode::NOT_FOUND);

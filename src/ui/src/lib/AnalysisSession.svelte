@@ -2,6 +2,7 @@
   import ChatPanel from './ChatPanel.svelte';
   import { onMount } from 'svelte';
   import { t } from './i18n';
+  import { API_BASE_URL } from './config';
 
   interface AnalysisSession {
     id: string;
@@ -42,12 +43,9 @@
       currentSessionId = selectedSession.sessionId;
     } else {
       try {
-        const response = await fetch(
-          'http://localhost:3000/api/chat/sessions',
-          {
-            method: 'POST',
-          },
-        );
+        const response = await fetch(`${API_BASE_URL}/api/chat/sessions`, {
+          method: 'POST',
+        });
         if (response.ok) {
           const data = await response.json();
           currentSessionId = data.session_id;
@@ -61,7 +59,7 @@
 
   async function handleNewSession() {
     try {
-      const response = await fetch('http://localhost:3000/api/chat/sessions', {
+      const response = await fetch(`${API_BASE_URL}/api/chat/sessions`, {
         method: 'POST',
       });
       if (response.ok) {

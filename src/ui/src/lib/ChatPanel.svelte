@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from './i18n';
+  import { API_BASE_URL } from './config';
 
   interface Props {
     isLoading: boolean;
@@ -18,7 +19,7 @@
 
   async function startNewSession() {
     try {
-      const response = await fetch('http://localhost:3000/api/chat/sessions', {
+      const response = await fetch(`${API_BASE_URL}/api/chat/sessions`, {
         method: 'POST',
       });
       if (response.ok) {
@@ -38,7 +39,7 @@
 
     try {
       const response = await fetch(
-        `http://localhost:3000/api/chat/sessions/${currentSessionId}/messages`,
+        `${API_BASE_URL}/api/chat/sessions/${currentSessionId}/messages`,
       );
       if (response.ok) {
         const data = await response.json();
@@ -66,7 +67,7 @@
     if (!inputValue.trim() || isProcessing || currentSessionId === null) return;
 
     try {
-      const response = await fetch('http://localhost:3000/api/chat/config');
+      const response = await fetch(`${API_BASE_URL}/api/chat/config`);
       if (response.ok) {
         const config = await response.json();
         if (!config.api_key || config.api_key.trim() === '') {
@@ -96,7 +97,7 @@
 
     try {
       const response = await fetch(
-        `http://localhost:3000/api/chat/sessions/${currentSessionId}/messages`,
+        `${API_BASE_URL}/api/chat/sessions/${currentSessionId}/messages`,
         {
           method: 'POST',
           headers: {

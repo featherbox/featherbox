@@ -34,8 +34,12 @@ pub async fn main() -> Result<()> {
         .fallback(static_handler)
         .layer(cors);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    println!("API server listening on http://0.0.0.0:3000");
+    let port = 3015;
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to bind to port {}: {}", port, e))?;
+
+    println!("API server listening on http://0.0.0.0:{}", port);
     axum::serve(listener, app).await?;
 
     Ok(())

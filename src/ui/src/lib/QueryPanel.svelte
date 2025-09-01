@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from './i18n';
+  import { API_BASE_URL } from './config';
 
   interface QueryResult {
     results: string[][];
@@ -37,7 +38,7 @@
     results = null;
 
     try {
-      const response = await fetch('http://localhost:3000/api/query', {
+      const response = await fetch(`${API_BASE_URL}/api/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -67,7 +68,7 @@
 
   async function loadSavedQueries() {
     try {
-      const response = await fetch('http://localhost:3000/api/queries');
+      const response = await fetch(`${API_BASE_URL}/api/queries`);
       if (response.ok) {
         const data: SavedQueriesResponse = await response.json();
         savedQueries = data.queries;
@@ -86,7 +87,7 @@
     }
 
     try {
-      const response = await fetch('http://localhost:3000/api/queries', {
+      const response = await fetch(`${API_BASE_URL}/api/queries`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,12 +127,9 @@
     }
 
     try {
-      const response = await fetch(
-        `http://localhost:3000/api/queries/${queryName}`,
-        {
-          method: 'DELETE',
-        },
-      );
+      const response = await fetch(`${API_BASE_URL}/api/queries/${queryName}`, {
+        method: 'DELETE',
+      });
 
       if (response.ok) {
         await loadSavedQueries();

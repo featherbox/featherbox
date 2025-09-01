@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t, locale } from './i18n';
+  import { API_BASE_URL } from './config';
 
   interface ChatConfig {
     api_key: string;
@@ -36,7 +37,7 @@
 
   async function loadConfig() {
     try {
-      const response = await fetch('http://localhost:3000/api/chat/config');
+      const response = await fetch(`${API_BASE_URL}/api/chat/config`);
       if (response.ok) {
         config = await response.json();
       }
@@ -55,7 +56,7 @@
     saveStatus = null;
 
     try {
-      const response = await fetch('http://localhost:3000/api/chat/config', {
+      const response = await fetch(`${API_BASE_URL}/api/chat/config`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -140,7 +140,7 @@ fn create_database_config_with_name(db_type: &str, db_name: &str) -> String {
                 r#"database:
   type: mysql
   host: localhost
-  port: 3306
+  port: 3308
   database: {db_name}
   username: ${{TEST_MYSQL_USER}}
   password: ${{TEST_MYSQL_PASSWORD}}"#

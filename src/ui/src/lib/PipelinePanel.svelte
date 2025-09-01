@@ -11,6 +11,7 @@
   import { _ } from 'svelte-i18n';
   import PipelineGraph from './PipelineGraph.svelte';
   import type { GraphNode, GraphEdge, PipelineStatus } from './types';
+  import { API_BASE_URL } from './config';
 
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -35,7 +36,7 @@
       loading = true;
       error = null;
 
-      const response = await fetch('/api/graph');
+      const response = await fetch(`${API_BASE_URL}/api/graph`);
       if (!response.ok) {
         throw new Error('Failed to load graph');
       }
@@ -55,7 +56,7 @@
       loading = true;
       error = null;
 
-      const response = await fetch('/api/pipeline/migrate', {
+      const response = await fetch(`${API_BASE_URL}/api/pipeline/migrate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -80,7 +81,7 @@
       loading = true;
       error = null;
 
-      const response = await fetch('/api/pipeline/run', {
+      const response = await fetch(`${API_BASE_URL}/api/pipeline/run`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,7 +128,9 @@
 
   async function loadPipelineStatus(pipelineId: number) {
     try {
-      const response = await fetch(`/api/pipeline/${pipelineId}/status`);
+      const response = await fetch(
+        `${API_BASE_URL}/api/pipeline/${pipelineId}/status`,
+      );
       if (!response.ok) {
         throw new Error('Failed to load pipeline status');
       }
@@ -170,15 +173,18 @@
       loading = true;
       error = null;
 
-      const response = await fetch(`/api/pipeline/run-nodes/${nodeName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        `${API_BASE_URL}/api/pipeline/run-nodes/${nodeName}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            project_path: '.',
+          }),
         },
-        body: JSON.stringify({
-          project_path: '.',
-        }),
-      });
+      );
 
       const result = await response.json();
       if (!result.success) {

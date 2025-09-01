@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './config';
+
 export interface SecretSummary {
   key: string;
   masked_value: string;
@@ -8,7 +10,7 @@ export async function createSecret(
   value: string,
 ): Promise<boolean> {
   try {
-    const response = await fetch('http://localhost:3000/api/secrets', {
+    const response = await fetch(`${API_BASE_URL}/api/secrets`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -28,7 +30,7 @@ export async function updateSecret(
   value: string,
 ): Promise<boolean> {
   try {
-    const response = await fetch(`http://localhost:3000/api/secrets/${key}`, {
+    const response = await fetch(`${API_BASE_URL}/api/secrets/${key}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -45,7 +47,7 @@ export async function updateSecret(
 
 export async function deleteSecret(key: string): Promise<boolean> {
   try {
-    const response = await fetch(`http://localhost:3000/api/secrets/${key}`, {
+    const response = await fetch(`${API_BASE_URL}/api/secrets/${key}`, {
       method: 'DELETE',
     });
 
@@ -60,7 +62,7 @@ export async function getSecretInfo(
   key: string,
 ): Promise<SecretSummary | null> {
   try {
-    const response = await fetch(`http://localhost:3000/api/secrets/${key}`);
+    const response = await fetch(`${API_BASE_URL}/api/secrets/${key}`);
 
     if (response.ok) {
       return await response.json();
@@ -74,7 +76,7 @@ export async function getSecretInfo(
 
 export async function listSecrets(): Promise<SecretSummary[]> {
   try {
-    const response = await fetch('http://localhost:3000/api/secrets');
+    const response = await fetch(`${API_BASE_URL}/api/secrets`);
 
     if (response.ok) {
       return await response.json();
@@ -92,20 +94,17 @@ export async function generateUniqueSecretKey(
   fieldType: string,
 ): Promise<string> {
   try {
-    const response = await fetch(
-      'http://localhost:3000/api/secrets/generate-key',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          connection_name: connectionName,
-          connection_type: connectionType,
-          field_type: fieldType,
-        }),
+    const response = await fetch(`${API_BASE_URL}/api/secrets/generate-key`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify({
+        connection_name: connectionName,
+        connection_type: connectionType,
+        field_type: fieldType,
+      }),
+    });
 
     if (response.ok) {
       const result = await response.json();

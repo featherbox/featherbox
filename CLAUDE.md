@@ -14,6 +14,12 @@ cargo build                    # Build the fbox binary
 nix develop --command cargo test  # ALWAYS use this for testing - required for proper dependencies
 cargo test                     # DO NOT use this directly - may fail due to missing dependencies
 
+# Task Commands (Quality Assurance)
+nix develop --command task lint    # Run linter to check code quality
+nix develop --command task format  # Run formatter to fix code style
+nix develop --command task test    # Run tests to verify functionality
+nix develop --command task dev     # Start development server
+
 # CLI Usage
 target/debug/fbox new <project>           # Initialize new project
 target/debug/fbox start <project>         # Start web UI and API server for project
@@ -328,6 +334,24 @@ src/
 - Graph migration (`fbox migrate`) must be run before pipeline execution (`fbox run`)
 - Web UI runs on port 5173, API server runs on port 3000
 - Use `fbox start <project>` to launch both UI and API server together
+
+## Quality Assurance Workflow
+
+After completing any task, always run these commands to ensure code quality:
+```bash
+nix develop --command task lint
+nix develop --command task format
+```
+
+Then run tests to verify functionality:
+```bash
+nix develop --command task test
+```
+
+Finally, start the development server to verify operation:
+```bash
+nix develop --command task dev
+```
 
 ## API Endpoints
 

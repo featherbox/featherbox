@@ -24,6 +24,7 @@
     ConnectionSummary,
     ConnectionDetails,
   } from './lib/types';
+  import { API_BASE_URL } from './lib/config';
 
   let activeSection = $state('connections');
   let adapters = $state<AdapterSummary[]>([]);
@@ -69,7 +70,7 @@
 
   async function loadAdapters() {
     try {
-      const response = await fetch('http://localhost:3000/api/adapters');
+      const response = await fetch(`${API_BASE_URL}/api/adapters`);
       if (response.ok) {
         adapters = await response.json();
       }
@@ -80,9 +81,7 @@
 
   async function loadAdapterDetails(name: string) {
     try {
-      const response = await fetch(
-        `http://localhost:3000/api/adapters/${name}`,
-      );
+      const response = await fetch(`${API_BASE_URL}/api/adapters/${name}`);
       if (response.ok) {
         selectedAdapterDetails = await response.json();
       }
@@ -115,12 +114,9 @@
     }
 
     try {
-      const response = await fetch(
-        `http://localhost:3000/api/adapters/${name}`,
-        {
-          method: 'DELETE',
-        },
-      );
+      const response = await fetch(`${API_BASE_URL}/api/adapters/${name}`, {
+        method: 'DELETE',
+      });
       if (response.ok) {
         await loadAdapters();
         if (selectedAdapter === name) {
@@ -141,8 +137,8 @@
     try {
       const url =
         adapterFormMode === 'create'
-          ? 'http://localhost:3000/api/adapters'
-          : `http://localhost:3000/api/adapters/${name}`;
+          ? `${API_BASE_URL}/api/adapters`
+          : `${API_BASE_URL}/api/adapters/${name}`;
 
       const method = adapterFormMode === 'create' ? 'POST' : 'PUT';
       const body =
@@ -174,7 +170,7 @@
 
   async function loadConnections() {
     try {
-      const response = await fetch('http://localhost:3000/api/connections');
+      const response = await fetch(`${API_BASE_URL}/api/connections`);
       if (response.ok) {
         connections = await response.json();
       }
@@ -185,9 +181,7 @@
 
   async function loadConnectionDetails(name: string) {
     try {
-      const response = await fetch(
-        `http://localhost:3000/api/connections/${name}`,
-      );
+      const response = await fetch(`${API_BASE_URL}/api/connections/${name}`);
       if (response.ok) {
         const config = await response.json();
         selectedConnectionDetails = { name, ...config };
@@ -221,12 +215,9 @@
     }
 
     try {
-      const response = await fetch(
-        `http://localhost:3000/api/connections/${name}`,
-        {
-          method: 'DELETE',
-        },
-      );
+      const response = await fetch(`${API_BASE_URL}/api/connections/${name}`, {
+        method: 'DELETE',
+      });
       if (response.ok) {
         await loadConnections();
         if (selectedConnection === name) {
@@ -247,8 +238,8 @@
     try {
       const url =
         connectionFormMode === 'create'
-          ? 'http://localhost:3000/api/connections'
-          : `http://localhost:3000/api/connections/${name}`;
+          ? `${API_BASE_URL}/api/connections`
+          : `${API_BASE_URL}/api/connections/${name}`;
 
       const method = connectionFormMode === 'create' ? 'POST' : 'PUT';
       const body =
@@ -280,7 +271,7 @@
 
   async function loadModels() {
     try {
-      const response = await fetch('http://localhost:3000/api/models');
+      const response = await fetch(`${API_BASE_URL}/api/models`);
       if (response.ok) {
         models = await response.json();
       }
@@ -292,7 +283,7 @@
   async function loadModelDetails(path: string) {
     try {
       const response = await fetch(
-        `http://localhost:3000/api/models/${encodeURIComponent(path)}`,
+        `${API_BASE_URL}/api/models/${encodeURIComponent(path)}`,
       );
       if (response.ok) {
         selectedModelDetails = await response.json();
@@ -327,7 +318,7 @@
 
     try {
       const response = await fetch(
-        `http://localhost:3000/api/models/${encodeURIComponent(path)}`,
+        `${API_BASE_URL}/api/models/${encodeURIComponent(path)}`,
         {
           method: 'DELETE',
         },
@@ -357,8 +348,8 @@
     try {
       const url =
         modelFormMode === 'create'
-          ? 'http://localhost:3000/api/models'
-          : `http://localhost:3000/api/models/${encodeURIComponent(modelFormData?.path || '')}`;
+          ? `${API_BASE_URL}/api/models`
+          : `${API_BASE_URL}/api/models/${encodeURIComponent(modelFormData?.path || '')}`;
 
       const method = modelFormMode === 'create' ? 'POST' : 'PUT';
       const body =

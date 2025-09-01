@@ -240,8 +240,8 @@ pub fn routes() -> Router {
         .route("/query", post(execute_query_handler))
         .route("/queries", get(list_queries_handler))
         .route("/queries", post(save_query_handler))
-        .route("/queries/:name", get(get_query_handler))
-        .route("/queries/:name", put(update_query_handler))
-        .route("/queries/:name", delete(delete_query_handler))
-        .route("/queries/:name/run", post(run_query_handler))
+        .route("/queries/{name}", get(get_query_handler))
+        .route("/queries/{name}", put(update_query_handler))
+        .route("/queries/{name}", delete(delete_query_handler))
+        .route("/queries/{name}/run", post(run_query_handler))
 }
