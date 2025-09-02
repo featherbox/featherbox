@@ -56,7 +56,7 @@ impl SecretManager {
         let key_base64 = BASE64.encode(key_bytes);
 
         let key_content = format!(
-            "# FeatherBox Secret Key File\n# \n# This file contains the encryption key for your project secrets.\n# \n# SECURITY WARNINGS:\n# - DO NOT commit this file to version control (Git, SVN, etc.)\n# - DO NOT share via email, chat, or public platforms\n# - DO NOT copy to shared drives or cloud storage\n# \n# TEAM SHARING:\n# - Share this key securely through encrypted channels only\n# - All team members need the same key to access project secrets\n# - Store backup copies in secure password managers\n# \n# USAGE:\n# - Keep this file at <project-directory>/.secret.key\n# - Use 'fbox secret' commands to manage encrypted credentials\n# - If lost, use 'fbox secret gen-key' to regenerate (existing secrets will be lost)\n# \n# Generated: {}\n\n{}",
+            "# FeatherBox Secret Key File\n# \n# This file contains the encryption key for your project secrets.\n# \n# SECURITY WARNINGS:\n# - DO NOT commit this file to version control (Git, SVN, etc.)\n# - DO NOT share via email, chat, or public platforms\n# - DO NOT copy to shared drives or cloud storage\n# \n# TEAM SHARING:\n# - Share this key securely through encrypted channels only\n# - All team members need the same key to access project secrets\n# - Store backup copies in secure password managers\n# \n# USAGE:\n# - Keep this file at <project-directory>/.secret.key\n# - Use 'featherbox secret' commands to manage encrypted credentials\n# - If lost, use 'featherbox secret gen-key' to regenerate (existing secrets will be lost)\n# \n# Generated: {}\n\n{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -78,7 +78,7 @@ impl SecretManager {
     fn load_key(&self) -> Result<[u8; 32]> {
         if !self.key_exists() {
             return Err(anyhow::anyhow!(
-                "Secret key not found. Run 'fbox secret gen-key' first."
+                "Secret key not found. Run 'featherbox secret gen-key' first."
             ));
         }
 
@@ -246,7 +246,7 @@ pub fn expand_secrets_in_text(text: &str, project_root: &Path) -> Result<String>
             result = result.replace(full_match, value);
         } else {
             return Err(anyhow::anyhow!(
-                "Secret '{}' not found. Use 'fbox secret new' to add it.",
+                "Secret '{}' not found. Use 'featherbox secret new' to add it.",
                 key
             ));
         }

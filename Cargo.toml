@@ -8,7 +8,7 @@ name = "featherbox"
 path = "src/lib.rs"
 
 [[bin]]
-name = "fbox"
+name = "featherbox"
 path = "src/main.rs"
 
 [dependencies]

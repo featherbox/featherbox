@@ -49,7 +49,7 @@ fn load_project_config(project_path: &Path) -> Result<ProjectConfig> {
     let project_yml_path = project_path.join("project.yml");
     if !project_yml_path.exists() {
         return Err(anyhow::anyhow!(
-            "project.yml not found. Please run 'fbox init' first."
+            "project.yml not found. Please run 'featherbox init' first."
         ));
     }
 

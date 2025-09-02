@@ -152,7 +152,7 @@ impl MigrationTrait for Migration {
 
 #[derive(DeriveIden)]
 enum Pipelines {
-    #[sea_orm(iden = "__fbox_pipelines")]
+    #[sea_orm(iden = "__featherbox_pipelines")]
     Table,
     Status,
     StartedAt,
@@ -161,7 +161,7 @@ enum Pipelines {
 
 #[derive(DeriveIden)]
 enum PipelineActions {
-    #[sea_orm(iden = "__fbox_pipeline_actions")]
+    #[sea_orm(iden = "__featherbox_pipeline_actions")]
     Table,
     Status,
     StartedAt,

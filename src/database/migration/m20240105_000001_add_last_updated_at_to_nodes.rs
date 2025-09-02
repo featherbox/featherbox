@@ -9,8 +9,12 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(FboxNodes::Table)
-                    .add_column(ColumnDef::new(FboxNodes::LastUpdatedAt).timestamp().null())
+                    .table(FeatherboxNodes::Table)
+                    .add_column(
+                        ColumnDef::new(FeatherboxNodes::LastUpdatedAt)
+                            .timestamp()
+                            .null(),
+                    )
                     .to_owned(),
             )
             .await
@@ -20,8 +24,8 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(FboxNodes::Table)
-                    .drop_column(FboxNodes::LastUpdatedAt)
+                    .table(FeatherboxNodes::Table)
+                    .drop_column(FeatherboxNodes::LastUpdatedAt)
                     .to_owned(),
             )
             .await
@@ -29,8 +33,8 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum FboxNodes {
-    #[sea_orm(iden = "__fbox_nodes")]
+enum FeatherboxNodes {
+    #[sea_orm(iden = "__featherbox_nodes")]
     Table,
     LastUpdatedAt,
 }

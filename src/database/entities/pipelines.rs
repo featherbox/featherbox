@@ -1,7 +1,7 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-#[sea_orm(table_name = "__fbox_pipelines")]
+#[sea_orm(table_name = "__featherbox_pipelines")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,

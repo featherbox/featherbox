@@ -101,19 +101,19 @@ pub struct ExecutionConfig {
 ### 4. 実行モードの選択肢
 ```bash
 # 通常実行（現在の動作）
-fbox run
+featherbox run
 
 # 部分的な失敗を許容して続行
-fbox run --continue-on-failure
+featherbox run --continue-on-failure
 
 # 特定のテーブルのみ強制実行
-fbox run --force --tables user_stats,reports
+featherbox run --force --tables user_stats,reports
 
 # 失敗したタスクのみ再実行
-fbox run --retry-failed
+featherbox run --retry-failed
 
 # 依存関係を無視して実行
-fbox run --ignore-dependencies --tables problem_table
+featherbox run --ignore-dependencies --tables problem_table
 ```
 
 ### 5. エラー分類と対応
@@ -188,6 +188,6 @@ Warnings:
   - user_stats: 5% of records had missing email addresses
   - sales_summary: Data freshness warning (last update: 2 hours ago)
 
-💡 Suggestion: Run 'fbox run --retry-failed' to retry failed tasks
+💡 Suggestion: Run 'featherbox run --retry-failed' to retry failed tasks
 =======================================
 ```

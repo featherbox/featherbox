@@ -7,7 +7,7 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
 
     if !project_path.exists() {
         return Err(anyhow::anyhow!(
-            "Project '{}' not found. Use 'fbox new {}' to create it.",
+            "Project '{}' not found. Use 'featherbox new {}' to create it.",
             project_name,
             project_name
         ));
@@ -27,7 +27,7 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
         .with_context(|| format!("Failed to change to project directory: {project_name}"))?;
 
     // Start the API server in the background
-    let _server = Command::new("fbox")
+    let _server = Command::new("featherbox")
         .arg("server")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

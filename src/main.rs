@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
             builder.create_gitignore()?;
 
             println!("✓ Project '{project_name}' created successfully");
-            println!("  Run 'fbox start {project_name}' to open the project");
+            println!("  Run 'featherbox start {project_name}' to open the project");
             Ok(())
         }
         Commands::Adapter { action } => match action {

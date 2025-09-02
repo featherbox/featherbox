@@ -58,7 +58,7 @@ pub async fn execute_secret_edit(current_dir: &Path) -> Result<()> {
     let keys = manager.list_secrets()?;
 
     if keys.is_empty() {
-        println!("No secrets found. Use 'fbox secret new' to add secrets.");
+        println!("No secrets found. Use 'featherbox secret new' to add secrets.");
         return Ok(());
     }
 
@@ -171,7 +171,7 @@ fn ensure_key_exists(project_root: &Path) -> Result<()> {
     let manager = SecretManager::new(project_root)?;
     if !manager.key_exists() {
         return Err(anyhow::anyhow!(
-            "Secret key not found. Run 'fbox secret gen-key' first."
+            "Secret key not found. Run 'featherbox secret gen-key' first."
         ));
     }
     Ok(())

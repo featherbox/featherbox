@@ -9,17 +9,17 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(FboxGraphs::Table)
+                    .table(FeatherboxGraphs::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(FboxGraphs::Id)
+                        ColumnDef::new(FeatherboxGraphs::Id)
                             .integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(FboxGraphs::CreatedAt)
+                        ColumnDef::new(FeatherboxGraphs::CreatedAt)
                             .date_time()
                             .not_null()
                             .default(Expr::current_timestamp()),
@@ -31,18 +31,22 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(FboxPipelines::Table)
+                    .table(FeatherboxPipelines::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(FboxPipelines::Id)
+                        ColumnDef::new(FeatherboxPipelines::Id)
                             .integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(FboxPipelines::GraphId).integer().not_null())
                     .col(
-                        ColumnDef::new(FboxPipelines::CreatedAt)
+                        ColumnDef::new(FeatherboxPipelines::GraphId)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(FeatherboxPipelines::CreatedAt)
                             .date_time()
                             .not_null()
                             .default(Expr::current_timestamp()),
@@ -50,8 +54,8 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_pipelines_graph_id")
-                            .from(FboxPipelines::Table, FboxPipelines::GraphId)
-                            .to(FboxGraphs::Table, FboxGraphs::Id),
+                            .from(FeatherboxPipelines::Table, FeatherboxPipelines::GraphId)
+                            .to(FeatherboxGraphs::Table, FeatherboxGraphs::Id),
                     )
                     .to_owned(),
             )
@@ -60,22 +64,26 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(FboxNodes::Table)
+                    .table(FeatherboxNodes::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(FboxNodes::Id)
+                        ColumnDef::new(FeatherboxNodes::Id)
                             .integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(FboxNodes::GraphId).integer().not_null())
-                    .col(ColumnDef::new(FboxNodes::Name).string().not_null())
+                    .col(
+                        ColumnDef::new(FeatherboxNodes::GraphId)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(FeatherboxNodes::Name).string().not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_nodes_graph_id")
-                            .from(FboxNodes::Table, FboxNodes::GraphId)
-                            .to(FboxGraphs::Table, FboxGraphs::Id),
+                            .from(FeatherboxNodes::Table, FeatherboxNodes::GraphId)
+                            .to(FeatherboxGraphs::Table, FeatherboxGraphs::Id),
                     )
                     .to_owned(),
             )
@@ -84,60 +92,71 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(FboxEdges::Table)
+                    .table(FeatherboxEdges::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(FboxEdges::Id)
-                            .integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
-                    .col(ColumnDef::new(FboxEdges::GraphId).integer().not_null())
-                    .col(ColumnDef::new(FboxEdges::FromNode).string().not_null())
-                    .col(ColumnDef::new(FboxEdges::ToNode).string().not_null())
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_edges_graph_id")
-                            .from(FboxEdges::Table, FboxEdges::GraphId)
-                            .to(FboxGraphs::Table, FboxGraphs::Id),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_table(
-                Table::create()
-                    .table(FboxPipelineActions::Table)
-                    .if_not_exists()
-                    .col(
-                        ColumnDef::new(FboxPipelineActions::Id)
+                        ColumnDef::new(FeatherboxEdges::Id)
                             .integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(FboxPipelineActions::PipelineId)
+                        ColumnDef::new(FeatherboxEdges::GraphId)
                             .integer()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(FboxPipelineActions::TableName)
+                        ColumnDef::new(FeatherboxEdges::FromNode)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(FeatherboxEdges::ToNode).string().not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_edges_graph_id")
+                            .from(FeatherboxEdges::Table, FeatherboxEdges::GraphId)
+                            .to(FeatherboxGraphs::Table, FeatherboxGraphs::Id),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
+                    .table(FeatherboxPipelineActions::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(FeatherboxPipelineActions::Id)
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(FeatherboxPipelineActions::PipelineId)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(FeatherboxPipelineActions::TableName)
                             .string()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(FboxPipelineActions::ExecutionOrder)
+                        ColumnDef::new(FeatherboxPipelineActions::ExecutionOrder)
                             .integer()
                             .not_null(),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_actions_pipeline_id")
-                            .from(FboxPipelineActions::Table, FboxPipelineActions::PipelineId)
-                            .to(FboxPipelines::Table, FboxPipelines::Id),
+                            .from(
+                                FeatherboxPipelineActions::Table,
+                                FeatherboxPipelineActions::PipelineId,
+                            )
+                            .to(FeatherboxPipelines::Table, FeatherboxPipelines::Id),
                     )
                     .to_owned(),
             )
@@ -148,19 +167,23 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(FboxPipelineActions::Table).to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(FeatherboxPipelineActions::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
-            .drop_table(Table::drop().table(FboxEdges::Table).to_owned())
+            .drop_table(Table::drop().table(FeatherboxEdges::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(FboxNodes::Table).to_owned())
+            .drop_table(Table::drop().table(FeatherboxNodes::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(FboxPipelines::Table).to_owned())
+            .drop_table(Table::drop().table(FeatherboxPipelines::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(FboxGraphs::Table).to_owned())
+            .drop_table(Table::drop().table(FeatherboxGraphs::Table).to_owned())
             .await?;
 
         Ok(())
@@ -168,16 +191,16 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum FboxGraphs {
-    #[sea_orm(iden = "__fbox_graphs")]
+enum FeatherboxGraphs {
+    #[sea_orm(iden = "__featherbox_graphs")]
     Table,
     Id,
     CreatedAt,
 }
 
 #[derive(DeriveIden)]
-enum FboxPipelines {
-    #[sea_orm(iden = "__fbox_pipelines")]
+enum FeatherboxPipelines {
+    #[sea_orm(iden = "__featherbox_pipelines")]
     Table,
     Id,
     GraphId,
@@ -185,8 +208,8 @@ enum FboxPipelines {
 }
 
 #[derive(DeriveIden)]
-enum FboxNodes {
-    #[sea_orm(iden = "__fbox_nodes")]
+enum FeatherboxNodes {
+    #[sea_orm(iden = "__featherbox_nodes")]
     Table,
     Id,
     GraphId,
@@ -194,8 +217,8 @@ enum FboxNodes {
 }
 
 #[derive(DeriveIden)]
-enum FboxEdges {
-    #[sea_orm(iden = "__fbox_edges")]
+enum FeatherboxEdges {
+    #[sea_orm(iden = "__featherbox_edges")]
     Table,
     Id,
     GraphId,
@@ -204,8 +227,8 @@ enum FboxEdges {
 }
 
 #[derive(DeriveIden)]
-enum FboxPipelineActions {
-    #[sea_orm(iden = "__fbox_pipeline_actions")]
+enum FeatherboxPipelineActions {
+    #[sea_orm(iden = "__featherbox_pipeline_actions")]
     Table,
     Id,
     PipelineId,

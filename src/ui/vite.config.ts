@@ -8,7 +8,7 @@ export default defineConfig({
     allowedHosts: ['desktop.tail74e0bd.ts.net'],
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3015',
         changeOrigin: true,
       },
     },

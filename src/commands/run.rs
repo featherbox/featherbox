@@ -29,7 +29,7 @@ pub async fn run(project_path: &Path) -> Result<()> {
 
     if config.adapters.is_empty() && config.models.is_empty() {
         println!(
-            "No adapters or models found. Create some with 'fbox adapter new' or 'fbox model new'"
+            "No adapters or models found. Create some with 'featherbox adapter new' or 'featherbox model new'"
         );
         return Ok(());
     }
@@ -39,7 +39,7 @@ pub async fn run(project_path: &Path) -> Result<()> {
     let graph_id = latest_graph_id(&app_db).await?;
 
     let Some(graph_id) = graph_id else {
-        println!("No graph found. Run 'fbox migrate' first to create the initial graph.");
+        println!("No graph found. Run 'featherbox migrate' first to create the initial graph.");
         return Ok(());
     };
 

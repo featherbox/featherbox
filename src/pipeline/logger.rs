@@ -16,7 +16,7 @@ impl Logger {
 
     async fn initialize(&self) -> Result<()> {
         let create_task_logs_table = r#"
-            CREATE TABLE IF NOT EXISTS db.__fbox_task_logs (
+            CREATE TABLE IF NOT EXISTS db.__featherbox_task_logs (
                 executed_at TIMESTAMP,
                 pipeline_id INTEGER,
                 table_name VARCHAR,
@@ -27,7 +27,7 @@ impl Logger {
         "#;
 
         let create_pipeline_logs_table = r#"
-            CREATE TABLE IF NOT EXISTS db.__fbox_pipeline_logs (
+            CREATE TABLE IF NOT EXISTS db.__featherbox_pipeline_logs (
                 executed_at TIMESTAMP,
                 pipeline_id INTEGER,
                 event_type VARCHAR,
@@ -61,7 +61,7 @@ impl Logger {
         let escaped_error_msg = error_msg.replace("'", "''");
 
         let sql = format!(
-            r#"INSERT INTO db.__fbox_task_logs
+            r#"INSERT INTO db.__featherbox_task_logs
                (executed_at, pipeline_id, table_name, status, error_message, execution_time_ms)
                VALUES ('{executed_at}', {pipeline_id}, '{table_name}', '{status}', '{escaped_error_msg}', {execution_time_ms})"#
         );
@@ -87,7 +87,7 @@ impl Logger {
         let escaped_error_msg = error_msg.replace("'", "''");
 
         let sql = format!(
-            r#"INSERT INTO db.__fbox_pipeline_logs
+            r#"INSERT INTO db.__featherbox_pipeline_logs
                (executed_at, pipeline_id, event_type, message, error_details)
                VALUES ('{executed_at}', {pipeline_id}, '{event_type}', '{escaped_message}', '{escaped_error_msg}')"#
         );
@@ -137,7 +137,7 @@ mod tests {
             .unwrap();
 
         let results = logger
-            .query_logs("SELECT pipeline_id, table_name, status, error_message, execution_time_ms FROM db.__fbox_task_logs ORDER BY executed_at")
+            .query_logs("SELECT pipeline_id, table_name, status, error_message, execution_time_ms FROM db.__featherbox_task_logs ORDER BY executed_at")
             .unwrap();
 
         assert_eq!(results.len(), 1);
@@ -184,7 +184,7 @@ mod tests {
             .unwrap();
 
         let results = logger
-            .query_logs("SELECT pipeline_id, table_name, status, error_message, execution_time_ms FROM db.__fbox_task_logs ORDER BY executed_at")
+            .query_logs("SELECT pipeline_id, table_name, status, error_message, execution_time_ms FROM db.__featherbox_task_logs ORDER BY executed_at")
             .unwrap();
 
         assert_eq!(results.len(), 1);
@@ -234,7 +234,7 @@ mod tests {
             .unwrap();
 
         let results = logger
-            .query_logs("SELECT pipeline_id, event_type, message, error_details FROM db.__fbox_pipeline_logs ORDER BY rowid")
+            .query_logs("SELECT pipeline_id, event_type, message, error_details FROM db.__featherbox_pipeline_logs ORDER BY rowid")
             .unwrap();
 
         assert_eq!(results.len(), 2);

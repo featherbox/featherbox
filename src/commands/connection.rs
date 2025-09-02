@@ -350,7 +350,7 @@ pub async fn execute_connection_delete(current_dir: &Path) -> Result<()> {
 
     if !project_yml.exists() {
         return Err(anyhow::anyhow!(
-            "project.yml not found. Run 'fbox init' first."
+            "project.yml not found. Run 'featherbox init' first."
         ));
     }
 

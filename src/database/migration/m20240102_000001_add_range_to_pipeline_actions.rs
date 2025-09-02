@@ -9,9 +9,9 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(FboxPipelineActions::Table)
+                    .table(FeatherboxPipelineActions::Table)
                     .add_column(
-                        ColumnDef::new(FboxPipelineActions::Since)
+                        ColumnDef::new(FeatherboxPipelineActions::Since)
                             .date_time()
                             .null(),
                     )
@@ -22,9 +22,9 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(FboxPipelineActions::Table)
+                    .table(FeatherboxPipelineActions::Table)
                     .add_column(
-                        ColumnDef::new(FboxPipelineActions::Until)
+                        ColumnDef::new(FeatherboxPipelineActions::Until)
                             .date_time()
                             .null(),
                     )
@@ -37,8 +37,8 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(FboxPipelineActions::Table)
-                    .drop_column(FboxPipelineActions::Since)
+                    .table(FeatherboxPipelineActions::Table)
+                    .drop_column(FeatherboxPipelineActions::Since)
                     .to_owned(),
             )
             .await?;
@@ -46,8 +46,8 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(FboxPipelineActions::Table)
-                    .drop_column(FboxPipelineActions::Until)
+                    .table(FeatherboxPipelineActions::Table)
+                    .drop_column(FeatherboxPipelineActions::Until)
                     .to_owned(),
             )
             .await
@@ -55,8 +55,8 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum FboxPipelineActions {
-    #[sea_orm(iden = "__fbox_pipeline_actions")]
+enum FeatherboxPipelineActions {
+    #[sea_orm(iden = "__featherbox_pipeline_actions")]
     Table,
     Since,
     Until,

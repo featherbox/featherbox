@@ -13,17 +13,17 @@ A lightweight data pipeline framework built in Rust for Extract, Load, Transform
 
 ```bash
 # Project Management
-fbox new [project_name]    # Initialize new project
-fbox start <project_name>  # Start web UI and API server
+featherbox new [project_name]    # Initialize new project
+featherbox start <project_name>  # Start web UI and API server
 
 # CLI Configuration (optional - can also use web UI)
-fbox adapter new <name>    # Create adapter configuration
-fbox model new <name>      # Create model configuration
-fbox migrate               # Run database migrations
-fbox run                   # Execute pipeline with differential execution
+featherbox adapter new <name>    # Create adapter configuration
+featherbox model new <name>      # Create model configuration
+featherbox migrate               # Run database migrations
+featherbox run                   # Execute pipeline with differential execution
 
 # Server Mode
-fbox server                # Start API server only (port 3000)
+featherbox server                # Start API server only (port 3015)
 ```
 
 ## Getting Started
@@ -31,14 +31,14 @@ fbox server                # Start API server only (port 3000)
 ### Quick Start with Web UI
 ```bash
 # Create a new project
-fbox new my-project
+featherbox new my-project
 
 # Start the web interface
-fbox start my-project
+featherbox start my-project
 ```
 
 This will:
-- Start the API server on http://localhost:3000
+- Start the API server on http://localhost:3015
 - Start the web UI on http://localhost:5173  
 - Automatically open your browser to the UI
 

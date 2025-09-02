@@ -95,22 +95,22 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
-fn get_fbox_binary() -> PathBuf {
+fn get_featherbox_binary() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    Path::new(manifest_dir).join("target/debug/fbox")
+    Path::new(manifest_dir).join("target/debug/featherbox")
 }
 
-fn run_fbox_command(args: &[&str], project_dir: &Path) -> Result<(bool, String)> {
-    let fbox_binary = get_fbox_binary();
+fn run_featherbox_command(args: &[&str], project_dir: &Path) -> Result<(bool, String)> {
+    let featherbox_binary = get_featherbox_binary();
 
-    if !fbox_binary.exists() {
+    if !featherbox_binary.exists() {
         let build_output = Command::new("cargo").arg("build").output()?;
         if !build_output.status.success() {
-            anyhow::bail!("Failed to build fbox binary");
+            anyhow::bail!("Failed to build featherbox binary");
         }
     }
 
-    let mut cmd = Command::new(&fbox_binary);
+    let mut cmd = Command::new(&featherbox_binary);
     cmd.args(args).current_dir(project_dir);
 
     let output = cmd.output()?;
@@ -122,7 +122,7 @@ fn run_fbox_command(args: &[&str], project_dir: &Path) -> Result<(bool, String)>
 }
 
 fn verify_data_with_query(project_dir: &Path, sql: &str) -> Result<String> {
-    let (success, output) = run_fbox_command(&["query", "execute", sql], project_dir)?;
+    let (success, output) = run_featherbox_command(&["query", "execute", sql], project_dir)?;
     if !success {
         anyhow::bail!("Query failed: {}", output);
     }
@@ -257,13 +257,13 @@ connections:
 fn get_table_list_query(db_type: &str) -> &'static str {
     match db_type {
         "sqlite" => {
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '__fbox_%' ORDER BY name"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '__featherbox_%' ORDER BY name"
         }
         "mysql" => {
-            "SELECT table_name as name FROM information_schema.tables WHERE table_name NOT LIKE '__fbox_%' AND table_name NOT LIKE 'ducklake_%' ORDER BY table_name"
+            "SELECT table_name as name FROM information_schema.tables WHERE table_name NOT LIKE '__featherbox_%' AND table_name NOT LIKE 'ducklake_%' ORDER BY table_name"
         }
         "postgresql" => {
-            "SELECT table_name as name FROM information_schema.tables WHERE table_name NOT LIKE '__fbox_%' AND table_name NOT LIKE 'ducklake_%' ORDER BY table_name"
+            "SELECT table_name as name FROM information_schema.tables WHERE table_name NOT LIKE '__featherbox_%' AND table_name NOT LIKE 'ducklake_%' ORDER BY table_name"
         }
         _ => panic!("Unsupported database type: {db_type}"),
     }
@@ -693,10 +693,10 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
 
     let temp_dir = TempDir::new()?;
     let project_name = format!("test_project_{storage_type}_{catalog_type}");
-    let (success, output) = run_fbox_command(&["new", &project_name], temp_dir.path())?;
+    let (success, output) = run_featherbox_command(&["new", &project_name], temp_dir.path())?;
     let project_dir = temp_dir.path().join(&project_name);
     if !success {
-        anyhow::bail!("fbox new failed: {}", output);
+        anyhow::bail!("featherbox new failed: {}", output);
     }
 
     let unique_db_name = if catalog_type == "sqlite" {
@@ -794,18 +794,18 @@ fn run_e2e_test(storage_type: &str, catalog_type: &str) -> Result<()> {
         setup_minio_test_data(&unique_bucket_name)?;
     }
 
-    let (success, output) = run_fbox_command(&["migrate"], &project_dir)?;
+    let (success, output) = run_featherbox_command(&["migrate"], &project_dir)?;
     if !success {
-        anyhow::bail!("fbox migrate failed for {storage_type}-{catalog_type}: {output}");
+        anyhow::bail!("featherbox migrate failed for {storage_type}-{catalog_type}: {output}");
     }
 
-    let (success, output) = run_fbox_command(&["run"], &project_dir)?;
+    let (success, output) = run_featherbox_command(&["run"], &project_dir)?;
     if !success {
         let table_check = verify_data_with_query(&project_dir, get_table_list_query(catalog_type));
         if let Ok(tables) = table_check {
             eprintln!("Available tables: {tables}");
         }
-        anyhow::bail!("fbox run failed for {storage_type}-{catalog_type}: {output}");
+        anyhow::bail!("featherbox run failed for {storage_type}-{catalog_type}: {output}");
     }
 
     let tables_output = verify_data_with_query(&project_dir, get_table_list_query(catalog_type))?;

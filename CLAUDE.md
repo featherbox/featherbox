@@ -10,7 +10,7 @@ FeatherBox is a lightweight data pipeline framework built in Rust that enables E
 
 ```bash
 # Development
-cargo build                    # Build the fbox binary
+cargo build                    # Build the featherbox binary
 nix develop --command cargo test  # ALWAYS use this for testing - required for proper dependencies
 cargo test                     # DO NOT use this directly - may fail due to missing dependencies
 
@@ -21,28 +21,28 @@ nix develop --command task test    # Run tests to verify functionality
 nix develop --command task dev     # Start development server
 
 # CLI Usage
-target/debug/fbox new <project>           # Initialize new project
-target/debug/fbox start <project>         # Start web UI and API server for project
-target/debug/fbox server                  # Start API server only (port 3000)
-target/debug/fbox connection new          # Create connection configuration
-target/debug/fbox connection delete       # Delete connection configuration
-target/debug/fbox adapter new             # Create adapter configuration
-target/debug/fbox adapter delete <name>   # Delete adapter configuration
-target/debug/fbox model new               # Create model configuration
-target/debug/fbox model delete            # Delete model configuration
-target/debug/fbox secret new              # Create new secret
-target/debug/fbox secret edit             # Edit existing secret
-target/debug/fbox secret delete           # Delete secret
-target/debug/fbox secret list             # List all secrets
-target/debug/fbox secret gen-key          # Generate new encryption key
-target/debug/fbox query execute "<sql>"   # Execute SQL query for verification
-target/debug/fbox query list              # List saved queries
-target/debug/fbox query save <name> "<sql>" # Save query with name
-target/debug/fbox query run <name>        # Run saved query by name
-target/debug/fbox query delete <name>     # Delete saved query
-target/debug/fbox query update <name>     # Update saved query
-target/debug/fbox migrate                 # Run database migrations and save graph
-target/debug/fbox run                     # Execute pipeline with differential execution
+target/debug/featherbox new <project>           # Initialize new project
+target/debug/featherbox start <project>         # Start web UI and API server for project
+target/debug/featherbox server                  # Start API server only (port 3015)
+target/debug/featherbox connection new          # Create connection configuration
+target/debug/featherbox connection delete       # Delete connection configuration
+target/debug/featherbox adapter new             # Create adapter configuration
+target/debug/featherbox adapter delete <name>   # Delete adapter configuration
+target/debug/featherbox model new               # Create model configuration
+target/debug/featherbox model delete            # Delete model configuration
+target/debug/featherbox secret new              # Create new secret
+target/debug/featherbox secret edit             # Edit existing secret
+target/debug/featherbox secret delete           # Delete secret
+target/debug/featherbox secret list             # List all secrets
+target/debug/featherbox secret gen-key          # Generate new encryption key
+target/debug/featherbox query execute "<sql>"   # Execute SQL query for verification
+target/debug/featherbox query list              # List saved queries
+target/debug/featherbox query save <name> "<sql>" # Save query with name
+target/debug/featherbox query run <name>        # Run saved query by name
+target/debug/featherbox query delete <name>     # Delete saved query
+target/debug/featherbox query update <name>     # Update saved query
+target/debug/featherbox migrate                 # Run database migrations and save graph
+target/debug/featherbox run                     # Execute pipeline with differential execution
 ```
 
 ## Architecture Overview
@@ -105,12 +105,12 @@ Data Sources → Configuration → Dependency Resolution → Pipeline Execution 
 
 ### Database Schema
 
-Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fbox_` to avoid conflicts with user data:
-- `__fbox_graphs`: Graph version history
-- `__fbox_nodes`: Node (table) information  
-- `__fbox_edges`: Edge (dependency) relationships
-- `__fbox_pipelines`: Pipeline execution records
-- `__fbox_pipeline_actions`: Action execution details
+Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__featherbox_` to avoid conflicts with user data:
+- `__featherbox_graphs`: Graph version history
+- `__featherbox_nodes`: Node (table) information  
+- `__featherbox_edges`: Edge (dependency) relationships
+- `__featherbox_pipelines`: Pipeline execution records
+- `__featherbox_pipeline_actions`: Action execution details
 
 ## Development Patterns
 
@@ -138,9 +138,9 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fb
 
 ### Migration System
 - Sea-ORM migrations in `src/database/migration/`
-- `fbox migrate` command for graph migration and schema management
+- `featherbox migrate` command for graph migration and schema management
 - `connect_app_db()` automatically runs pending database schema migrations
-- `fbox run` requires `fbox migrate` to be run first to establish graph
+- `featherbox run` requires `featherbox migrate` to be run first to establish graph
 - Embedded migrations for single-binary distribution
 
 ## Key Implementation Details
@@ -226,7 +226,7 @@ queries/             # Saved SQL queries
   - `tests/fixtures/test_data/`: Test data files (JSON format)
   - `tests/fixtures/adapters/`: Adapter configuration files
   - `tests/fixtures/models/`: Model configuration files
-- Workflow testing: Validates complete CLI workflow from `fbox init` through `fbox run`
+- Workflow testing: Validates complete CLI workflow from `featherbox init` through `featherbox run`
 - External behavior verification: Tests focus on command success/failure and SQL query results only
 
 ## Code Style Guidelines
@@ -331,9 +331,9 @@ src/
 - Configuration changes trigger full dependency graph recalculation
 - All user data operations go through DuckDB for performance
 - Metadata operations use SQLite via Sea-ORM for reliability
-- Graph migration (`fbox migrate`) must be run before pipeline execution (`fbox run`)
-- Web UI runs on port 5173, API server runs on port 3000
-- Use `fbox start <project>` to launch both UI and API server together
+- Graph migration (`featherbox migrate`) must be run before pipeline execution (`featherbox run`)
+- Web UI runs on port 5173, API server runs on port 3015
+- Use `featherbox start <project>` to launch both UI and API server together
 
 ## Quality Assurance Workflow
 

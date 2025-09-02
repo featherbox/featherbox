@@ -16,7 +16,7 @@ pub async fn migrate(project_path: &Path) -> Result<()> {
 
     if config.adapters.is_empty() && config.models.is_empty() {
         println!(
-            "No adapters or models found. Create some with 'fbox adapter new' or 'fbox model new'"
+            "No adapters or models found. Create some with 'featherbox adapter new' or 'featherbox model new'"
         );
         return Ok(());
     }

@@ -253,7 +253,7 @@ impl Pipeline {
 
     pub fn print_pipeline_summary(&self, pipeline_id: i32, logger: &Logger) -> Result<()> {
         let task_summary_query = format!(
-            "SELECT status, COUNT(*) as count FROM db.__fbox_task_logs WHERE pipeline_id = {pipeline_id} GROUP BY status"
+            "SELECT status, COUNT(*) as count FROM db.__featherbox_task_logs WHERE pipeline_id = {pipeline_id} GROUP BY status"
         );
 
         let task_results = logger.query_logs(&task_summary_query)?;
@@ -273,7 +273,7 @@ impl Pipeline {
         }
 
         let failed_tasks_query = format!(
-            "SELECT table_name, error_message FROM db.__fbox_task_logs WHERE pipeline_id = {pipeline_id} AND status = 'FAILED'"
+            "SELECT table_name, error_message FROM db.__featherbox_task_logs WHERE pipeline_id = {pipeline_id} AND status = 'FAILED'"
         );
 
         let failed_tasks = logger.query_logs(&failed_tasks_query)?;

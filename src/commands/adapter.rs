@@ -141,7 +141,7 @@ impl std::fmt::Display for FileFormatType {
 fn load_project_config(project_root: &Path) -> Result<ProjectConfig> {
     let project_yml = project_root.join("project.yml");
     let content = fs::read_to_string(&project_yml)
-        .with_context(|| "Failed to read project.yml. Run 'fbox init' first.")?;
+        .with_context(|| "Failed to read project.yml. Run 'featherbox init' first.")?;
 
     crate::config::project::parse_project_config(&content)
 }
@@ -149,7 +149,7 @@ fn load_project_config(project_root: &Path) -> Result<ProjectConfig> {
 fn select_connection(connections: &HashMap<String, ConnectionConfig>) -> Result<String> {
     if connections.is_empty() {
         return Err(anyhow::anyhow!(
-            "No connections found. Create a connection first using 'fbox connection'"
+            "No connections found. Create a connection first using 'featherbox connection'"
         ));
     }
 
