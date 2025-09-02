@@ -1,50 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-pub mod ui {
-    use axum::http::{StatusCode, Uri, header};
-    use axum::response::{IntoResponse, Response};
-    use rust_embed::RustEmbed;
-
-    #[derive(RustEmbed)]
-    #[folder = "src/ui/dist/"]
-    #[exclude = "node_modules/*"]
-    pub struct Assets;
-
-    pub async fn static_handler(uri: Uri) -> impl IntoResponse {
-        let path = uri.path().trim_start_matches('/');
-
-        if path.is_empty() || path == "index.html" {
-            return index_html().await;
-        }
-
-        match Assets::get(path) {
-            Some(content) => {
-                let mime = mime_guess::from_path(path).first_or_octet_stream();
-                Response::builder()
-                    .header(header::CONTENT_TYPE, mime.as_ref())
-                    .body(content.data.into())
-                    .unwrap()
-            }
-            None => index_html().await,
-        }
-    }
-
-    async fn index_html() -> Response {
-        if let Some(content) = Assets::get("index.html") {
-            Response::builder()
-                .header(header::CONTENT_TYPE, "text/html")
-                .body(content.data.into())
-                .unwrap()
-        } else {
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body("index.html not found".into())
-                .unwrap()
-        }
-    }
-}
-
 pub mod api;
 pub mod commands;
 pub mod config;
@@ -53,6 +9,7 @@ pub mod dependency;
 pub mod pipeline;
 pub mod s3_client;
 pub mod secret;
+pub mod ui;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

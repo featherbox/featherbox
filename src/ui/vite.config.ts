@@ -5,6 +5,8 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 export default defineConfig({
   plugins: [svelte()],
   server: {
+    port: 8015,
+    host: 'localhost',
     allowedHosts: ['desktop.tail74e0bd.ts.net'],
     proxy: {
       '/api': {
@@ -12,5 +14,8 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  build: {
+    outDir: 'build',
   },
 });

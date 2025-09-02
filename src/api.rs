@@ -1,4 +1,3 @@
-use crate::ui::static_handler;
 use anyhow::Result;
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -24,17 +23,14 @@ pub async fn main() -> Result<()> {
         .merge(secret::routes())
         .merge(pipeline::routes());
 
-    let app = Router::new()
-        .nest("/api", api_routes)
-        .fallback(static_handler)
-        .layer(cors);
+    let app = Router::new().nest("/api", api_routes).layer(cors);
 
     let port = 3015;
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
+    let listener = tokio::net::TcpListener::bind(format!("localhost:{}", port))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to bind to port {}: {}", port, e))?;
 
-    println!("API server listening on http://0.0.0.0:{}", port);
+    println!("API server listening on http://localhost:{}", port);
     axum::serve(listener, app).await?;
 
     Ok(())
