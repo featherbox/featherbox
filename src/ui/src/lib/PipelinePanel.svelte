@@ -320,7 +320,7 @@
         </p>
         <button onclick={runMigrate} class="btn btn-primary" disabled={loading}>
           <Database size={16} />
-          Run Migrate
+          {$_('pipeline.migrate')}
         </button>
       </div>
     {:else}

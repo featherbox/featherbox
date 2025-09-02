@@ -77,7 +77,7 @@
   "pipeline": {
     "title": "Pipeline",
     "migrate": "Migrate",
-    "run": "Run",
+    "run": "Run Pipeline",
     "refresh": "Refresh",
     "migrate_tooltip": "Migrate database schema and update dependency graph",
     "run_tooltip": "Execute pipeline with current configuration",

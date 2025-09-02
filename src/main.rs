@@ -55,6 +55,11 @@ async fn main() -> Result<()> {
             builder.create_secret_key()?;
             builder.save_project_config()?;
             builder.create_gitignore()?;
+            builder.create_sample_data()?;
+            builder.create_sample_adapters()?;
+            builder.create_sample_models()?;
+            builder.create_sample_queries()?;
+            builder.create_sample_dashboards()?;
 
             println!("✓ Project '{project_name}' created successfully");
             println!("  Run 'featherbox start {project_name}' to open the project");

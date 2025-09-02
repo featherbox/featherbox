@@ -82,6 +82,24 @@ impl ProjectConfig {
 
         Ok(())
     }
+
+    pub fn add_sample_connections(&mut self) -> Result<()> {
+        self.connections.insert(
+            "local_files".to_string(),
+            ConnectionConfig::LocalFile {
+                base_path: "./sample_data".to_string(),
+            },
+        );
+
+        self.connections.insert(
+            "sample_db".to_string(),
+            ConnectionConfig::Sqlite {
+                path: "./sample_data/app.db".to_string(),
+            },
+        );
+
+        Ok(())
+    }
 }
 
 impl Default for ProjectConfig {
