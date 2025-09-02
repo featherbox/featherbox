@@ -3,6 +3,7 @@
     "connections": "Connections",
     "adapters": "Adapters",
     "models": "Models",
+    "dashboards": "Dashboards",
     "query": "Query",
     "pipeline": "Pipeline",
     "settings": "Settings"
@@ -100,6 +101,45 @@
     "no_results": "No results",
     "error": "Query execution failed",
     "delete_confirm": "Are you sure you want to delete query \"{name}\"?"
+  },
+  "dashboards": {
+    "title": "Dashboards",
+    "empty": "No dashboards created yet",
+    "select_dashboard": "Select a Dashboard",
+    "select_dashboard_description": "Choose a dashboard from the sidebar to view its chart",
+    "new": {
+      "button": "New",
+      "title": "Create Dashboard",
+      "label": "Create new dashboard"
+    },
+    "edit": {
+      "title": "Edit Dashboard",
+      "label": "Edit dashboard"
+    },
+    "delete": {
+      "confirm": "Are you sure you want to delete this dashboard?",
+      "label": "Delete dashboard {name}"
+    },
+    "form": {
+      "name": "Name",
+      "name_placeholder": "Enter dashboard name",
+      "description": "Description",
+      "description_placeholder": "Enter description (optional)",
+      "query": "Query",
+      "select_query": "Select a query",
+      "chart_type": "Chart Type",
+      "x_column": "X Column",
+      "x_column_placeholder": "Enter X axis column name",
+      "y_column": "Y Column",
+      "y_column_placeholder": "Enter Y axis column name"
+    },
+    "chart_types": {
+      "line": "Line Chart",
+      "bar": "Bar Chart"
+    },
+    "query": "Query",
+    "loading_chart": "Loading chart data...",
+    "no_data": "No data available for this chart"
   },
   "common": {
     "save": "Save",

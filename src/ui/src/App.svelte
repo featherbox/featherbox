@@ -15,6 +15,7 @@
   import PipelinePanel from './lib/PipelinePanel.svelte';
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import QueryPanel from './lib/QueryPanel.svelte';
+  import DashboardPanel from './lib/DashboardPanel.svelte';
   import type {
     AdapterSummary,
     AdapterDetails,
@@ -437,6 +438,8 @@
             />
           </div>
         </div>
+      {:else if activeSection === 'dashboards'}
+        <DashboardPanel />
       {:else if activeSection === 'query'}
         <QueryPanel />
       {:else if activeSection === 'pipeline'}

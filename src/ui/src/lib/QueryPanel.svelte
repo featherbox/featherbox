@@ -280,10 +280,22 @@
 </div>
 
 {#if showSaveDialog}
-  <div class="modal-overlay" role="presentation" onclick={closeSaveDialog}>
-    <div class="modal" onclick={(e) => e.stopPropagation()}>
+  <div 
+    class="modal-overlay" 
+    role="presentation" 
+    onclick={closeSaveDialog}
+    on:keydown={(e) => e.key === 'Escape' && closeSaveDialog()}
+  >
+    <div 
+      class="modal" 
+      onclick={(e) => e.stopPropagation()}
+      on:keydown={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
       <div class="modal-header">
-        <h3>{$t('query.save_query')}</h3>
+        <h3 id="modal-title">{$t('query.save_query')}</h3>
         <button class="close-btn" onclick={closeSaveDialog}>×</button>
       </div>
       <div class="modal-body">

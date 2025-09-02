@@ -295,6 +295,7 @@ pub async fn setup_test_config_with_db(temp_dir: &TempDir) -> Result<(DatabaseCo
         adapters: HashMap::new(),
         models: HashMap::new(),
         queries: HashMap::new(),
+        dashboards: HashMap::new(),
         project_root: temp_dir.path().to_path_buf(),
     };
 

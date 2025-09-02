@@ -5,6 +5,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 mod adapter;
 mod connection;
+mod dashboard;
 mod model;
 mod pipeline;
 mod query;
@@ -19,6 +20,7 @@ pub async fn main() -> Result<()> {
     let api_routes = Router::new()
         .merge(adapter::routes())
         .merge(connection::routes())
+        .merge(dashboard::router())
         .merge(model::routes())
         .merge(query::routes())
         .merge(secret::routes())

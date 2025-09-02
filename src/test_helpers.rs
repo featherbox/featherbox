@@ -177,6 +177,7 @@ pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)>
         adapters: HashMap::new(),
         models: HashMap::new(),
         queries: HashMap::new(),
+        dashboards: HashMap::new(),
         project_root: temp_dir.path().to_path_buf(),
     };
 
@@ -504,6 +505,7 @@ impl TestConfigBuilder {
             adapters: self.adapters,
             models: self.models,
             queries: self.queries,
+            dashboards: HashMap::new(),
             project_root: self.project_root,
         }
     }

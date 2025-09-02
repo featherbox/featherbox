@@ -3,6 +3,7 @@
     "connections": "接続",
     "adapters": "アダプター",
     "models": "モデル",
+    "dashboards": "ダッシュボード",
     "query": "クエリ",
     "pipeline": "パイプライン",
     "settings": "設定"
@@ -100,6 +101,45 @@
     "no_results": "結果がありません",
     "error": "クエリの実行に失敗しました",
     "delete_confirm": "クエリ「{name}」を削除しますか？"
+  },
+  "dashboards": {
+    "title": "ダッシュボード",
+    "empty": "ダッシュボードがまだ作成されていません",
+    "select_dashboard": "ダッシュボードを選択",
+    "select_dashboard_description": "サイドバーからダッシュボードを選択してチャートを表示してください",
+    "new": {
+      "button": "新規作成",
+      "title": "ダッシュボードを作成",
+      "label": "新しいダッシュボードを作成"
+    },
+    "edit": {
+      "title": "ダッシュボードを編集",
+      "label": "ダッシュボードを編集"
+    },
+    "delete": {
+      "confirm": "このダッシュボードを削除しますか？",
+      "label": "ダッシュボード{name}を削除"
+    },
+    "form": {
+      "name": "名前",
+      "name_placeholder": "ダッシュボード名を入力",
+      "description": "説明",
+      "description_placeholder": "説明を入力（任意）",
+      "query": "クエリ",
+      "select_query": "クエリを選択",
+      "chart_type": "チャートタイプ",
+      "x_column": "X軸列",
+      "x_column_placeholder": "X軸の列名を入力",
+      "y_column": "Y軸列",
+      "y_column_placeholder": "Y軸の列名を入力"
+    },
+    "chart_types": {
+      "line": "線グラフ",
+      "bar": "棒グラフ"
+    },
+    "query": "クエリ",
+    "loading_chart": "チャートデータを読み込み中...",
+    "no_data": "このチャートに利用可能なデータがありません"
   },
   "common": {
     "save": "保存",

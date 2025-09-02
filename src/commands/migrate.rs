@@ -100,6 +100,7 @@ mod tests {
             adapters: std::collections::HashMap::new(),
             models: std::collections::HashMap::new(),
             queries: std::collections::HashMap::new(),
+            dashboards: std::collections::HashMap::new(),
             project_root: temp_dir.path().to_path_buf(),
         };
 

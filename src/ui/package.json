@@ -23,6 +23,7 @@
     "vite": "^7.1.2"
   },
   "dependencies": {
+    "chart.js": "^4.4.6",
     "cytoscape": "^3.30.3",
     "cytoscape-dagre": "^2.5.0",
     "lucide-svelte": "^0.542.0",

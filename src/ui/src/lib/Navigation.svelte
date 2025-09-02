@@ -6,6 +6,7 @@
     Link,
     Search,
     GitBranch,
+    BarChart3,
   } from 'lucide-svelte';
   import { t } from './i18n';
 
@@ -40,6 +41,14 @@
         title={$t('navigation.models')}
       >
         <FileText class="icon" />
+      </button>
+    </li>
+    <li class="nav-item" class:active={activeSection === 'dashboards'}>
+      <button
+        onclick={() => (activeSection = 'dashboards')}
+        title={$t('navigation.dashboards')}
+      >
+        <BarChart3 class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'query'}>

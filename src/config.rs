@@ -10,11 +10,13 @@ pub fn load_from_directory(project_path: &Path) -> Result<Config> {
 }
 
 pub mod adapter;
+pub mod dashboard;
 pub mod model;
 pub mod project;
 pub mod query;
 
 pub use adapter::AdapterConfig;
+pub use dashboard::DashboardConfig;
 pub use model::ModelConfig;
 pub use project::ProjectConfig;
 pub use query::QueryConfig;
@@ -25,6 +27,7 @@ pub struct Config {
     pub adapters: HashMap<String, AdapterConfig>,
     pub models: HashMap<String, ModelConfig>,
     pub queries: HashMap<String, QueryConfig>,
+    pub dashboards: HashMap<String, DashboardConfig>,
     pub project_root: std::path::PathBuf,
 }
 
@@ -34,12 +37,14 @@ impl Config {
         let adapters = load_adapters(project_path)?;
         let models = load_models(project_path)?;
         let queries = load_queries(project_path)?;
+        let dashboards = load_dashboards(project_path)?;
 
         Ok(Config {
             project: project_config,
             adapters,
             models,
             queries,
+            dashboards,
             project_root: project_path.to_path_buf(),
         })
     }
@@ -163,6 +168,15 @@ fn load_queries(project_path: &Path) -> Result<HashMap<String, QueryConfig>> {
         &project_path.join("queries"),
         "query",
         query::parse_query_config,
+        project_path,
+    )
+}
+
+fn load_dashboards(project_path: &Path) -> Result<HashMap<String, DashboardConfig>> {
+    load_config_files_recursive(
+        &project_path.join("dashboards"),
+        "dashboard",
+        dashboard::parse_dashboard_config,
         project_path,
     )
 }

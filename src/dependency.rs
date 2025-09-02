@@ -430,6 +430,7 @@ mod tests {
             adapters: HashMap::new(),
             models: HashMap::new(),
             queries: HashMap::new(),
+            dashboards: HashMap::new(),
             project_root: std::path::PathBuf::from("."),
         }
     }

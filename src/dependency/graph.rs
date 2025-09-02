@@ -421,6 +421,7 @@ mod tests {
             adapters,
             models,
             queries: HashMap::new(),
+            dashboards: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -497,6 +498,7 @@ mod tests {
             adapters,
             models,
             queries: HashMap::new(),
+            dashboards: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -545,6 +547,7 @@ mod tests {
             adapters,
             models,
             queries: HashMap::new(),
+            dashboards: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -611,6 +614,7 @@ mod tests {
             adapters,
             models,
             queries: HashMap::new(),
+            dashboards: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
@@ -656,6 +660,7 @@ mod tests {
             adapters,
             models,
             queries: HashMap::new(),
+            dashboards: HashMap::new(),
             project_root: std::path::PathBuf::from("/tmp"),
         };
 
