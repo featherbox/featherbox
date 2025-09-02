@@ -3,3 +3,4 @@ storage/
 database.db
 *.db
 .playwright-mcp
+src/ui/build
