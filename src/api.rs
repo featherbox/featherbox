@@ -4,7 +4,6 @@ use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 
 mod adapter;
-mod chat;
 mod connection;
 mod model;
 mod pipeline;
@@ -17,17 +16,13 @@ pub async fn main() -> Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let chat_state = chat::AppState::default();
-
     let api_routes = Router::new()
         .merge(adapter::routes())
         .merge(connection::routes())
         .merge(model::routes())
         .merge(query::routes())
         .merge(secret::routes())
-        .merge(pipeline::routes())
-        .merge(chat::config_routes())
-        .nest("/chat", chat::routes().with_state(chat_state));
+        .merge(pipeline::routes());
 
     let app = Router::new()
         .nest("/api", api_routes)

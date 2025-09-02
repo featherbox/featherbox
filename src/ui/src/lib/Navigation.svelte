@@ -2,7 +2,6 @@
   import {
     Database,
     FileText,
-    BarChart3,
     Settings,
     Link,
     Search,
@@ -57,14 +56,6 @@
         title={$t('navigation.pipeline')}
       >
         <GitBranch class="icon" />
-      </button>
-    </li>
-    <li class="nav-item" class:active={activeSection === 'analysis'}>
-      <button
-        onclick={() => (activeSection = 'analysis')}
-        title={$t('navigation.analysis')}
-      >
-        <BarChart3 class="icon" />
       </button>
     </li>
     <li class="nav-item" class:active={activeSection === 'settings'}>
