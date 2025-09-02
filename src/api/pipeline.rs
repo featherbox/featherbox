@@ -233,11 +233,19 @@ async fn get_current_graph(db: &DatabaseConnection) -> Result<GraphResponse> {
     use crate::database::entities::{edges, graphs, nodes};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
-    let latest_graph = graphs::Entity::find()
+    let latest_graph = match graphs::Entity::find()
         .order_by_desc(graphs::Column::CreatedAt)
         .one(db)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("No graph found"))?;
+    {
+        Some(graph) => graph,
+        None => {
+            return Ok(GraphResponse {
+                nodes: vec![],
+                edges: vec![],
+            });
+        }
+    };
 
     let nodes_data = nodes::Entity::find()
         .filter(nodes::Column::GraphId.eq(latest_graph.id))
