@@ -1,13 +1,5 @@
-pub mod adapter;
-pub mod connection;
 pub mod init;
-pub mod migrate;
-pub mod model;
-pub mod query;
-pub mod run;
-pub mod secret;
 pub mod start;
-pub mod workspace;
 
 pub const ADAPTER_TEMPLATE: &str = include_str!("commands/templates/adapter.yml");
 pub const MODEL_TEMPLATE: &str = include_str!("commands/templates/model.yml");

@@ -7,13 +7,24 @@ mod debug_server {
     use tokio::process::Command as TokioCommand;
 
     pub async fn start() -> Result<()> {
-        let ui_dir = "src/ui";
+        // Get the featherbox binary directory and construct UI path
+        let binary_path =
+            std::env::current_exe().context("Failed to get current executable path")?;
+        let binary_dir = binary_path
+            .parent()
+            .context("Failed to get binary directory")?
+            .parent()
+            .context("Failed to get project root")?
+            .parent()
+            .context("Failed to get workspace root")?;
+
+        let ui_dir = binary_dir.join("src/ui");
 
         println!("Starting UI development server on port 8015...");
 
         let mut child = TokioCommand::new("pnpm")
             .args(["run", "dev"])
-            .current_dir(ui_dir)
+            .current_dir(&ui_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

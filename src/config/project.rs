@@ -1,6 +1,11 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fs};
+
+use crate::{
+    secret::expand_secrets_in_text,
+    workspace::{find_project_root, project_dir},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -12,6 +17,35 @@ pub struct ProjectConfig {
 impl ProjectConfig {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn from_project() -> Result<Self> {
+        let project_root = find_project_root()?;
+        let project_yml = project_root.join("project.yml");
+        if !project_yml.exists() {
+            return Err(anyhow!("project.yml not found"));
+        }
+        let content = fs::read_to_string(&project_yml)?;
+        let expanded_content = expand_secrets_in_text(&content, &project_root)?;
+        parse_project_config(&expanded_content)
+    }
+
+    pub fn create_project(&self) -> Result<()> {
+        let project_root = project_dir()?;
+        let project_yml = project_root.join("project.yml");
+
+        let yaml_content = serde_yml::to_string(&self)?;
+        fs::write(&project_yml, yaml_content)?;
+        Ok(())
+    }
+
+    pub fn export_project(&self) -> Result<()> {
+        let project_root = find_project_root()?;
+        let project_yml = project_root.join("project.yml");
+
+        let yaml_content = serde_yml::to_string(&self)?;
+        fs::write(&project_yml, yaml_content)?;
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<()> {

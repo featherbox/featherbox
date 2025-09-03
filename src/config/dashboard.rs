@@ -8,7 +8,6 @@ pub struct DashboardConfig {
     pub chart: ChartConfig,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChartConfig {
     #[serde(rename = "type")]
@@ -123,7 +122,6 @@ mod tests {
         let result = parse_dashboard_config(yaml_str);
         assert!(result.is_err());
     }
-
 
     #[test]
     fn test_chart_type_serialization() {

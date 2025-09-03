@@ -1,3 +1,5 @@
+use crate::config::model::{ModelConfig, parse_model_config};
+use crate::workspace::find_project_root;
 use anyhow::Result;
 use axum::extract::Path;
 use axum::response::Json;
@@ -5,9 +7,7 @@ use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-
-use crate::commands::workspace::find_project_root;
-use crate::config::model::{ModelConfig, parse_model_config};
+use tracing::{error, warn};
 
 #[derive(Serialize, Deserialize)]
 pub struct ModelSummary {
@@ -35,6 +35,14 @@ pub struct UpdateModelRequest {
     pub config: ModelConfig,
 }
 
+fn models_dir() -> Result<PathBuf, StatusCode> {
+    let project_root = find_project_root().map_err(|err| {
+        error!(error = ?err, "Failed to find project root");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(project_root.join("models"))
+}
+
 pub fn routes() -> Router {
     Router::new()
         .route("/models", get(list_models).post(create_model))
@@ -45,8 +53,7 @@ pub fn routes() -> Router {
 }
 
 async fn list_models() -> Result<Json<Vec<ModelSummary>>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let models_dir = project_root.join("models");
+    let models_dir = models_dir()?;
 
     if !models_dir.exists() {
         return Ok(Json(vec![]));
@@ -96,12 +103,11 @@ fn collect_models(
 }
 
 async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let model_file = project_root
-        .join("models")
-        .join(format!("{model_path}.yml"));
+    let models_dir = models_dir()?;
+    let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
+        warn!(model_path = %model_path, "Requested model not found");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -124,11 +130,11 @@ async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>,
 async fn create_model(
     Json(req): Json<CreateModelRequest>,
 ) -> Result<Json<ModelDetails>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let models_dir = project_root.join("models");
+    let models_dir = models_dir()?;
     let model_file = models_dir.join(format!("{}.yml", req.path));
 
     if model_file.exists() {
+        warn!(model_path = %req.path, "Attempted to create model that already exists");
         return Err(StatusCode::CONFLICT);
     }
 
@@ -151,12 +157,11 @@ async fn update_model(
     Path(model_path): Path<String>,
     Json(req): Json<UpdateModelRequest>,
 ) -> Result<Json<ModelDetails>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let model_file = project_root
-        .join("models")
-        .join(format!("{model_path}.yml"));
+    let models_dir = models_dir()?;
+    let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
+        warn!(model_path = %model_path, "Attempted to update model that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -178,15 +183,178 @@ async fn update_model(
 }
 
 async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let model_file = project_root
-        .join("models")
-        .join(format!("{model_path}.yml"));
+    let models_dir = models_dir()?;
+    let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
+        warn!(model_path = %model_path, "Attempted to delete model that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
     fs::remove_file(&model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::create_test_project;
+    use crate::test_helpers::create_test_server;
+    use serde_json::{Value, json};
+
+    fn setup_test_project() {
+        create_test_project().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_models_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let response = server.get("/models").await;
+
+        response.assert_status_ok();
+        let models: Value = response.json();
+        assert!(models.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_get_model_not_found() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let response = server.get("/models/nonexistent").await;
+
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_create_model_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let new_model = json!({
+            "name": "test_model",
+            "path": "staging/test_model",
+            "config": {
+                "description": "Test SQL model",
+                "sql": "SELECT * FROM test_table"
+            }
+        });
+
+        let response = server.post("/models").json(&new_model).await;
+
+        response.assert_status_ok();
+        let model: Value = response.json();
+        assert_eq!(model["name"], "test_model");
+        assert_eq!(model["path"], "staging/test_model");
+    }
+
+    #[tokio::test]
+    async fn test_create_model_conflict() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let model_config = json!({
+            "name": "duplicate_model",
+            "path": "staging/duplicate_model",
+            "config": {
+                "description": "Duplicate model",
+                "sql": "SELECT * FROM test_table"
+            }
+        });
+
+        let _first_response = server.post("/models").json(&model_config).await;
+
+        let second_response = server.post("/models").json(&model_config).await;
+
+        second_response.assert_status(StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_update_model_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let create_model = json!({
+            "name": "update_test_model",
+            "path": "staging/update_test_model",
+            "config": {
+                "description": "Original description",
+                "sql": "SELECT * FROM original_table"
+            }
+        });
+
+        server.post("/models").json(&create_model).await;
+
+        let update_config = json!({
+            "config": {
+                "description": "Updated description",
+                "sql": "SELECT * FROM updated_table"
+            }
+        });
+
+        let response = server
+            .put("/models/staging/update_test_model")
+            .json(&update_config)
+            .await;
+
+        response.assert_status_ok();
+        let model: Value = response.json();
+        assert_eq!(model["config"]["description"], "Updated description");
+    }
+
+    #[tokio::test]
+    async fn test_update_model_not_found() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let update_config = json!({
+            "config": {
+                "description": "Updated description",
+                "sql": "SELECT * FROM updated_table"
+            }
+        });
+
+        let response = server
+            .put("/models/staging/nonexistent")
+            .json(&update_config)
+            .await;
+
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let create_model = json!({
+            "name": "delete_test_model",
+            "path": "staging/delete_test_model",
+            "config": {
+                "description": "To be deleted",
+                "sql": "SELECT * FROM delete_table"
+            }
+        });
+
+        server.post("/models").json(&create_model).await;
+
+        let response = server.delete("/models/staging/delete_test_model").await;
+
+        response.assert_status(StatusCode::NO_CONTENT);
+
+        let get_response = server.get("/models/staging/delete_test_model").await;
+        get_response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_not_found() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let response = server.delete("/models/staging/nonexistent").await;
+
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
 }

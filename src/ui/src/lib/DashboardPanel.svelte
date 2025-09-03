@@ -172,7 +172,6 @@
     flex-direction: column;
   }
 
-
   .dashboard-content {
     flex: 1;
     display: flex;

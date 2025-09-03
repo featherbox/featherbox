@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::workspace::find_project_root;
+
 struct CountingNonceSequence(u32);
 
 impl NonceSequence for CountingNonceSequence {
@@ -32,7 +34,8 @@ pub struct SecretManager {
 }
 
 impl SecretManager {
-    pub fn new(project_root: &Path) -> Result<Self> {
+    pub fn new() -> Result<Self> {
+        let project_root = find_project_root()?;
         let key_file_path = project_root.join(".secret.key");
         let secrets_file_path = project_root.join("secrets.enc");
 
@@ -226,7 +229,7 @@ impl SecretManager {
     }
 }
 
-pub fn expand_secrets_in_text(text: &str, project_root: &Path) -> Result<String> {
+pub fn expand_secrets_in_text(text: &str, _project_root: &Path) -> Result<String> {
     let secret_regex =
         Regex::new(r"\$\{SECRET_([a-zA-Z][a-zA-Z0-9_]*)\}").expect("Invalid regex pattern");
 
@@ -234,7 +237,7 @@ pub fn expand_secrets_in_text(text: &str, project_root: &Path) -> Result<String>
         return Ok(text.to_string());
     }
 
-    let manager = SecretManager::new(project_root)?;
+    let manager = SecretManager::new()?;
     let secrets = manager.get_all_secrets()?;
 
     let mut result = text.to_string();
@@ -278,7 +281,10 @@ mod tests {
     #[test]
     fn test_secret_manager_generate_and_load_key() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
 
         assert!(!manager.key_exists());
 
@@ -287,13 +293,17 @@ mod tests {
 
         let _key = manager.load_key()?;
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_secret_manager_operations() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         let keys = manager.list_secrets()?;
@@ -318,13 +328,17 @@ mod tests {
         let keys = manager.list_secrets()?;
         assert!(keys.is_empty());
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_secret_expansion() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         manager.set_secret("DB_HOST", "localhost")?;
@@ -335,12 +349,15 @@ mod tests {
 
         assert_eq!(expanded, "host: localhost\nport: 5432");
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_secret_expansion_missing_key() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
 
         let text = "host: ${SECRET_MISSING_KEY}";
         let result = expand_secrets_in_text(text, temp_dir.path());
@@ -348,25 +365,32 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_secret_expansion_no_match() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
 
         let text = "host: localhost";
         let expanded = expand_secrets_in_text(text, temp_dir.path())?;
 
         assert_eq!(expanded, "host: localhost");
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_text_multiple_secrets() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         manager.set_secret("API_KEY", "secret123")?;
@@ -381,13 +405,17 @@ mod tests {
             "url: https://api.example.com/v2/data?key=secret123"
         );
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_text_same_secret_multiple_times() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         manager.set_secret("TOKEN", "abc123")?;
@@ -397,13 +425,17 @@ mod tests {
 
         assert_eq!(expanded, "auth_header: Bearer abc123\nbackup_token: abc123");
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_text_invalid_secret_name() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         let text = "value: ${SECRET_NONEXISTENT_KEY}";
@@ -412,13 +444,17 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_hash_map_success() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         manager.set_secret("USERNAME", "testuser")?;
@@ -435,24 +471,31 @@ mod tests {
         assert_eq!(expanded.get("pass").unwrap(), "testpass");
         assert_eq!(expanded.get("host").unwrap(), "localhost");
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_hash_map_empty_map() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
         let input_map = HashMap::new();
 
         let expanded = expand_secrets_in_hash_map(&input_map, temp_dir.path())?;
 
         assert!(expanded.is_empty());
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_hash_map_no_secrets() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
 
         let mut input_map = HashMap::new();
         input_map.insert("config1".to_string(), "value1".to_string());
@@ -463,13 +506,17 @@ mod tests {
         assert_eq!(expanded.get("config1").unwrap(), "value1");
         assert_eq!(expanded.get("config2").unwrap(), "value2");
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_hash_map_missing_secret() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         let mut input_map = HashMap::new();
@@ -480,13 +527,17 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_expand_secrets_in_hash_map_mixed_values() -> anyhow::Result<()> {
         let temp_dir = TempDir::new()?;
-        let manager = SecretManager::new(temp_dir.path())?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
         manager.generate_key()?;
 
         manager.set_secret("DATABASE_URL", "postgres://localhost:5432/db")?;
@@ -513,6 +564,7 @@ mod tests {
             "server=postgres://localhost:5432/db;timeout=30"
         );
 
+        crate::workspace::clear_project_dir_override();
         Ok(())
     }
 }

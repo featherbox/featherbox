@@ -1,23 +1,28 @@
-use crate::config::{Config, adapter::AdapterConfig, model::ModelConfig, query::QueryConfig};
-
-use crate::config::project::{
-    ConnectionConfig, DatabaseConfig, DatabaseType, ProjectConfig, StorageConfig,
+use crate::{
+    config::{
+        Config,
+        adapter::AdapterConfig,
+        model::ModelConfig,
+        project::{ConnectionConfig, DatabaseConfig, DatabaseType, ProjectConfig, StorageConfig},
+        query::QueryConfig,
+    },
+    database::connection::connect_app_db,
+    dependency::graph::{Edge, Graph, Node},
 };
-
-use crate::database::connection::connect_app_db;
-
-use crate::dependency::graph::{Edge, Graph, Node};
-
 use anyhow::Result;
 
+#[cfg(test)]
+use crate::workspace::set_project_dir_override;
+
+#[cfg(test)]
+use axum::Router;
+
+#[cfg(test)]
+use axum_test::TestServer;
 use sea_orm::DatabaseConnection;
-
 use std::collections::HashMap;
-
 use std::fs;
-
 use std::path::{Path, PathBuf};
-
 use tempfile::TempDir;
 
 pub fn setup_test_project() -> Result<TempDir> {
@@ -74,6 +79,43 @@ pub fn create_project_config_with_connections(
         },
         connections,
     }
+}
+
+#[cfg(test)]
+pub fn create_test_project() -> Result<ProjectConfig> {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = temp_dir.path().to_path_buf();
+    set_project_dir_override(project_path.clone());
+
+    let config = ProjectConfig {
+        storage: StorageConfig::LocalFile {
+            path: project_path.join("storage").to_string_lossy().to_string(),
+        },
+        database: DatabaseConfig {
+            ty: DatabaseType::Sqlite,
+            path: Some(project_path.join("app.db").to_string_lossy().to_string()),
+            host: None,
+            port: None,
+            database: None,
+            username: None,
+            password: None,
+        },
+        connections: HashMap::new(),
+    };
+
+    config.create_project()?;
+    std::mem::forget(temp_dir);
+
+    Ok(config)
+}
+
+#[cfg(test)]
+pub fn create_test_server<F>(routes: F) -> TestServer
+where
+    F: FnOnce() -> Router,
+{
+    let app = routes();
+    TestServer::new(app).expect("Failed to create test server")
 }
 
 pub fn setup_test_db(temp_dir: &TempDir) -> Result<String> {
@@ -191,6 +233,12 @@ pub struct TestGraphBuilder {
     edges: Vec<Edge>,
 }
 
+impl Default for TestGraphBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestGraphBuilder {
     pub fn new() -> Self {
         Self {
@@ -224,6 +272,12 @@ pub struct TestProjectConfigBuilder {
     storage: StorageConfig,
     database: DatabaseConfig,
     connections: HashMap<String, ConnectionConfig>,
+}
+
+impl Default for TestProjectConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestProjectConfigBuilder {
@@ -444,6 +498,12 @@ pub struct TestConfigBuilder {
     models: HashMap<String, ModelConfig>,
     queries: HashMap<String, QueryConfig>,
     project_root: PathBuf,
+}
+
+impl Default for TestConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestConfigBuilder {

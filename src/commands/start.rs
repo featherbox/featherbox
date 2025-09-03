@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use tokio::task::JoinHandle;
 
 pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
@@ -28,12 +28,7 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
         .with_context(|| format!("Failed to change to project directory: {project_name}"))?;
 
     // Start the API server in the background
-    let _api_server = Command::new("featherbox")
-        .arg("server")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("Failed to start API server")?;
+    let api_handle: JoinHandle<Result<()>> = tokio::spawn(async move { crate::api::main().await });
 
     // Wait a moment for the API server to start
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -91,6 +86,13 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("\nShutting down...");
+        }
+        api_result = api_handle => {
+            match api_result {
+                Ok(Ok(())) => println!("API server stopped"),
+                Ok(Err(e)) => println!("API server error: {e}"),
+                Err(e) => println!("API server task error: {e}"),
+            }
         }
         ui_result = ui_handle => {
             match ui_result {

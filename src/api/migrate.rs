@@ -1,43 +1,29 @@
-use anyhow::Result;
-use std::{env, path::Path};
-
 use crate::{
-    commands::workspace::ensure_project_directory,
     config::Config,
-    database::connect_app_db,
     dependency::{Graph, detect_changes, save_graph_with_changes},
 };
+use anyhow::Result;
+use axum::{Router, http::StatusCode, response::Json, routing::post};
 use sea_orm::DatabaseConnection;
+use serde::{Deserialize, Serialize};
+use tokio::task;
+use tracing::error;
 
-pub async fn migrate(project_path: &Path) -> Result<()> {
-    let project_root = ensure_project_directory(Some(project_path))?;
-
-    let config = Config::load_from_directory(&project_root)?;
-
-    if config.adapters.is_empty() && config.models.is_empty() {
-        println!(
-            "No adapters or models found. Create some with 'featherbox adapter new' or 'featherbox model new'"
-        );
-        return Ok(());
-    }
-
-    let app_db = connect_app_db(&config.project).await?;
-
-    if let Some(graph_id) = migrate_from_config(&config, &app_db).await? {
-        println!("Graph migrated successfully! Graph ID: {graph_id}");
-    } else {
-        println!("No changes detected. Graph is up to date.");
-    }
-
-    Ok(())
+#[derive(Serialize, Deserialize)]
+pub struct MigrateResponse {
+    pub success: bool,
+    pub message: String,
+    pub graph_id: Option<i32>,
 }
 
 pub fn execute() -> Result<Option<i32>> {
+    println!("execute start");
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let current_dir = env::current_dir()?;
-        let config = Config::load_from_directory(&current_dir)?;
+        let project_root = crate::workspace::find_project_root()?;
+        let config = Config::load_from_directory(&project_root)?;
 
+        println!("execute point");
         if config.adapters.is_empty() && config.models.is_empty() {
             return Ok(None);
         }
@@ -64,50 +50,46 @@ pub async fn migrate_from_config(
     ))
 }
 
+pub fn routes() -> Router {
+    Router::new().route("/migrate", post(handle_migrate))
+}
+
+async fn handle_migrate() -> Result<Json<MigrateResponse>, StatusCode> {
+    match task::spawn_blocking(execute).await {
+        Ok(result) => match result {
+            Ok(graph_id) => Ok(Json(MigrateResponse {
+                success: true,
+                message: if graph_id.is_some() {
+                    "Migration completed successfully".to_string()
+                } else {
+                    "No changes detected".to_string()
+                },
+                graph_id,
+            })),
+            Err(e) => {
+                error!(error = %e, "Migration failed");
+                Ok(Json(MigrateResponse {
+                    success: false,
+                    message: format!("Migration failed: {}", e),
+                    graph_id: None,
+                }))
+            }
+        },
+        Err(e) => {
+            error!(error = %e, "Migration task failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{adapter::AdapterConfig, model::ModelConfig};
+    use crate::config::{ProjectConfig, adapter::AdapterConfig, model::ModelConfig};
     use crate::database::entities::{edges, nodes};
+    use crate::test_helpers::{create_test_server, setup_test_db_with_config};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-    use tempfile;
-    async fn setup_test_db_with_config()
-    -> Result<(sea_orm::DatabaseConnection, crate::config::Config)> {
-        use crate::config::project::{DatabaseConfig, DatabaseType, StorageConfig};
-        use crate::database::connection::connect_app_db;
-
-        let temp_dir = tempfile::tempdir()?;
-        let db_path = temp_dir.path().join("test.db");
-
-        let project_config = crate::config::project::ProjectConfig {
-            storage: StorageConfig::LocalFile {
-                path: temp_dir.path().to_string_lossy().to_string(),
-            },
-            database: DatabaseConfig {
-                ty: DatabaseType::Sqlite,
-                path: Some(db_path.to_string_lossy().to_string()),
-                host: None,
-                port: None,
-                database: None,
-                password: None,
-                username: None,
-            },
-            connections: std::collections::HashMap::new(),
-        };
-
-        let config = crate::config::Config {
-            project: project_config.clone(),
-            adapters: std::collections::HashMap::new(),
-            models: std::collections::HashMap::new(),
-            queries: std::collections::HashMap::new(),
-            dashboards: std::collections::HashMap::new(),
-            project_root: temp_dir.path().to_path_buf(),
-        };
-
-        let db = connect_app_db(&project_config).await?;
-        std::mem::forget(temp_dir);
-        Ok((db, config))
-    }
+    use serde_json::Value;
 
     #[tokio::test]
     async fn test_execute_migrate_from_config() -> Result<()> {
@@ -342,5 +324,95 @@ mod tests {
         assert!(modified_adapter.last_updated_at.is_none());
 
         Ok(())
+    }
+
+    fn setup_test_project_for_api() -> (ProjectConfig, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_path = temp_dir.path().to_path_buf();
+
+        // プロジェクト構造を作成
+        std::fs::create_dir_all(&project_path).unwrap();
+        std::fs::write(
+            project_path.join("project.yml"),
+            "
+storage:
+  type: local
+  path: ./storage
+database:
+  type: sqlite
+  path: ./test.db
+connections: {}
+        ",
+        )
+        .unwrap();
+
+        // 環境変数を設定（spawn_blockingの別スレッドでも有効）
+        unsafe {
+            std::env::set_var(
+                "FEATHERBOX_PROJECT_DIRECTORY",
+                project_path.to_str().unwrap(),
+            );
+        }
+
+        let config = ProjectConfig {
+            storage: crate::config::project::StorageConfig::LocalFile {
+                path: project_path.join("storage").to_string_lossy().to_string(),
+            },
+            database: crate::config::project::DatabaseConfig {
+                ty: crate::config::project::DatabaseType::Sqlite,
+                path: Some(project_path.join("test.db").to_string_lossy().to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+            },
+            connections: std::collections::HashMap::new(),
+        };
+
+        (config, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_migrate_api_success() {
+        let (_config, _temp_dir) = setup_test_project_for_api();
+        let server = create_test_server(routes);
+
+        let response = server.post("/migrate").await;
+
+        response.assert_status_ok();
+        let migrate_response: Value = response.json();
+        println!("Migrate response: {}", migrate_response);
+
+        assert!(migrate_response["success"].as_bool().unwrap_or(false));
+        assert!(migrate_response["message"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_api_response_structure() {
+        let (_config, _temp_dir) = setup_test_project_for_api();
+        let server = create_test_server(routes);
+
+        let response = server.post("/migrate").await;
+
+        response.assert_status_ok();
+        let migrate_response: Value = response.json();
+        assert!(migrate_response.get("success").is_some());
+        assert!(migrate_response.get("message").is_some());
+        assert!(migrate_response.get("graph_id").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_api_no_changes() {
+        let (_config, _temp_dir) = setup_test_project_for_api();
+        let server = create_test_server(routes);
+
+        let response = server.post("/migrate").await;
+        response.assert_status_ok();
+        let migrate_response: Value = response.json();
+
+        assert!(migrate_response["success"].as_bool().unwrap_or(false));
+        assert_eq!(migrate_response["message"], "No changes detected");
+        assert!(migrate_response["graph_id"].is_null());
     }
 }

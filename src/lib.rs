@@ -1,3 +1,4 @@
+pub mod api;
 pub mod commands;
 pub mod config;
 pub mod database;
@@ -6,6 +7,7 @@ pub mod pipeline;
 pub mod s3_client;
 pub mod secret;
 pub mod ui;
+pub mod workspace;
 
 #[cfg(test)]
 pub mod test_helpers;

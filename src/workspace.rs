@@ -1,20 +1,49 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::cell::RefCell;
+use std::path::PathBuf;
 
-pub fn find_project_root(start_path: Option<&Path>) -> Result<PathBuf> {
-    let current_dir = std::env::current_dir()?;
-    let start = start_path.unwrap_or(&current_dir);
+thread_local! {
+    static PROJECT_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
 
-    let project_file = start.join("project.yml");
+#[cfg(test)]
+pub fn set_project_dir_override(path: PathBuf) {
+    PROJECT_DIR_OVERRIDE.with(|p| {
+        *p.borrow_mut() = Some(path);
+    });
+}
+
+#[cfg(test)]
+pub fn clear_project_dir_override() {
+    PROJECT_DIR_OVERRIDE.with(|p| {
+        *p.borrow_mut() = None;
+    });
+}
+
+pub fn project_dir() -> Result<PathBuf> {
+    if let Some(path) = PROJECT_DIR_OVERRIDE.with(|p| p.borrow().clone()) {
+        return Ok(path);
+    }
+
+    if let Ok(path) = std::env::var("FEATHERBOX_PROJECT_DIRECTORY") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(std::env::current_dir()?)
+}
+
+pub fn find_project_root() -> Result<PathBuf> {
+    let project_dir = project_dir()?;
+
+    let project_file = project_dir.join("project.yml");
     if project_file.exists() {
-        return Ok(start.to_path_buf());
+        return Ok(project_dir.to_path_buf());
     }
 
     Err(anyhow::anyhow!("Not in a FeatherBox project directory"))
 }
 
-pub fn ensure_project_directory(path: Option<&Path>) -> Result<PathBuf> {
-    find_project_root(path).context("This command must be run inside a FeatherBox project")
+pub fn ensure_project_directory() -> Result<PathBuf> {
+    find_project_root().context("This command must be run inside a FeatherBox project")
 }
 
 #[cfg(test)]
@@ -30,7 +59,10 @@ mod tests {
 
         fs::write(project_path.join("project.yml"), "test")?;
 
-        let result = find_project_root(Some(project_path))?;
+        set_project_dir_override(project_path.to_path_buf());
+        let result = find_project_root()?;
+        clear_project_dir_override();
+
         assert_eq!(result, project_path);
 
         Ok(())
@@ -38,10 +70,7 @@ mod tests {
 
     #[test]
     fn test_find_project_root_not_found() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let project_path = temp_dir.path();
-
-        let result = find_project_root(Some(project_path));
+        let result = find_project_root();
         assert!(result.is_err());
         assert!(
             result
@@ -57,19 +86,18 @@ mod tests {
         let project_path = temp_dir.path();
 
         fs::write(project_path.join("project.yml"), "test")?;
+        set_project_dir_override(project_path.to_path_buf());
 
-        let result = ensure_project_directory(Some(project_path))?;
+        let result = ensure_project_directory()?;
         assert_eq!(result, project_path);
 
+        clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_ensure_project_directory_failure() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let project_path = temp_dir.path();
-
-        let result = ensure_project_directory(Some(project_path));
+        let result = ensure_project_directory();
         assert!(result.is_err());
         assert!(
             result
@@ -81,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_find_project_root_with_none_path() -> Result<()> {
-        let result = find_project_root(None);
+        let result = find_project_root();
         assert!(result.is_err());
         assert!(
             result
@@ -99,10 +127,12 @@ mod tests {
         let project_path = temp_dir.path();
 
         fs::write(project_path.join("project.yml"), "test_config: true")?;
+        set_project_dir_override(project_path.to_path_buf());
 
-        let result = find_project_root(Some(project_path))?;
+        let result = find_project_root()?;
         assert_eq!(result.canonicalize()?, project_path.canonicalize()?);
 
+        clear_project_dir_override();
         Ok(())
     }
 
@@ -114,20 +144,19 @@ mod tests {
         fs::create_dir_all(&nested_path)?;
 
         fs::write(root_path.join("project.yml"), "project: test")?;
+        set_project_dir_override(root_path.to_path_buf());
 
-        let result = find_project_root(Some(root_path));
+        let result = find_project_root();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), root_path);
 
+        clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_find_project_root_no_project_file() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let project_path = temp_dir.path();
-
-        let result = find_project_root(Some(project_path));
+        let result = find_project_root();
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("Not in a FeatherBox project"));
@@ -141,16 +170,18 @@ mod tests {
         let project_path = temp_dir.path();
 
         fs::write(project_path.join("project.yml"), "")?;
+        set_project_dir_override(project_path.to_path_buf());
 
-        let result = find_project_root(Some(project_path))?;
+        let result = find_project_root()?;
         assert_eq!(result, project_path);
 
+        clear_project_dir_override();
         Ok(())
     }
 
     #[test]
     fn test_ensure_project_directory_with_none_path() {
-        let result = ensure_project_directory(None);
+        let result = ensure_project_directory();
         assert!(result.is_err());
         assert!(
             result
@@ -162,10 +193,7 @@ mod tests {
 
     #[test]
     fn test_ensure_project_directory_context_message() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let project_path = temp_dir.path();
-
-        let result = ensure_project_directory(Some(project_path));
+        let result = ensure_project_directory();
         assert!(result.is_err());
 
         let error_msg = result.unwrap_err().to_string();
@@ -176,10 +204,7 @@ mod tests {
 
     #[test]
     fn test_ensure_project_directory_preserves_original_error() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let project_path = temp_dir.path();
-
-        let result = ensure_project_directory(Some(project_path));
+        let result = ensure_project_directory();
         assert!(result.is_err());
 
         let error = result.unwrap_err();

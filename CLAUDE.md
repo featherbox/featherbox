@@ -21,28 +21,8 @@ nix develop --command task test    # Run tests to verify functionality
 nix develop --command task dev     # Start development server
 
 # CLI Usage
-target/debug/featherbox new <project>           # Initialize new project
-target/debug/featherbox start <project>         # Start web UI and API server for project
-target/debug/featherbox server                  # Start API server only (port 3015)
-target/debug/featherbox connection new          # Create connection configuration
-target/debug/featherbox connection delete       # Delete connection configuration
-target/debug/featherbox adapter new             # Create adapter configuration
-target/debug/featherbox adapter delete <name>   # Delete adapter configuration
-target/debug/featherbox model new               # Create model configuration
-target/debug/featherbox model delete            # Delete model configuration
-target/debug/featherbox secret new              # Create new secret
-target/debug/featherbox secret edit             # Edit existing secret
-target/debug/featherbox secret delete           # Delete secret
-target/debug/featherbox secret list             # List all secrets
-target/debug/featherbox secret gen-key          # Generate new encryption key
-target/debug/featherbox query execute "<sql>"   # Execute SQL query for verification
-target/debug/featherbox query list              # List saved queries
-target/debug/featherbox query save <name> "<sql>" # Save query with name
-target/debug/featherbox query run <name>        # Run saved query by name
-target/debug/featherbox query delete <name>     # Delete saved query
-target/debug/featherbox query update <name>     # Update saved query
-target/debug/featherbox migrate                 # Run database migrations and save graph
-target/debug/featherbox run                     # Execute pipeline with differential execution
+target/debug/featherbox new <project>           # Initialize new project with default configuration
+target/debug/featherbox start <project>         # Start web UI (port 8015) and API server (port 3015) for project
 ```
 
 ## Architecture Overview
@@ -52,9 +32,9 @@ target/debug/featherbox run                     # Execute pipeline with differen
 FeatherBox follows domain-driven design principles with clear separation of concerns:
 
 1. **CLI Commands Domain (`src/commands/`)**: Command interface and workspace management
-   - `workspace.rs`: Project directory detection and workspace management
-   - `init.rs`, `adapter.rs`, `model.rs`, `run.rs`, `migrate.rs`, `connection.rs`, `secret.rs`, `query.rs`, `start.rs`: Individual command implementations
-   - `templates/`: YAML templates for configuration generation
+   - `init.rs`: Project initialization (used by `new` command)
+   - `start.rs`: Start web UI and API server
+   - `templates/`: YAML templates for adapter and model generation
 
 2. **Configuration Domain (`src/config/`)**: YAML-based configuration management
    - `project.rs`: Project-wide settings structure (storage, database, connections)
@@ -92,7 +72,7 @@ FeatherBox follows domain-driven design principles with clear separation of conc
    - Real-time pipeline execution monitoring with visual graph representation
    - Interactive SQL query panel for data exploration
    - Pipeline execution controls and status monitoring
-   - Accessible at http://localhost:5173 when started
+   - Accessible at http://localhost:8015 when started
 
 ### Data Flow
 
@@ -138,10 +118,9 @@ Uses Sea-ORM with SQLite for metadata management. Tables are prefixed with `__fe
 
 ### Migration System
 - Sea-ORM migrations in `src/database/migration/`
-- `featherbox migrate` command for graph migration and schema management
 - `connect_app_db()` automatically runs pending database schema migrations
-- `featherbox run` requires `featherbox migrate` to be run first to establish graph
 - Embedded migrations for single-binary distribution
+- All migration and pipeline execution is managed through the Web UI
 
 ## Key Implementation Details
 
@@ -220,14 +199,14 @@ queries/             # Saved SQL queries
 - Verify graph structure in database after migrations using entity queries
 
 ### E2E Integration Tests
-- Location: `tests/integration_test.rs` for comprehensive end-to-end workflow testing
-- Test fixtures: `tests/fixtures/` directory contains all test data and configurations
+- Location: `tests/integration_test.rs` for comprehensive end-to-end workflow testing (if exists)
+- Test fixtures: `tests/fixtures/` directory contains all test data and configurations (if exists)
   - `tests/fixtures/project.yml`: Complete project configuration with connections
   - `tests/fixtures/test_data/`: Test data files (JSON format)
   - `tests/fixtures/adapters/`: Adapter configuration files
   - `tests/fixtures/models/`: Model configuration files
-- Workflow testing: Validates complete CLI workflow from `featherbox init` through `featherbox run`
-- External behavior verification: Tests focus on command success/failure and SQL query results only
+- Workflow testing: Validates basic CLI workflow with `featherbox new` and `featherbox start` commands
+- External behavior verification: Tests focus on command success/failure
 
 ## Code Style Guidelines
 
@@ -328,12 +307,10 @@ src/
 - The binary requires `libstdc++.so.6` - use `nix develop` environment if missing
 - **CRITICAL**: ALWAYS use `nix develop --command cargo test` for testing - direct `cargo test` may fail due to missing dependencies
 - **CRITICAL**: Before any code changes, run `nix develop --command cargo test` to establish baseline - ensure existing tests are not broken
-- Configuration changes trigger full dependency graph recalculation
-- All user data operations go through DuckDB for performance
-- Metadata operations use SQLite via Sea-ORM for reliability
-- Graph migration (`featherbox migrate`) must be run before pipeline execution (`featherbox run`)
-- Web UI runs on port 5173, API server runs on port 3015
+- Web UI runs on port 8015, API server runs on port 3015
 - Use `featherbox start <project>` to launch both UI and API server together
+- All configuration management (adapters, models, connections, secrets, queries) is handled through the Web UI or API endpoints
+- Pipeline execution and migration are managed through the Web UI
 
 ## Quality Assurance Workflow
 

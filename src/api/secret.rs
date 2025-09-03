@@ -1,4 +1,3 @@
-use crate::commands::workspace::find_project_root;
 use crate::secret::SecretManager;
 use anyhow::Result;
 use axum::extract::Path;
@@ -52,9 +51,7 @@ pub fn routes() -> Router {
 }
 
 async fn list_secrets() -> Result<Json<Vec<SecretSummary>>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let manager =
-        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let secrets = manager
         .get_all_secrets()
@@ -71,9 +68,7 @@ async fn list_secrets() -> Result<Json<Vec<SecretSummary>>, StatusCode> {
 }
 
 async fn get_secret_info(Path(key): Path<String>) -> Result<Json<SecretSummary>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let manager =
-        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match manager
         .get_secret(&key)
@@ -92,9 +87,7 @@ async fn create_secret(Json(req): Json<CreateSecretRequest>) -> Result<StatusCod
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let manager =
-        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if manager
         .get_secret(&req.key)
@@ -115,9 +108,7 @@ async fn update_secret(
     Path(key): Path<String>,
     Json(req): Json<UpdateSecretRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let manager =
-        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if manager
         .get_secret(&key)
@@ -135,9 +126,7 @@ async fn update_secret(
 }
 
 async fn delete_secret(Path(key): Path<String>) -> Result<StatusCode, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let manager =
-        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let removed = manager
         .delete_secret(&key)
@@ -153,9 +142,7 @@ async fn delete_secret(Path(key): Path<String>) -> Result<StatusCode, StatusCode
 async fn generate_unique_secret_key(
     Json(req): Json<GenerateSecretKeyRequest>,
 ) -> Result<Json<GenerateSecretKeyResponse>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let manager =
-        SecretManager::new(&project_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let base_key = generate_secret_key_for_connection(
         &req.connection_name,

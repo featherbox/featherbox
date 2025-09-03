@@ -1,3 +1,7 @@
+use crate::config::Config;
+use crate::config::dashboard::{DashboardConfig, parse_dashboard_config};
+use crate::pipeline::ducklake::DuckLake;
+use crate::workspace::find_project_root;
 use axum::{
     Router,
     extract::Path,
@@ -6,14 +10,9 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs;
 use std::path::PathBuf;
-
-use crate::commands::run::connect_ducklake;
-use crate::commands::workspace::ensure_project_directory;
-use crate::config::Config;
-use crate::config::dashboard::{DashboardConfig, parse_dashboard_config};
+use tracing::error;
 
 pub fn router() -> Router<()> {
     Router::new()
@@ -23,6 +22,14 @@ pub fn router() -> Router<()> {
         .route("/dashboards/{name}", put(update_dashboard))
         .route("/dashboards/{name}", delete(delete_dashboard))
         .route("/dashboards/{name}/data", get(get_dashboard_data))
+}
+
+fn dashboards_dir() -> Result<PathBuf, StatusCode> {
+    let project_root = find_project_root().map_err(|err| {
+        error!(error = ?err, "Failed to find project root");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(project_root.join("dashboards"))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,11 +63,7 @@ pub struct DashboardDataResponse {
 }
 
 async fn list_dashboards() -> Result<Json<Vec<DashboardListItem>>, StatusCode> {
-    let current_dir = env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_root =
-        ensure_project_directory(Some(&current_dir)).map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let dashboards_dir = project_root.join("dashboards");
+    let dashboards_dir = dashboards_dir()?;
     let mut dashboards = Vec::new();
 
     if dashboards_dir.exists() {
@@ -96,13 +99,8 @@ async fn list_dashboards() -> Result<Json<Vec<DashboardListItem>>, StatusCode> {
 }
 
 async fn get_dashboard(Path(name): Path<String>) -> Result<Json<DashboardConfig>, StatusCode> {
-    let current_dir = env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_root =
-        ensure_project_directory(Some(&current_dir)).map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let dashboard_path = project_root
-        .join("dashboards")
-        .join(format!("{}.yml", name));
+    let dashboards_dir = dashboards_dir()?;
+    let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
         return Err(StatusCode::NOT_FOUND);
@@ -117,11 +115,7 @@ async fn get_dashboard(Path(name): Path<String>) -> Result<Json<DashboardConfig>
 async fn create_dashboard(
     Json(request): Json<DashboardRequest>,
 ) -> Result<Json<DashboardConfig>, StatusCode> {
-    let current_dir = env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_root =
-        ensure_project_directory(Some(&current_dir)).map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let dashboards_dir = project_root.join("dashboards");
+    let dashboards_dir = dashboards_dir()?;
     fs::create_dir_all(&dashboards_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let dashboard_path = dashboards_dir.join(format!("{}.yml", request.name));
@@ -157,13 +151,8 @@ async fn update_dashboard(
     Path(name): Path<String>,
     Json(request): Json<DashboardRequest>,
 ) -> Result<Json<DashboardConfig>, StatusCode> {
-    let current_dir = env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_root =
-        ensure_project_directory(Some(&current_dir)).map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let dashboard_path = project_root
-        .join("dashboards")
-        .join(format!("{}.yml", name));
+    let dashboards_dir = dashboards_dir()?;
+    let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
         return Err(StatusCode::NOT_FOUND);
@@ -193,13 +182,8 @@ async fn update_dashboard(
 }
 
 async fn delete_dashboard(Path(name): Path<String>) -> Result<StatusCode, StatusCode> {
-    let current_dir = env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_root =
-        ensure_project_directory(Some(&current_dir)).map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let dashboard_path = project_root
-        .join("dashboards")
-        .join(format!("{}.yml", name));
+    let dashboards_dir = dashboards_dir()?;
+    let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
         return Err(StatusCode::NOT_FOUND);
@@ -213,13 +197,12 @@ async fn delete_dashboard(Path(name): Path<String>) -> Result<StatusCode, Status
 async fn get_dashboard_data(
     Path(name): Path<String>,
 ) -> Result<Json<DashboardDataResponse>, StatusCode> {
-    let current_dir = env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_root =
-        ensure_project_directory(Some(&current_dir)).map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let dashboard_path = project_root
-        .join("dashboards")
-        .join(format!("{}.yml", name));
+    let project_root = find_project_root().map_err(|err| {
+        error!(error = ?err, "Failed to find project root");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let dashboards_dir = project_root.join("dashboards");
+    let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
         return Err(StatusCode::NOT_FOUND);
@@ -241,11 +224,10 @@ async fn get_dashboard_data(
     let query_config: crate::config::QueryConfig =
         serde_yml::from_str(&query_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // 既存のクエリ実行機能を使用
     let config = Config::load_from_directory(&project_root)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let ducklake = connect_ducklake(&config)
+    let ducklake = DuckLake::from_config(&config)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -303,4 +285,251 @@ async fn get_dashboard_data(
 fn load_dashboard_config(path: &PathBuf) -> anyhow::Result<DashboardConfig> {
     let content = fs::read_to_string(path)?;
     parse_dashboard_config(&content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProjectConfig;
+    use crate::test_helpers::create_test_server;
+    use serde_json::{Value, json};
+    use tempfile;
+
+    fn setup_test_project() -> (ProjectConfig, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_path = temp_dir.path().to_path_buf();
+
+        // プロジェクト構造を作成
+        std::fs::create_dir_all(&project_path).unwrap();
+        std::fs::create_dir_all(project_path.join("dashboards")).unwrap();
+        std::fs::create_dir_all(project_path.join("queries")).unwrap();
+        std::fs::write(
+            project_path.join("project.yml"),
+            "
+storage:
+  type: local
+  path: ./storage
+database:
+  type: sqlite
+  path: ./test.db
+connections: {}
+        ",
+        )
+        .unwrap();
+
+        // thread_localのPROJECT_DIR_OVERRIDEを設定（スレッド安全）
+        crate::workspace::set_project_dir_override(project_path.clone());
+
+        let config = ProjectConfig {
+            storage: crate::config::project::StorageConfig::LocalFile {
+                path: project_path.join("storage").to_string_lossy().to_string(),
+            },
+            database: crate::config::project::DatabaseConfig {
+                ty: crate::config::project::DatabaseType::Sqlite,
+                path: Some(project_path.join("test.db").to_string_lossy().to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+            },
+            connections: std::collections::HashMap::new(),
+        };
+
+        (config, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_list_dashboards_empty() {
+        let (_config, _temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        let response = server.get("/dashboards").await;
+
+        response.assert_status_ok();
+        let dashboards: Value = response.json();
+        assert!(dashboards.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_dashboard() {
+        let (_config, _temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        let request = json!({
+            "name": "test_dashboard",
+            "description": "Test dashboard",
+            "query": "test_query",
+            "chart": {
+                "type": "line",
+                "x_column": "date",
+                "y_column": "value"
+            }
+        });
+
+        let response = server.post("/dashboards").json(&request).await;
+
+        response.assert_status_ok();
+        let dashboard: Value = response.json();
+        assert_eq!(dashboard["name"], "test_dashboard");
+        assert_eq!(dashboard["description"], "Test dashboard");
+    }
+
+    #[tokio::test]
+    async fn test_create_dashboard_conflict() {
+        let (_config, _temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        let request = json!({
+            "name": "conflict_dashboard",
+            "description": "Test dashboard",
+            "query": "test_query",
+            "chart": {
+                "type": "line",
+                "x_column": "date",
+                "y_column": "value"
+            }
+        });
+
+        // 最初の作成
+        server
+            .post("/dashboards")
+            .json(&request)
+            .await
+            .assert_status_ok();
+
+        // 同じ名前で再度作成（競合）
+        let response = server.post("/dashboards").json(&request).await;
+        response.assert_status(StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_get_dashboard() {
+        let (_config, temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        // テスト用ダッシュボードファイルを作成
+        let dashboard_content = "
+name: get_dashboard
+description: Test dashboard
+query: test_query
+chart:
+  type: line
+  x_column: date
+  y_column: value
+        ";
+        std::fs::write(
+            temp_dir.path().join("dashboards/get_dashboard.yml"),
+            dashboard_content,
+        )
+        .unwrap();
+
+        let response = server.get("/dashboards/get_dashboard").await;
+
+        response.assert_status_ok();
+        let dashboard: Value = response.json();
+        assert_eq!(dashboard["name"], "get_dashboard");
+        assert_eq!(dashboard["description"], "Test dashboard");
+    }
+
+    #[tokio::test]
+    async fn test_get_dashboard_not_found() {
+        let (_config, _temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        let response = server.get("/dashboards/nonexistent").await;
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_update_dashboard() {
+        let (_config, temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        // テスト用ダッシュボードファイルを作成
+        let dashboard_content = "
+name: update_dashboard
+description: Test dashboard
+query: test_query
+chart:
+  type: line
+  x_column: date
+  y_column: value
+        ";
+        std::fs::write(
+            temp_dir.path().join("dashboards/update_dashboard.yml"),
+            dashboard_content,
+        )
+        .unwrap();
+
+        let request = json!({
+            "name": "update_dashboard",
+            "description": "Updated dashboard",
+            "query": "updated_query",
+            "chart": {
+                "type": "bar",
+                "x_column": "category",
+                "y_column": "count"
+            }
+        });
+
+        let response = server
+            .put("/dashboards/update_dashboard")
+            .json(&request)
+            .await;
+
+        response.assert_status_ok();
+        let dashboard: Value = response.json();
+        assert_eq!(dashboard["description"], "Updated dashboard");
+        assert_eq!(dashboard["query"], "updated_query");
+    }
+
+    #[tokio::test]
+    async fn test_delete_dashboard() {
+        let (_config, temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        // テスト用ダッシュボードファイルを作成
+        let dashboard_content = "
+name: delete_dashboard
+description: Test dashboard
+query: test_query
+chart:
+  type: line
+  x_column: date
+  y_column: value
+        ";
+        std::fs::write(
+            temp_dir.path().join("dashboards/delete_dashboard.yml"),
+            dashboard_content,
+        )
+        .unwrap();
+
+        let response = server.delete("/dashboards/delete_dashboard").await;
+        response.assert_status(StatusCode::NO_CONTENT);
+
+        // 削除後に取得を試行すると404になることを確認
+        let response = server.get("/dashboards/delete_dashboard").await;
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_chart_type() {
+        let (_config, _temp_dir) = setup_test_project();
+        let server = create_test_server(router);
+
+        let request = json!({
+            "name": "test_dashboard",
+            "description": "Test dashboard",
+            "query": "test_query",
+            "chart": {
+                "type": "invalid_type",
+                "x_column": "date",
+                "y_column": "value"
+            }
+        });
+
+        let response = server.post("/dashboards").json(&request).await;
+        response.assert_status(StatusCode::BAD_REQUEST);
+    }
 }

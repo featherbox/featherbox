@@ -1,12 +1,13 @@
+use crate::config::adapter::{AdapterConfig, parse_adapter_config};
+use crate::workspace::find_project_root;
 use anyhow::Result;
 use axum::extract::Path;
 use axum::response::Json;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use std::fs;
-
-use crate::commands::workspace::find_project_root;
-use crate::config::adapter::{AdapterConfig, parse_adapter_config};
+use std::path::PathBuf;
+use tracing::{error, warn};
 
 #[derive(Serialize, Deserialize)]
 pub struct AdapterSummary {
@@ -33,6 +34,14 @@ pub struct UpdateAdapterRequest {
     pub config: AdapterConfig,
 }
 
+fn adapter_dir() -> Result<PathBuf, StatusCode> {
+    let project_root = find_project_root().map_err(|err| {
+        error!(error = ?err, "Failed to find project root");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(project_root.join("adapters"))
+}
+
 pub fn routes() -> Router {
     Router::new()
         .route("/adapters", get(list_adapters).post(create_adapter))
@@ -43,8 +52,7 @@ pub fn routes() -> Router {
 }
 
 async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let adapters_dir = project_root.join("adapters");
+    let adapters_dir = adapter_dir()?;
 
     if !adapters_dir.exists() {
         return Ok(Json(vec![]));
@@ -88,10 +96,11 @@ async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, StatusCode> {
 }
 
 async fn get_adapter(Path(name): Path<String>) -> Result<Json<AdapterDetails>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let adapter_file = project_root.join("adapters").join(format!("{name}.yml"));
+    let adapters_dir = adapter_dir()?;
+    let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
+        warn!(adapter_name = %name, "Requested adapter not found");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -105,11 +114,11 @@ async fn get_adapter(Path(name): Path<String>) -> Result<Json<AdapterDetails>, S
 async fn create_adapter(
     Json(req): Json<CreateAdapterRequest>,
 ) -> Result<Json<AdapterDetails>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let adapters_dir = project_root.join("adapters");
+    let adapters_dir = adapter_dir()?;
     let adapter_file = adapters_dir.join(format!("{}.yml", req.name));
 
     if adapter_file.exists() {
+        warn!(adapter_name = %req.name, "Attempted to create adapter that already exists");
         return Err(StatusCode::CONFLICT);
     }
 
@@ -131,10 +140,11 @@ async fn update_adapter(
     Path(name): Path<String>,
     Json(req): Json<UpdateAdapterRequest>,
 ) -> Result<Json<AdapterDetails>, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let adapter_file = project_root.join("adapters").join(format!("{name}.yml"));
+    let adapters_dir = adapter_dir()?;
+    let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
+        warn!(adapter_name = %name, "Attempted to update adapter that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -149,13 +159,245 @@ async fn update_adapter(
 }
 
 async fn delete_adapter(Path(name): Path<String>) -> Result<StatusCode, StatusCode> {
-    let project_root = find_project_root(None).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let adapter_file = project_root.join("adapters").join(format!("{name}.yml"));
+    let adapters_dir = adapter_dir()?;
+    let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
+        warn!(adapter_name = %name, "Attempted to delete adapter that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
     fs::remove_file(&adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::create_test_project;
+    use crate::test_helpers::create_test_server;
+    use serde_json::{Value, json};
+
+    fn setup_test_project() {
+        create_test_project().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_adapters_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let response = server.get("/adapters").await;
+
+        response.assert_status_ok();
+        let adapters: Value = response.json();
+        assert!(adapters.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_get_adapter_not_found() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let response = server.get("/adapters/nonexistent").await;
+
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_create_adapter_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let new_adapter = json!({
+            "name": "test_csv_adapter",
+            "config": {
+                "description": "Test CSV adapter",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "test.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        let response = server.post("/adapters").json(&new_adapter).await;
+
+        response.assert_status_ok();
+        let adapter: Value = response.json();
+        assert_eq!(adapter["name"], "test_csv_adapter");
+    }
+
+    #[tokio::test]
+    async fn test_create_adapter_conflict() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let adapter_config = json!({
+            "name": "duplicate_adapter",
+            "config": {
+                "description": "Test adapter",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "test.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        let _first_response = server.post("/adapters").json(&adapter_config).await;
+
+        let second_response = server.post("/adapters").json(&adapter_config).await;
+
+        second_response.assert_status(StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_update_adapter_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let create_adapter = json!({
+            "name": "update_test_adapter",
+            "config": {
+                "description": "Original description",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "original.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        server.post("/adapters").json(&create_adapter).await;
+
+        let update_config = json!({
+            "config": {
+                "description": "Updated description",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "updated.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        let response = server
+            .put("/adapters/update_test_adapter")
+            .json(&update_config)
+            .await;
+
+        response.assert_status_ok();
+        let adapter: Value = response.json();
+        assert_eq!(adapter["config"]["description"], "Updated description");
+    }
+
+    #[tokio::test]
+    async fn test_update_adapter_not_found() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let update_config = json!({
+            "config": {
+                "description": "Updated description",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "updated.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        let response = server
+            .put("/adapters/nonexistent")
+            .json(&update_config)
+            .await;
+
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_adapter_success() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let create_adapter = json!({
+            "name": "delete_test_adapter",
+            "config": {
+                "description": "To be deleted",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "delete.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        server.post("/adapters").json(&create_adapter).await;
+
+        let response = server.delete("/adapters/delete_test_adapter").await;
+
+        response.assert_status(StatusCode::NO_CONTENT);
+
+        let get_response = server.get("/adapters/delete_test_adapter").await;
+        get_response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_adapter_not_found() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let response = server.delete("/adapters/nonexistent").await;
+
+        response.assert_status(StatusCode::NOT_FOUND);
+    }
 }

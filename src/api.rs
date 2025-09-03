@@ -5,9 +5,11 @@ use tower_http::cors::{Any, CorsLayer};
 mod adapter;
 mod connection;
 mod dashboard;
+mod migrate;
 mod model;
 mod pipeline;
 mod query;
+mod run;
 mod secret;
 
 pub async fn main() -> Result<()> {
