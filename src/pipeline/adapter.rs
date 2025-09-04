@@ -129,7 +129,7 @@ impl DatabaseSystem {
         Ok(format!("DETACH {}", db_alias))
     }
 
-    pub fn validate_table_exists(&self, db_alias: &str, table_name: &str) -> Result<String> {
+    pub fn validate_table_exists(&self, table_name: &str) -> Result<String> {
         match self {
             Self::Sqlite { path } => Ok(format!(
                 "SELECT COUNT(*) as count FROM sqlite_scan('{}', '{}')",
@@ -328,7 +328,7 @@ impl Adapter {
             .execute_batch(&attach_query)
             .with_context(|| format!("Failed to attach SQLite database. Query: {attach_query}"))?;
 
-        let validation_query = db_system.validate_table_exists(db_alias, source_table)?;
+        let validation_query = db_system.validate_table_exists(source_table)?;
         let validation_result = self
             .ducklake
             .query(&validation_query)

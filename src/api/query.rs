@@ -316,34 +316,20 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let project_path = temp_dir.path().to_path_buf();
 
-        // プロジェクト構造を作成
         std::fs::create_dir_all(&project_path).unwrap();
         std::fs::create_dir_all(project_path.join("queries")).unwrap();
-        std::fs::write(
-            project_path.join("project.yml"),
-            "
-storage:
-  type: local
-  path: ./storage
-database:
-  type: sqlite
-  path: ./test.db
-connections: {}
-queries: {}
-        ",
-        )
-        .unwrap();
-
-        // thread_localのPROJECT_DIR_OVERRIDEを設定（スレッド安全）
-        crate::workspace::set_project_dir_override(project_path.clone());
-
-        let config = ProjectConfig {
+        std::fs::create_dir_all(project_path.join("storage")).unwrap();
+        
+        let db_path = project_path.join("test.db");
+        let storage_path = project_path.join("storage");
+        
+        let project_config = ProjectConfig {
             storage: crate::config::project::StorageConfig::LocalFile {
-                path: project_path.join("storage").to_string_lossy().to_string(),
+                path: storage_path.to_string_lossy().to_string(),
             },
             database: crate::config::project::DatabaseConfig {
                 ty: crate::config::project::DatabaseType::Sqlite,
-                path: Some(project_path.join("test.db").to_string_lossy().to_string()),
+                path: Some(db_path.to_string_lossy().to_string()),
                 host: None,
                 port: None,
                 database: None,
@@ -352,8 +338,12 @@ queries: {}
             },
             connections: std::collections::HashMap::new(),
         };
+        
+        let yaml_content = serde_yml::to_string(&project_config).unwrap();
+        std::fs::write(project_path.join("project.yml"), yaml_content).unwrap();
+        crate::workspace::set_project_dir_override(project_path.clone());
 
-        (config, temp_dir)
+        (project_config, temp_dir)
     }
 
     #[tokio::test]

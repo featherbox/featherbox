@@ -25,6 +25,7 @@ impl NonceSequence for CountingNonceSequence {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct SecretData {
+    #[serde(flatten)]
     secrets: HashMap<String, String>,
 }
 
@@ -37,7 +38,7 @@ impl SecretManager {
     pub fn new() -> Result<Self> {
         let project_root = find_project_root()?;
         let key_file_path = project_root.join(".secret.key");
-        let secrets_file_path = project_root.join("secrets.enc");
+        let secrets_file_path = project_root.join("secrets.yml");
 
         if let Some(parent) = key_file_path.parent() {
             fs::create_dir_all(parent)
@@ -165,30 +166,56 @@ impl SecretManager {
             return Ok(SecretData::default());
         }
 
-        let encrypted_content = fs::read_to_string(&self.secrets_file_path).with_context(|| {
+        let yaml_content = fs::read_to_string(&self.secrets_file_path).with_context(|| {
             format!(
                 "Failed to read secrets file: {}",
                 self.secrets_file_path.display()
             )
         })?;
 
-        if encrypted_content.trim().is_empty() {
+        if yaml_content.trim().is_empty() {
             return Ok(SecretData::default());
         }
 
-        let decrypted_content = self.decrypt(&encrypted_content)?;
-        serde_json::from_str(&decrypted_content).context("Failed to parse secrets JSON")
+        let yaml_value: serde_yml::Value =
+            serde_yml::from_str(&yaml_content).context("Failed to parse secrets YAML")?;
+
+        let mut secrets = HashMap::new();
+
+        if let serde_yml::Value::Mapping(map) = yaml_value {
+            for (key, value) in map {
+                if let (
+                    serde_yml::Value::String(key_str),
+                    serde_yml::Value::String(encrypted_value),
+                ) = (key, value)
+                {
+                    let decrypted_value = self.decrypt(&encrypted_value)?;
+                    secrets.insert(key_str, decrypted_value);
+                }
+            }
+        }
+
+        Ok(SecretData { secrets })
     }
 
     fn save_secrets(&self, data: &SecretData) -> Result<()> {
-        let json_content =
-            serde_json::to_string_pretty(data).context("Failed to serialize secrets to JSON")?;
+        let mut yaml_map = serde_yml::Mapping::new();
 
-        let encrypted_content = self.encrypt(&json_content)?;
+        for (key, value) in &data.secrets {
+            let encrypted_value = self.encrypt(value)?;
+            yaml_map.insert(
+                serde_yml::Value::String(key.clone()),
+                serde_yml::Value::String(encrypted_value),
+            );
+        }
 
-        fs::write(&self.secrets_file_path, encrypted_content).with_context(|| {
+        let yaml_value = serde_yml::Value::Mapping(yaml_map);
+        let yaml_content =
+            serde_yml::to_string(&yaml_value).context("Failed to serialize secrets to YAML")?;
+
+        fs::write(&self.secrets_file_path, yaml_content).with_context(|| {
             format!(
-                "Failed to write encrypted secrets: {}",
+                "Failed to write secrets file: {}",
                 self.secrets_file_path.display()
             )
         })?;
@@ -563,6 +590,83 @@ mod tests {
             expanded.get("connection_string").unwrap(),
             "server=postgres://localhost:5432/db;timeout=30"
         );
+
+        crate::workspace::clear_project_dir_override();
+        Ok(())
+    }
+
+    #[test]
+    fn test_yaml_secret_file_format() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
+        manager.generate_key()?;
+
+        manager.set_secret("API_KEY", "secret123")?;
+        manager.set_secret("DB_PASSWORD", "password456")?;
+
+        let yaml_content = std::fs::read_to_string(temp_dir.path().join("secrets.yml"))?;
+
+        assert!(yaml_content.contains("API_KEY:"));
+        assert!(yaml_content.contains("DB_PASSWORD:"));
+        assert!(!yaml_content.contains("secret123"));
+        assert!(!yaml_content.contains("password456"));
+
+        let retrieved_api_key = manager.get_secret("API_KEY")?;
+        let retrieved_db_password = manager.get_secret("DB_PASSWORD")?;
+
+        assert_eq!(retrieved_api_key, Some("secret123".to_string()));
+        assert_eq!(retrieved_db_password, Some("password456".to_string()));
+
+        crate::workspace::clear_project_dir_override();
+        Ok(())
+    }
+
+    #[test]
+    fn test_yaml_file_manual_inspection() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("project.yml"), "test: true")?;
+        crate::workspace::set_project_dir_override(temp_dir.path().to_path_buf());
+
+        let manager = SecretManager::new()?;
+        manager.generate_key()?;
+
+        manager.set_secret("AWS_SECRET_KEY", "AKIA1234567890")?;
+        manager.set_secret("DB_PASSWORD", "mypassword")?;
+
+        let yaml_content = std::fs::read_to_string(temp_dir.path().join("secrets.yml"))?;
+        let yaml_lines: Vec<&str> = yaml_content.lines().collect();
+
+        assert_eq!(yaml_lines.len(), 2);
+
+        let mut found_aws = false;
+        let mut found_db = false;
+
+        for line in &yaml_lines {
+            if line.starts_with("AWS_SECRET_KEY: ") {
+                found_aws = true;
+                assert!(!line.contains("AKIA1234567890"));
+                let encrypted_part = line.strip_prefix("AWS_SECRET_KEY: ").unwrap();
+                assert!(!encrypted_part.is_empty());
+                assert_ne!(encrypted_part, "AKIA1234567890");
+            } else if line.starts_with("DB_PASSWORD: ") {
+                found_db = true;
+                assert!(!line.contains("mypassword"));
+                let encrypted_part = line.strip_prefix("DB_PASSWORD: ").unwrap();
+                assert!(!encrypted_part.is_empty());
+                assert_ne!(encrypted_part, "mypassword");
+            }
+        }
+
+        assert!(found_aws, "AWS_SECRET_KEY not found in YAML");
+        assert!(found_db, "DB_PASSWORD not found in YAML");
+
+        let retrieved_aws = manager.get_secret("AWS_SECRET_KEY")?;
+        let retrieved_db = manager.get_secret("DB_PASSWORD")?;
+        assert_eq!(retrieved_aws, Some("AKIA1234567890".to_string()));
+        assert_eq!(retrieved_db, Some("mypassword".to_string()));
 
         crate::workspace::clear_project_dir_override();
         Ok(())

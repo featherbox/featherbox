@@ -129,7 +129,6 @@ impl Metadata {
 
     pub fn get_oldest_dependency_timestamp(
         &self,
-        table_name: &str,
         dependencies: &[String],
     ) -> Option<DateTime<Utc>> {
         dependencies

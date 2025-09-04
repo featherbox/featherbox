@@ -167,7 +167,7 @@ pub async fn get_oldest_dependency_timestamp(
         .map(|edge| edge.from.clone())
         .collect();
 
-    let oldest = metadata.get_oldest_dependency_timestamp(table_name, &dependencies);
+    let oldest = metadata.get_oldest_dependency_timestamp(&dependencies);
     Ok(oldest)
 }
 
@@ -214,7 +214,7 @@ pub async fn save_graph_with_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dependency::graph::{Edge, Node};
+    use crate::dependency::graph::Node;
     use std::collections::HashMap;
     use tempfile;
 

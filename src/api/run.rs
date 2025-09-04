@@ -21,15 +21,6 @@ pub struct RunResponse {
     pub pipeline_id: Option<i32>,
 }
 
-pub fn execute_with_path(_project_path: &str) -> Result<i32> {
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { execute_run_internal(None).await })
-}
-
-pub fn execute_with_target_node(_project_path: &str, target_node: &str) -> Result<i32> {
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { execute_run_internal(Some(target_node.to_string())).await })
-}
 
 async fn execute_run_internal(target_node: Option<String>) -> Result<i32> {
     let project_root = find_project_root()?;

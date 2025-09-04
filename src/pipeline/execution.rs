@@ -20,7 +20,6 @@ use std::{
 use tokio::task::JoinHandle;
 
 struct ExecutionContext {
-    status_path: PathBuf,
     project_dir: PathBuf,
     graph: Arc<Graph>,
     config: Arc<Config>,
@@ -70,7 +69,6 @@ impl Pipeline {
         let (status_path, status) = Status::create_new(project_dir).await?;
 
         let context = ExecutionContext {
-            status_path: status_path.clone(),
             project_dir: project_dir.to_path_buf(),
             graph: Arc::new(graph.clone()),
             config: Arc::new(config.clone()),
@@ -206,15 +204,12 @@ impl Pipeline {
 
         let task_results = logger.query_logs(task_summary_query)?;
 
-        let mut success_count = 0;
-        let mut failed_count = 0;
-
         for row in &task_results {
             if row.len() >= 2 {
-                let count: i32 = row[1].parse().unwrap_or(0);
+                let _count: i32 = row[1].parse().unwrap_or(0);
                 match row[0].as_str() {
-                    "SUCCESS" => success_count = count,
-                    "FAILED" => failed_count = count,
+                    "SUCCESS" => {},
+                    "FAILED" => {},
                     _ => {}
                 }
             }
@@ -222,7 +217,7 @@ impl Pipeline {
 
         let failed_tasks_query = "SELECT table_name, error_message FROM db.__featherbox_task_logs WHERE status = 'FAILED'";
 
-        let failed_tasks = logger.query_logs(failed_tasks_query)?;
+        let _failed_tasks = logger.query_logs(failed_tasks_query)?;
 
         Ok(())
     }
