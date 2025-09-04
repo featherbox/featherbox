@@ -302,8 +302,6 @@ mod tests {
             .await
             .context("Failed to create test bucket")?;
 
-        println!("Created test bucket: {}", s3_client.bucket);
-
         let test_objects = vec![
             (
                 "data/2024/01/sales.csv",
@@ -332,7 +330,6 @@ mod tests {
                 .with_context(|| format!("Failed to upload object: {key}"))?;
         }
 
-        println!("Uploaded {} test objects", 7);
         Ok(())
     }
 
@@ -363,8 +360,6 @@ mod tests {
                 .send()
                 .await
                 .context("Failed to delete objects")?;
-
-            println!("Deleted {} objects", objects.len());
         }
 
         s3_client
@@ -375,7 +370,6 @@ mod tests {
             .await
             .context("Failed to delete test bucket")?;
 
-        println!("Deleted test bucket: {}", s3_client.bucket);
         Ok(())
     }
 
@@ -465,21 +459,18 @@ mod tests {
             .unwrap();
         assert_eq!(config_files.len(), 1, "Expected exactly 1 config.json");
         assert!(config_files[0].ends_with("config.json"));
-
-        println!("All pattern matching tests passed!");
     }
 
     #[tokio::test]
     async fn test_list_objects_matching_pattern_integration() {
         if !should_run_s3_tests() {
-            println!("Skipping S3 integration test - no AWS credentials configured");
             return;
         }
 
         let s3_client = match setup_s3_for_test().await {
             Ok(client) => client,
             Err(e) => {
-                println!("Failed to setup S3 for test: {e}");
+                eprintln!("Failed to setup S3 for test: {e}");
                 return;
             }
         };
@@ -487,7 +478,7 @@ mod tests {
         run_pattern_matching_tests(&s3_client).await;
 
         if let Err(e) = cleanup_test_bucket(&s3_client).await {
-            println!("Warning: Failed to cleanup test bucket: {e}");
+            eprintln!("Warning: Failed to cleanup test bucket: {e}");
         }
     }
 }

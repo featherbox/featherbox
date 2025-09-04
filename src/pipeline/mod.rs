@@ -1,10 +1,8 @@
 pub mod adapter;
 pub mod build;
-pub mod database;
 pub mod ducklake;
 pub mod execution;
 pub mod file_processor;
 pub mod logger;
 pub mod model;
-pub mod state_manager;
 pub mod status;

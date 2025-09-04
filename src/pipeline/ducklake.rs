@@ -990,7 +990,6 @@ mod tests {
     #[tokio::test]
     async fn test_duckdb_s3_access_direct() {
         if std::env::var("FEATHERBOX_S3_TEST").is_err() {
-            println!("Skipping S3 direct access test - FEATHERBOX_S3_TEST not set");
             return;
         }
 
@@ -1061,7 +1060,6 @@ mod tests {
         let s3_client = crate::s3_client::S3Client::new(&connection_config).await?;
 
         s3_client.create_bucket().await?;
-        println!("Created S3 test bucket: {unique_bucket}");
 
         let test_json = r#"{"id": 1, "name": "test_item", "value": 42}
 {"id": 2, "name": "another_item", "value": 84}
@@ -1070,7 +1068,6 @@ mod tests {
         s3_client
             .put_object("test-data.json", test_json.as_bytes().to_vec())
             .await?;
-        println!("Uploaded test data to S3");
 
         Ok(S3TestData {
             bucket_name: unique_bucket,
@@ -1084,7 +1081,6 @@ mod tests {
             .delete_objects(vec!["test-data.json".to_string()])
             .await?;
         test_data.s3_client.delete_bucket().await?;
-        println!("Cleaned up S3 test bucket: {}", test_data.bucket_name);
         Ok(())
     }
 
@@ -1115,16 +1111,11 @@ mod tests {
             .output();
 
         if create_db_result.is_err() {
-            println!("Skipping MySQL test - database container not available");
             return Ok(());
         }
 
         let output = create_db_result.unwrap();
         if !output.status.success() {
-            println!(
-                "Skipping MySQL test - failed to create test database: {:?}",
-                String::from_utf8_lossy(&output.stderr)
-            );
             return Ok(());
         }
 
@@ -1162,13 +1153,9 @@ mod tests {
             .ok();
 
         match result {
-            Ok(_) => {
-                println!("MySQL catalog connection successful");
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(e) => {
-                println!("MySQL catalog connection failed: {e}");
-                println!("Skipping MySQL test - connection failed (database might not be running)");
+                eprintln!("MySQL catalog connection failed: {e}");
                 Ok(())
             }
         }
@@ -1197,16 +1184,11 @@ mod tests {
             .output();
 
         if create_db_result.is_err() {
-            println!("Skipping PostgreSQL test - database container not available");
             return Ok(());
         }
 
         let output = create_db_result.unwrap();
         if !output.status.success() {
-            println!(
-                "Skipping PostgreSQL test - failed to create test database: {:?}",
-                String::from_utf8_lossy(&output.stderr)
-            );
             return Ok(());
         }
 
@@ -1245,15 +1227,9 @@ mod tests {
             .ok();
 
         match result {
-            Ok(_) => {
-                println!("PostgreSQL catalog connection successful");
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(e) => {
-                println!("PostgreSQL catalog connection failed: {e}");
-                println!(
-                    "Skipping PostgreSQL test - connection failed (database might not be running)"
-                );
+                eprintln!("PostgreSQL catalog connection failed: {e}");
                 Ok(())
             }
         }
@@ -1289,7 +1265,6 @@ mod tests {
             .output();
 
         if check_minio.is_err() || !check_minio.unwrap().status.success() {
-            println!("Skipping MinIO test - MinIO container not available");
             return;
         }
 
@@ -1309,7 +1284,6 @@ mod tests {
             .output();
 
         if setup_result.is_err() || !setup_result.unwrap().status.success() {
-            println!("Skipping MinIO test - failed to set up mc alias");
             return;
         }
 
@@ -1326,7 +1300,6 @@ mod tests {
             .output();
 
         if create_bucket_result.is_err() || !create_bucket_result.unwrap().status.success() {
-            println!("Skipping MinIO test - failed to create bucket");
             return;
         }
 
@@ -1343,9 +1316,8 @@ mod tests {
                     dl.create_table_from_query("test_table", "SELECT 1 as id, 'test' as name");
 
                 match create_table_result {
-                    Ok(_) => println!("MinIO S3 table creation successful"),
+                    Ok(_) => {}
                     Err(e) => {
-                        println!("MinIO S3 table creation failed: {e}");
                         panic!("Table creation should work with MinIO: {e:#?}");
                     }
                 }
@@ -1355,11 +1327,8 @@ mod tests {
                 let results = verify_result.unwrap();
                 assert_eq!(results.len(), 1);
                 assert_eq!(results[0], vec!["1", "test"]);
-
-                println!("MinIO integration test completed successfully");
             }
             Err(e) => {
-                println!("MinIO test failed - DuckLake creation failed: {e}");
                 panic!("DuckLake creation with MinIO should work: {e:#?}");
             }
         }

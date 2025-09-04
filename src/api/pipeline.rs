@@ -1,27 +1,17 @@
 use super::{migrate, run};
 use crate::{
     config::Config,
-    pipeline::state_manager::{StateManager, TaskStatusInfo},
+    dependency::Graph,
+    metadata::Metadata,
+    status::{PipelineStatusInfo, Status},
 };
 use anyhow::Result;
-use axum::{Router, extract::Path, http::StatusCode, response::Json, routing::get};
-use sea_orm::DatabaseConnection;
+use axum::{Router, http::StatusCode, response::Json, routing::get};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct PipelineStatusResponse {
     pub pipeline: PipelineStatusInfo,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct PipelineStatusInfo {
-    pub id: i32,
-    pub graph_id: i32,
-    pub status: String,
-    pub created_at: String,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    pub tasks: Vec<TaskStatusInfo>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,50 +35,37 @@ pub struct GraphEdge {
 
 pub fn routes() -> Router {
     Router::new()
-        .route("/pipeline/{id}/status", get(handle_get_status))
+        .route("/pipeline/status", get(handle_get_latest_status))
         .route("/graph", get(handle_get_graph))
         .nest("/pipeline", migrate::routes())
         .nest("/pipeline", run::routes())
 }
 
-async fn handle_get_status(
-    Path(pipeline_id): Path<i32>,
-) -> Result<Json<PipelineStatusResponse>, StatusCode> {
+async fn handle_get_latest_status() -> Result<Json<PipelineStatusResponse>, StatusCode> {
     let project_root =
         crate::workspace::find_project_root().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let config = Config::load_from_directory(&project_root)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let app_db = crate::database::connect_app_db(&config.project)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let state_manager = StateManager::new(app_db);
-
-    match state_manager.get_pipeline_info(pipeline_id).await {
-        Ok(pipeline_info) => {
-            let pipeline = PipelineStatusInfo {
-                id: pipeline_info.id,
-                graph_id: pipeline_info.graph_id,
-                status: pipeline_info.status.to_string(),
-                created_at: pipeline_info
-                    .created_at
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
-                started_at: pipeline_info
-                    .started_at
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
-                completed_at: pipeline_info
-                    .completed_at
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
-                tasks: pipeline_info.tasks,
+    match Status::get_latest(&project_root).await {
+        Ok(Some((_, status))) => {
+            let pipeline_info = status.to_pipeline_info();
+            Ok(Json(PipelineStatusResponse {
+                pipeline: pipeline_info,
+            }))
+        }
+        Ok(None) => {
+            let empty_pipeline = PipelineStatusInfo {
+                status: "idle".to_string(),
+                started_at: None,
+                completed_at: None,
+                tasks: vec![],
             };
-
-            Ok(Json(PipelineStatusResponse { pipeline }))
+            Ok(Json(PipelineStatusResponse {
+                pipeline: empty_pipeline,
+            }))
         }
         Err(e) => {
             eprintln!("Failed to get pipeline status: {}", e);
-            Err(StatusCode::NOT_FOUND)
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
@@ -99,68 +76,53 @@ async fn handle_get_graph() -> Result<Json<GraphResponse>, StatusCode> {
     let config = Config::load_from_directory(&project_root)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let app_db = crate::database::connect_app_db(&config.project)
+    let graph = Graph::from_config(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let metadata = Metadata::load(&project_root).await.unwrap_or_default();
+
+    let status = Status::get_latest(&project_root)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .unwrap_or(None)
+        .map(|(_, s)| s);
 
-    match get_current_graph(&app_db).await {
-        Ok(graph_response) => Ok(Json(graph_response)),
-        Err(e) => {
-            eprintln!("Failed to get graph: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
+    let nodes: Vec<GraphNode> = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            let status_str = if let Some(ref status) = status {
+                status.states.get(&node.name).map(|s| {
+                    match s.phase {
+                        crate::status::Phase::Running => "running",
+                        crate::status::Phase::Completed => "completed",
+                        crate::status::Phase::Failed => "failed",
+                    }
+                    .to_string()
+                })
+            } else {
+                None
+            };
 
-async fn get_current_graph(db: &DatabaseConnection) -> Result<GraphResponse> {
-    use crate::database::entities::{edges, graphs, nodes};
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+            let last_updated = metadata
+                .get_node(&node.name)
+                .and_then(|n| n.last_updated_at)
+                .map(|dt| dt.to_rfc3339());
 
-    let latest_graph = match graphs::Entity::find()
-        .order_by_desc(graphs::Column::CreatedAt)
-        .one(db)
-        .await?
-    {
-        Some(graph) => graph,
-        None => {
-            return Ok(GraphResponse {
-                nodes: vec![],
-                edges: vec![],
-            });
-        }
-    };
-
-    let nodes_data = nodes::Entity::find()
-        .filter(nodes::Column::GraphId.eq(latest_graph.id))
-        .all(db)
-        .await?;
-
-    let edges_data = edges::Entity::find()
-        .filter(edges::Column::GraphId.eq(latest_graph.id))
-        .all(db)
-        .await?;
-
-    let graph_nodes = nodes_data
-        .into_iter()
-        .map(|node| GraphNode {
-            name: node.name,
-            status: None,
-            last_updated_at: node
-                .last_updated_at
-                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            GraphNode {
+                name: node.name.clone(),
+                status: status_str,
+                last_updated_at: last_updated,
+            }
         })
         .collect();
 
-    let graph_edges = edges_data
-        .into_iter()
+    let edges: Vec<GraphEdge> = graph
+        .edges
+        .iter()
         .map(|edge| GraphEdge {
-            from: edge.from_node,
-            to: edge.to_node,
+            from: edge.from.clone(),
+            to: edge.to.clone(),
         })
         .collect();
 
-    Ok(GraphResponse {
-        nodes: graph_nodes,
-        edges: graph_edges,
-    })
+    Ok(Json(GraphResponse { nodes, edges }))
 }

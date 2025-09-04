@@ -404,12 +404,13 @@ LIMIT 10"
     pub fn create_sample_dashboards(&self) -> Result<()> {
         let project_path = self.current_dir.join(&self.project_name);
         let dashboards_dir = project_path.join("dashboards");
+        let queries_dir = project_path.join("queries");
 
-        // Revenue trend dashboard
-        let revenue_config = DashboardConfig {
+        // First create the query files
+        let revenue_query = QueryConfig {
             name: "revenue_trend".to_string(),
-            description: Some("Daily Revenue Trend".to_string()),
-            query: "SELECT 
+            description: Some("Daily revenue trend query".to_string()),
+            sql: "SELECT 
     DATE(order_date) as date,
     SUM(total_amount) as daily_revenue
 FROM orders
@@ -417,6 +418,51 @@ WHERE status = 'completed'
 GROUP BY DATE(order_date)
 ORDER BY date"
                 .to_string(),
+        };
+        let revenue_query_yaml = serde_yml::to_string(&revenue_query)?;
+        fs::write(queries_dir.join("revenue_trend.yml"), revenue_query_yaml)
+            .context("Failed to write revenue_trend query")?;
+
+        let category_query = QueryConfig {
+            name: "category_distribution".to_string(),
+            description: Some("Product sales by category query".to_string()),
+            sql: "SELECT 
+    category,
+    SUM(total_quantity_sold) as units_sold
+FROM marts.product_performance
+GROUP BY category
+ORDER BY units_sold DESC"
+                .to_string(),
+        };
+        let category_query_yaml = serde_yml::to_string(&category_query)?;
+        fs::write(
+            queries_dir.join("category_distribution.yml"),
+            category_query_yaml,
+        )
+        .context("Failed to write category_distribution query")?;
+
+        let device_query = QueryConfig {
+            name: "device_distribution".to_string(),
+            description: Some("User actions by device type query".to_string()),
+            sql: "SELECT 
+    device,
+    COUNT(*) as action_count
+FROM staging_app_logs
+GROUP BY device"
+                .to_string(),
+        };
+        let device_query_yaml = serde_yml::to_string(&device_query)?;
+        fs::write(
+            queries_dir.join("device_distribution.yml"),
+            device_query_yaml,
+        )
+        .context("Failed to write device_distribution query")?;
+
+        // Now create the dashboards that reference the queries
+        let revenue_config = DashboardConfig {
+            name: "revenue_trend".to_string(),
+            description: Some("Daily Revenue Trend".to_string()),
+            query: "revenue_trend".to_string(),
             chart: ChartConfig {
                 chart_type: ChartType::Line,
                 x_column: "date".to_string(),
@@ -427,17 +473,10 @@ ORDER BY date"
         fs::write(dashboards_dir.join("revenue_trend.yml"), revenue_yaml)
             .context("Failed to write revenue_trend dashboard")?;
 
-        // Category distribution dashboard
         let category_config = DashboardConfig {
             name: "category_distribution".to_string(),
             description: Some("Product Sales by Category".to_string()),
-            query: "SELECT 
-    category,
-    SUM(total_quantity_sold) as units_sold
-FROM marts.product_performance
-GROUP BY category
-ORDER BY units_sold DESC"
-                .to_string(),
+            query: "category_distribution".to_string(),
             chart: ChartConfig {
                 chart_type: ChartType::Bar,
                 x_column: "category".to_string(),
@@ -451,16 +490,10 @@ ORDER BY units_sold DESC"
         )
         .context("Failed to write category_distribution dashboard")?;
 
-        // Device distribution dashboard
         let device_config = DashboardConfig {
             name: "device_distribution".to_string(),
             description: Some("User Actions by Device Type".to_string()),
-            query: "SELECT 
-    device,
-    COUNT(*) as action_count
-FROM staging_app_logs
-GROUP BY device"
-                .to_string(),
+            query: "device_distribution".to_string(),
             chart: ChartConfig {
                 chart_type: ChartType::Bar,
                 x_column: "device".to_string(),

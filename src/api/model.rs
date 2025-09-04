@@ -7,7 +7,7 @@ use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tracing::{error, warn};
+use tracing::error;
 
 #[derive(Serialize, Deserialize)]
 pub struct ModelSummary {
@@ -107,7 +107,6 @@ async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>,
     let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
-        warn!(model_path = %model_path, "Requested model not found");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -134,7 +133,6 @@ async fn create_model(
     let model_file = models_dir.join(format!("{}.yml", req.path));
 
     if model_file.exists() {
-        warn!(model_path = %req.path, "Attempted to create model that already exists");
         return Err(StatusCode::CONFLICT);
     }
 
@@ -161,7 +159,6 @@ async fn update_model(
     let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
-        warn!(model_path = %model_path, "Attempted to update model that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -187,7 +184,6 @@ async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, Stat
     let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
-        warn!(model_path = %model_path, "Attempted to delete model that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 

@@ -7,7 +7,7 @@ use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tracing::{error, warn};
+use tracing::error;
 
 #[derive(Serialize, Deserialize)]
 pub struct AdapterSummary {
@@ -100,7 +100,6 @@ async fn get_adapter(Path(name): Path<String>) -> Result<Json<AdapterDetails>, S
     let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
-        warn!(adapter_name = %name, "Requested adapter not found");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -118,7 +117,6 @@ async fn create_adapter(
     let adapter_file = adapters_dir.join(format!("{}.yml", req.name));
 
     if adapter_file.exists() {
-        warn!(adapter_name = %req.name, "Attempted to create adapter that already exists");
         return Err(StatusCode::CONFLICT);
     }
 
@@ -144,7 +142,6 @@ async fn update_adapter(
     let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
-        warn!(adapter_name = %name, "Attempted to update adapter that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -163,7 +160,6 @@ async fn delete_adapter(Path(name): Path<String>) -> Result<StatusCode, StatusCo
     let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
-        warn!(adapter_name = %name, "Attempted to delete adapter that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 

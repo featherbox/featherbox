@@ -1,10 +1,9 @@
 use crate::{
     config::{
         adapter::{AdapterConfig, AdapterSource},
-        project::ConnectionConfig,
+        project::{ConnectionConfig, DatabaseType},
     },
     pipeline::{
-        database::DatabaseSystem,
         ducklake::DuckLake,
         file_processor::{FileProcessor, FileSystem},
     },
@@ -12,6 +11,146 @@ use crate::{
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub enum DatabaseSystem {
+    Sqlite {
+        path: String,
+    },
+    RemoteDatabase {
+        db_type: DatabaseType,
+        host: String,
+        port: u16,
+        database: String,
+        username: String,
+        password: String,
+    },
+}
+
+impl DatabaseSystem {
+    pub fn from_connection(connection: &ConnectionConfig) -> Result<Self> {
+        match connection {
+            ConnectionConfig::Sqlite { path } => Ok(Self::Sqlite { path: path.clone() }),
+            ConnectionConfig::MySql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => Ok(Self::RemoteDatabase {
+                db_type: DatabaseType::Mysql,
+                host: host.clone(),
+                port: *port,
+                database: database.clone(),
+                username: username.clone(),
+                password: password.clone(),
+            }),
+            ConnectionConfig::PostgreSql {
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => Ok(Self::RemoteDatabase {
+                db_type: DatabaseType::Postgresql,
+                host: host.clone(),
+                port: *port,
+                database: database.clone(),
+                username: username.clone(),
+                password: password.clone(),
+            }),
+            ConnectionConfig::LocalFile { .. } | ConnectionConfig::S3(_) => Err(anyhow::anyhow!(
+                "Connection type not supported for database operations"
+            )),
+        }
+    }
+
+    pub fn generate_connection_string(&self) -> String {
+        match self {
+            Self::Sqlite { path } => format!("sqlite:{}", path),
+            Self::RemoteDatabase {
+                db_type,
+                host,
+                port,
+                database,
+                username,
+                password,
+            } => match db_type {
+                DatabaseType::Mysql => {
+                    format!(
+                        "mysql://{}:{}@{}:{}/{}",
+                        username, password, host, port, database
+                    )
+                }
+                DatabaseType::Postgresql => {
+                    format!(
+                        "postgresql://{}:{}@{}:{}/{}",
+                        username, password, host, port, database
+                    )
+                }
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    pub fn generate_alias(&self) -> String {
+        match self {
+            Self::Sqlite { .. } => "sqlite_db".to_string(),
+            Self::RemoteDatabase { db_type, .. } => match db_type {
+                DatabaseType::Mysql => "mysql_db".to_string(),
+                DatabaseType::Postgresql => "postgres_db".to_string(),
+                _ => "remote_db".to_string(),
+            },
+        }
+    }
+
+    pub fn build_read_query(&self, db_alias: &str, table_name: &str) -> String {
+        match self {
+            Self::Sqlite { path } => {
+                format!("SELECT * FROM sqlite_scan('{}', '{}')", path, table_name)
+            }
+            Self::RemoteDatabase { .. } => {
+                format!("SELECT * FROM {}.{}", db_alias, table_name)
+            }
+        }
+    }
+
+    pub fn build_attach_query(&self, db_alias: &str) -> Result<String> {
+        match self {
+            Self::Sqlite { .. } => Ok("INSTALL sqlite_scanner; LOAD sqlite_scanner;".to_string()),
+            Self::RemoteDatabase { .. } => {
+                let connection_string = self.generate_connection_string();
+                Ok(format!("ATTACH '{}' AS {}", connection_string, db_alias))
+            }
+        }
+    }
+
+    pub fn build_detach_query(&self, db_alias: &str) -> Result<String> {
+        Ok(format!("DETACH {}", db_alias))
+    }
+
+    pub fn validate_table_exists(&self, db_alias: &str, table_name: &str) -> Result<String> {
+        match self {
+            Self::Sqlite { path } => Ok(format!(
+                "SELECT COUNT(*) as count FROM sqlite_scan('{}', '{}')",
+                path, table_name
+            )),
+            Self::RemoteDatabase { db_type, .. } => match db_type {
+                DatabaseType::Mysql => Ok(format!(
+                    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{}'",
+                    table_name
+                )),
+                DatabaseType::Postgresql => Ok(format!(
+                    "SELECT tablename FROM pg_tables WHERE tablename = '{}'",
+                    table_name
+                )),
+                _ => Err(anyhow::anyhow!(
+                    "Unsupported database type for table validation"
+                )),
+            },
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Adapter {
@@ -253,6 +392,7 @@ mod tests {
     use crate::config::adapter::{FileConfig, FormatConfig};
     use crate::config::project::StorageConfig;
     use crate::pipeline::ducklake::{CatalogConfig, DuckLake};
+    use tempfile;
 
     fn create_test_adapter_config() -> AdapterConfig {
         AdapterConfig {
@@ -290,5 +430,63 @@ mod tests {
 
         let adapter = Adapter::new(config, ducklake);
         assert_eq!(adapter.config.connection, "local");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_database_system_attach_query() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO test_table (name) VALUES ('test1'), ('test2')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let db_system = DatabaseSystem::Sqlite {
+            path: db_path.to_str().unwrap().to_string(),
+        };
+
+        let attach_query = db_system.build_attach_query("test_db").unwrap();
+        assert!(attach_query.contains("INSTALL sqlite_scanner"));
+        assert!(attach_query.contains("LOAD sqlite_scanner"));
+
+        let catalog_config = CatalogConfig::Sqlite {
+            path: temp_dir
+                .path()
+                .join("catalog.sqlite")
+                .to_str()
+                .unwrap()
+                .to_string(),
+        };
+        let storage_config = StorageConfig::LocalFile {
+            path: temp_dir.path().to_str().unwrap().to_string(),
+        };
+
+        let ducklake = DuckLake::new(catalog_config, storage_config).await.unwrap();
+
+        let result = ducklake.execute_batch(&attach_query);
+        assert!(
+            result.is_ok(),
+            "Failed to install sqlite_scanner: {:?}",
+            result
+        );
+
+        let read_query = db_system.build_read_query("test_db", "test_table");
+        let read_result = ducklake.query(&read_query);
+        assert!(
+            read_result.is_ok(),
+            "Failed to read from table: {:?}",
+            read_result
+        );
     }
 }

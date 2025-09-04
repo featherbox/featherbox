@@ -6,7 +6,6 @@ use crate::{
         project::{ConnectionConfig, DatabaseConfig, DatabaseType, ProjectConfig, StorageConfig},
         query::QueryConfig,
     },
-    database::connection::connect_app_db,
     dependency::graph::{Edge, Graph, Node},
 };
 use anyhow::Result;
@@ -19,7 +18,6 @@ use axum::Router;
 
 #[cfg(test)]
 use axum_test::TestServer;
-use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -167,65 +165,6 @@ pub fn write_test_model(
         .join(format!("{name}.yml"));
     fs::write(model_path, content)?;
     Ok(())
-}
-
-pub async fn setup_test_db_connection() -> Result<DatabaseConnection> {
-    let temp_dir = tempfile::tempdir()?;
-    let db_path = temp_dir.path().join("test.db");
-
-    let project_config = ProjectConfig {
-        storage: StorageConfig::LocalFile {
-            path: temp_dir.path().to_string_lossy().to_string(),
-        },
-        database: DatabaseConfig {
-            ty: DatabaseType::Sqlite,
-            path: Some(db_path.to_string_lossy().to_string()),
-            host: None,
-            port: None,
-            database: None,
-            password: None,
-            username: None,
-        },
-        connections: HashMap::new(),
-    };
-
-    let db = connect_app_db(&project_config).await?;
-    std::mem::forget(temp_dir);
-    Ok(db)
-}
-
-pub async fn setup_test_db_with_config() -> Result<(DatabaseConnection, Config)> {
-    let temp_dir = tempfile::tempdir()?;
-    let db_path = temp_dir.path().join("test.db");
-
-    let project_config = ProjectConfig {
-        storage: StorageConfig::LocalFile {
-            path: temp_dir.path().to_string_lossy().to_string(),
-        },
-        database: DatabaseConfig {
-            ty: DatabaseType::Sqlite,
-            path: Some(db_path.to_string_lossy().to_string()),
-            host: None,
-            port: None,
-            database: None,
-            password: None,
-            username: None,
-        },
-        connections: HashMap::new(),
-    };
-
-    let config = Config {
-        project: project_config.clone(),
-        adapters: HashMap::new(),
-        models: HashMap::new(),
-        queries: HashMap::new(),
-        dashboards: HashMap::new(),
-        project_root: temp_dir.path().to_path_buf(),
-    };
-
-    let db = connect_app_db(&project_config).await?;
-    std::mem::forget(temp_dir);
-    Ok((db, config))
 }
 
 pub struct TestGraphBuilder {

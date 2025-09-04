@@ -7,7 +7,7 @@ use axum::response::Json;
 use axum::{Router, http::StatusCode, routing::get};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tracing::{error, warn};
+use tracing::error;
 
 #[derive(Serialize, Deserialize)]
 pub struct ConnectionSummary {
@@ -76,10 +76,7 @@ async fn get_connection(Path(name): Path<String>) -> Result<Json<ConnectionConfi
 
     match config.connections.get(&name) {
         Some(conn_config) => Ok(Json(conn_config.clone())),
-        None => {
-            warn!(connection_name = %name, "Requested connection not found");
-            Err(StatusCode::NOT_FOUND)
-        }
+        None => Err(StatusCode::NOT_FOUND),
     }
 }
 
@@ -109,7 +106,6 @@ async fn create_connection(
     let mut config = project_config()?;
 
     if config.connections.contains_key(&req.name) {
-        warn!(connection_name = %req.name, "Attempted to create connection that already exists");
         return Err(StatusCode::CONFLICT);
     }
 
@@ -126,7 +122,6 @@ async fn update_connection(
     let mut config = project_config()?;
 
     if !config.connections.contains_key(&name) {
-        warn!(connection_name = %name, "Attempted to update connection that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -140,7 +135,6 @@ async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, Statu
     let mut config = project_config()?;
 
     if !config.connections.contains_key(&name) {
-        warn!(connection_name = %name, "Attempted to delete connection that does not exist");
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -159,7 +153,6 @@ async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, Statu
         match manager.delete_secret(secret_key) {
             Ok(true) => {}
             Ok(false) => {
-                warn!(secret_key = %secret_key, "Secret key to be deleted was not found");
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
             Err(err) => {

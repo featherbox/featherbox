@@ -1,39 +1,39 @@
 use crate::{
     config::Config,
     dependency::Graph,
+    metadata::Metadata,
     pipeline::{
         adapter::Adapter,
         build::{Action, Pipeline},
         ducklake::DuckLake,
         logger::Logger,
         model::Model,
-        state_manager::StateManager,
-        status::{PipelineStatus, TaskStatus},
     },
+    status::Status,
 };
 use anyhow::{Context, Result};
 use std::{
     collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::task::JoinHandle;
 
 struct ExecutionContext {
-    pipeline_id: i32,
+    status_path: PathBuf,
+    project_dir: PathBuf,
     graph: Arc<Graph>,
     config: Arc<Config>,
     logger: Arc<Logger>,
     adapters: Arc<HashMap<String, Adapter>>,
     models: Arc<HashMap<String, Model>>,
-    app_db: Arc<sea_orm::DatabaseConnection>,
-    state_manager: Arc<StateManager>,
 }
 
 enum TaskResult {
     Success {
         table_name: String,
         execution_time_ms: u64,
-        execution_start_time: chrono::NaiveDateTime,
+        execution_start_time: chrono::DateTime<chrono::Utc>,
     },
     Failed {
         table_name: String,
@@ -43,25 +43,12 @@ enum TaskResult {
 }
 
 impl Pipeline {
-    async fn get_latest_pipeline_id(&self, app_db: &sea_orm::DatabaseConnection) -> Result<i32> {
-        use crate::database::entities::pipelines;
-        use sea_orm::{EntityTrait, QueryOrder};
-
-        let latest_pipeline = pipelines::Entity::find()
-            .order_by_desc(pipelines::Column::CreatedAt)
-            .one(app_db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("No pipeline found in database"))?;
-
-        Ok(latest_pipeline.id)
-    }
-
     pub async fn execute(
         &self,
         graph: &Graph,
         config: &Config,
         ducklake: &DuckLake,
-        app_db: &sea_orm::DatabaseConnection,
+        project_dir: &Path,
     ) -> Result<()> {
         let shared_ducklake = Arc::new(ducklake.clone());
         let shared_logger = Arc::new(Logger::new(Arc::clone(&shared_ducklake)).await?);
@@ -80,31 +67,22 @@ impl Pipeline {
         }
         let shared_models = Arc::new(models);
 
-        let pipeline_id = self.get_latest_pipeline_id(app_db).await?;
-        let state_manager = Arc::new(StateManager::new(app_db.clone()));
-
-        if let Err(e) = state_manager
-            .update_pipeline_status(pipeline_id, PipelineStatus::Running)
-            .await
-        {
-            anyhow::bail!("Failed to update pipeline status to running: {}", e);
-        }
+        let (status_path, status) = Status::create_new(project_dir).await?;
 
         let context = ExecutionContext {
-            pipeline_id,
+            status_path: status_path.clone(),
+            project_dir: project_dir.to_path_buf(),
             graph: Arc::new(graph.clone()),
             config: Arc::new(config.clone()),
             logger: shared_logger.clone(),
             adapters: shared_adapters,
             models: shared_models,
-            app_db: Arc::new(app_db.clone()),
-            state_manager: state_manager.clone(),
         };
 
         context
             .logger
             .log_pipeline_event(
-                context.pipeline_id,
+                0,
                 "PIPELINE_START",
                 &format!(
                     "Pipeline execution started with {} levels",
@@ -118,7 +96,7 @@ impl Pipeline {
 
         for level in &self.levels {
             let results = self
-                .execute_level(level, &context, &mut failed_tasks)
+                .execute_level(level, &context, &mut failed_tasks, &status_path)
                 .await?;
 
             for result in results {
@@ -128,34 +106,17 @@ impl Pipeline {
                         execution_time_ms,
                         execution_start_time,
                     } => {
-                        println!(
-                            "Task completed successfully: {table_name} ({execution_time_ms}ms)"
-                        );
-
-                        context
-                            .state_manager
-                            .update_task_status(
-                                context.pipeline_id,
-                                &table_name,
-                                TaskStatus::Completed,
-                                None,
-                            )
-                            .await
-                            .context("Failed to update task status to completed")?;
+                        let mut status = Status::load(&status_path).await?;
+                        status.complete_task(&table_name);
+                        status.save(&status_path).await?;
 
                         context
                             .logger
-                            .log_task_execution(
-                                context.pipeline_id,
-                                &table_name,
-                                "SUCCESS",
-                                None,
-                                execution_time_ms,
-                            )
+                            .log_task_execution(0, &table_name, "SUCCESS", None, execution_time_ms)
                             .context("Failed to log successful task execution")?;
 
                         if let Err(e) = crate::dependency::update_node_timestamp(
-                            &context.app_db,
+                            &context.project_dir,
                             &table_name,
                             execution_start_time,
                         )
@@ -173,21 +134,14 @@ impl Pipeline {
                             "Task failed for table '{table_name}': {error} ({execution_time_ms}ms)"
                         );
 
-                        context
-                            .state_manager
-                            .update_task_status(
-                                context.pipeline_id,
-                                &table_name,
-                                TaskStatus::Failed,
-                                Some(&error.to_string()),
-                            )
-                            .await
-                            .context("Failed to update task status to failed")?;
+                        let mut status = Status::load(&status_path).await?;
+                        status.fail_task(&table_name, error.to_string(), "ERR_EXEC".to_string());
+                        status.save(&status_path).await?;
 
                         context
                             .logger
                             .log_task_execution(
-                                context.pipeline_id,
+                                0,
                                 &table_name,
                                 "FAILED",
                                 Some(&error.to_string()),
@@ -212,51 +166,45 @@ impl Pipeline {
             context
                 .logger
                 .log_pipeline_event(
-                    context.pipeline_id,
+                    0,
                     "PIPELINE_FAILED",
                     &error_message,
                     Some(&format!("Failed tasks: {failed_tasks:?}")),
                 )
                 .context("Failed to log pipeline failure")?;
 
-            context
-                .state_manager
-                .update_pipeline_status(context.pipeline_id, PipelineStatus::Failed)
-                .await
-                .context("Failed to update pipeline status to failed")?;
-
-            self.print_pipeline_summary(context.pipeline_id, &context.logger)?;
+            self.print_pipeline_summary(&context.logger)?;
 
             return Err(anyhow::anyhow!(error_message));
         }
 
+        let completed_tables = status.get_completed_tables();
+        let mut metadata = Metadata::load(project_dir).await?;
+        for (table_name, completed_at) in completed_tables {
+            metadata.update_node_timestamp(&table_name, completed_at);
+        }
+        metadata.save(project_dir).await?;
+
         context
             .logger
             .log_pipeline_event(
-                context.pipeline_id,
+                0,
                 "PIPELINE_SUCCESS",
                 "Pipeline execution completed successfully",
                 None,
             )
             .context("Failed to log pipeline success")?;
 
-        context
-            .state_manager
-            .update_pipeline_status(context.pipeline_id, PipelineStatus::Completed)
-            .await
-            .context("Failed to update pipeline status to completed")?;
-
-        self.print_pipeline_summary(context.pipeline_id, &context.logger)?;
+        self.print_pipeline_summary(&context.logger)?;
 
         Ok(())
     }
 
-    pub fn print_pipeline_summary(&self, pipeline_id: i32, logger: &Logger) -> Result<()> {
-        let task_summary_query = format!(
-            "SELECT status, COUNT(*) as count FROM db.__featherbox_task_logs WHERE pipeline_id = {pipeline_id} GROUP BY status"
-        );
+    pub fn print_pipeline_summary(&self, logger: &Logger) -> Result<()> {
+        let task_summary_query =
+            "SELECT status, COUNT(*) as count FROM db.__featherbox_task_logs GROUP BY status";
 
-        let task_results = logger.query_logs(&task_summary_query)?;
+        let task_results = logger.query_logs(task_summary_query)?;
 
         let mut success_count = 0;
         let mut failed_count = 0;
@@ -272,26 +220,9 @@ impl Pipeline {
             }
         }
 
-        let failed_tasks_query = format!(
-            "SELECT table_name, error_message FROM db.__featherbox_task_logs WHERE pipeline_id = {pipeline_id} AND status = 'FAILED'"
-        );
+        let failed_tasks_query = "SELECT table_name, error_message FROM db.__featherbox_task_logs WHERE status = 'FAILED'";
 
-        let failed_tasks = logger.query_logs(&failed_tasks_query)?;
-
-        println!("\n=== Pipeline Execution Summary ===");
-        println!("✅ Successful tasks: {success_count}");
-        println!("❌ Failed tasks: {failed_count}");
-
-        if !failed_tasks.is_empty() {
-            println!("\nFailed tasks:");
-            for task in &failed_tasks {
-                if task.len() >= 2 {
-                    println!("  - {}: {}", task[0], task[1]);
-                }
-            }
-        }
-
-        println!("==================================\n");
+        let failed_tasks = logger.query_logs(failed_tasks_query)?;
 
         Ok(())
     }
@@ -301,6 +232,7 @@ impl Pipeline {
         actions: &[Action],
         context: &ExecutionContext,
         failed_tasks: &mut HashSet<String>,
+        status_path: &Path,
     ) -> Result<Vec<TaskResult>> {
         let mut task_handles = Vec::new();
 
@@ -313,29 +245,20 @@ impl Pipeline {
                 self.should_skip_task(&action.table_name, &context.graph, failed_tasks);
             if should_skip {
                 failed_tasks.insert(action.table_name.clone());
-                context
-                    .state_manager
-                    .update_task_status(
-                        context.pipeline_id,
-                        &action.table_name,
-                        TaskStatus::Failed,
-                        Some("Skipped due to upstream failure"),
-                    )
-                    .await
-                    .ok();
+
+                let mut status = Status::load(status_path).await?;
+                status.fail_task(
+                    &action.table_name,
+                    "Skipped due to upstream failure".to_string(),
+                    "ERR_SKIP".to_string(),
+                );
+                status.save(status_path).await?;
                 continue;
             }
 
-            context
-                .state_manager
-                .update_task_status(
-                    context.pipeline_id,
-                    &action.table_name,
-                    TaskStatus::Running,
-                    None,
-                )
-                .await
-                .ok();
+            let mut status = Status::load(status_path).await?;
+            status.start_task(action.table_name.clone());
+            status.save(status_path).await?;
 
             let handle = self.spawn_task(action, context)?;
             task_handles.push(handle);
@@ -351,7 +274,7 @@ impl Pipeline {
                     context
                         .logger
                         .log_pipeline_event(
-                            context.pipeline_id,
+                            0,
                             "TASK_JOIN_ERROR",
                             &error_message,
                             Some(&join_error.to_string()),
@@ -385,11 +308,12 @@ impl Pipeline {
     ) -> Result<JoinHandle<TaskResult>> {
         let table_name = action.table_name.clone();
         let connections = context.config.project.connections.clone();
+        let project_dir = context.project_dir.clone();
 
         if let Some(adapter) = context.adapters.get(&action.table_name).cloned() {
             Ok(tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
-                let execution_start_time = chrono::Utc::now().naive_utc();
+                let execution_start_time = chrono::Utc::now();
                 match adapter
                     .execute_import(&table_name, Some(&connections))
                     .await
@@ -407,7 +331,6 @@ impl Pipeline {
                 }
             }))
         } else if let Some(model) = context.models.get(&action.table_name).cloned() {
-            let app_db = Arc::clone(&context.app_db);
             let graph = Arc::clone(&context.graph);
             let table_name_for_deps = table_name.clone();
 
@@ -415,7 +338,7 @@ impl Pipeline {
                 let start_time = std::time::Instant::now();
 
                 let dependency_timestamp = crate::dependency::get_oldest_dependency_timestamp(
-                    &app_db,
+                    &project_dir,
                     &table_name_for_deps,
                     &graph,
                 )
@@ -426,8 +349,7 @@ impl Pipeline {
                     Ok(_) => TaskResult::Success {
                         table_name,
                         execution_time_ms: start_time.elapsed().as_millis() as u64,
-                        execution_start_time: dependency_timestamp
-                            .unwrap_or(chrono::Utc::now().naive_utc()),
+                        execution_start_time: dependency_timestamp.unwrap_or(chrono::Utc::now()),
                     },
                     Err(error) => TaskResult::Failed {
                         table_name,
@@ -458,7 +380,6 @@ impl Pipeline {
                 if edge.from == current_table && !failed_tasks.contains(&edge.to) {
                     failed_tasks.insert(edge.to.clone());
                     queue.push_back(edge.to.clone());
-                    println!("Marking downstream task as failed: {}", edge.to);
                 }
             }
         }
