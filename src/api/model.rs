@@ -1,4 +1,4 @@
-use crate::api::migrate;
+use crate::api::{AppError, app_error, migrate};
 use crate::config::model::{ModelConfig, parse_model_config};
 use crate::workspace::find_project_root;
 use anyhow::Result;
@@ -36,11 +36,10 @@ pub struct UpdateModelRequest {
     pub config: ModelConfig,
 }
 
-
-fn models_dir() -> Result<PathBuf, StatusCode> {
+fn models_dir() -> Result<PathBuf, AppError> {
     let project_root = find_project_root().map_err(|err| {
         error!(error = ?err, "Failed to find project root");
-        StatusCode::INTERNAL_SERVER_ERROR
+        AppError::StatusCode(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
     Ok(project_root.join("models"))
 }
@@ -54,7 +53,7 @@ pub fn routes() -> Router {
         )
 }
 
-async fn list_models() -> Result<Json<Vec<ModelSummary>>, StatusCode> {
+async fn list_models() -> Result<Json<Vec<ModelSummary>>, AppError> {
     let models_dir = models_dir()?;
 
     if !models_dir.exists() {
@@ -72,11 +71,11 @@ fn collect_models(
     base_dir: &PathBuf,
     current_dir: &PathBuf,
     models: &mut Vec<ModelSummary>,
-) -> Result<(), StatusCode> {
-    let entries = fs::read_dir(current_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<(), AppError> {
+    let entries = fs::read_dir(current_dir)?;
 
     for entry in entries {
-        let entry = entry.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let entry = entry?;
         let path = entry.path();
 
         if path.is_dir() {
@@ -84,9 +83,7 @@ fn collect_models(
         } else if path.extension().and_then(|s| s.to_str()) == Some("yml")
             && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
         {
-            let relative_path = path
-                .strip_prefix(base_dir)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let relative_path = path.strip_prefix(base_dir)?;
             let model_path = relative_path.to_string_lossy().replace(".yml", "");
 
             if let Ok(content) = fs::read_to_string(&path)
@@ -104,16 +101,16 @@ fn collect_models(
     Ok(())
 }
 
-async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>, StatusCode> {
+async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>, AppError> {
     let models_dir = models_dir()?;
     let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let content = fs::read_to_string(&model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let config = parse_model_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let content = fs::read_to_string(&model_file)?;
+    let config = parse_model_config(&content)?;
 
     let name = PathBuf::from(&model_path)
         .file_name()
@@ -128,41 +125,38 @@ async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>,
     }))
 }
 
-async fn create_model(
-    Json(req): Json<CreateModelRequest>,
-) -> Result<Json<ModelDetails>, StatusCode> {
+async fn create_model(Json(req): Json<CreateModelRequest>) -> Result<Json<ModelDetails>, AppError> {
     let models_dir = models_dir()?;
     let model_file = models_dir.join(format!("{}.yml", req.path));
 
     if model_file.exists() {
-        return Err(StatusCode::CONFLICT);
+        return app_error(StatusCode::CONFLICT);
     }
 
     if let Some(parent) = model_file.parent() {
-        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::create_dir_all(parent)?;
     }
 
-    let yaml_content =
-        serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let yaml_content = serde_yml::to_string(&req.config)?;
 
     let temp_file = models_dir.join(format!("{}.tmp", req.path));
     if let Some(parent) = temp_file.parent() {
-        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::create_dir_all(parent)?;
     }
-    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::write(&temp_file, &yaml_content)?;
 
     if let Err(e) = migrate::validate_migration().await {
         let _ = fs::remove_file(&temp_file);
         error!(error = %e, "Migration validation failed");
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    fs::rename(&temp_file, &model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+    fs::rename(&temp_file, &model_file)?;
+
     if let Err(e) = migrate::execute_async().await {
         error!(error = %e, "Migration failed after model creation");
     }
-    
+
     Ok(Json(ModelDetails {
         name: req.name,
         path: req.path,
@@ -173,25 +167,23 @@ async fn create_model(
 async fn update_model(
     Path(model_path): Path<String>,
     Json(req): Json<UpdateModelRequest>,
-) -> Result<Json<ModelDetails>, StatusCode> {
+) -> Result<Json<ModelDetails>, AppError> {
     let models_dir = models_dir()?;
     let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let original_content =
-        fs::read_to_string(&model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let original_content = fs::read_to_string(&model_file)?;
 
-    let yaml_content =
-        serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let yaml_content = serde_yml::to_string(&req.config)?;
 
     let temp_file = models_dir.join(format!("{model_path}.tmp"));
     if let Some(parent) = temp_file.parent() {
-        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::create_dir_all(parent)?;
     }
-    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::write(&temp_file, &yaml_content)?;
 
     let name = PathBuf::from(&model_path)
         .file_name()
@@ -201,17 +193,17 @@ async fn update_model(
 
     if let Err(e) = migrate::validate_migration().await {
         let _ = fs::remove_file(&temp_file);
-        fs::write(&model_file, original_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::write(&model_file, original_content)?;
         error!(error = %e, "Migration validation failed");
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    fs::rename(&temp_file, &model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+    fs::rename(&temp_file, &model_file)?;
+
     if let Err(e) = migrate::execute_async().await {
         error!(error = %e, "Migration failed after model update");
     }
-    
+
     Ok(Json(ModelDetails {
         name,
         path: model_path,
@@ -219,33 +211,33 @@ async fn update_model(
     }))
 }
 
-async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, StatusCode> {
+async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, AppError> {
     let models_dir = models_dir()?;
     let model_file = models_dir.join(format!("{model_path}.yml"));
 
     if !model_file.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
     let backup_file = models_dir.join(format!("{model_path}.bak"));
     if let Some(parent) = backup_file.parent() {
-        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::create_dir_all(parent)?;
     }
-    fs::copy(&model_file, &backup_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    fs::remove_file(&model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::copy(&model_file, &backup_file)?;
+    fs::remove_file(&model_file)?;
 
     if let Err(e) = migrate::validate_migration().await {
-        fs::rename(&backup_file, &model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::rename(&backup_file, &model_file)?;
         error!(error = %e, "Migration validation failed");
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     let _ = fs::remove_file(&backup_file);
-    
+
     if let Err(e) = migrate::execute_async().await {
         error!(error = %e, "Migration failed after model deletion");
     }
-    
+
     Ok(StatusCode::NO_CONTENT)
 }
 

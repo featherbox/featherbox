@@ -1,4 +1,4 @@
-use crate::api::migrate;
+use crate::api::{AppError, app_error, migrate};
 use crate::config::adapter::{AdapterConfig, parse_adapter_config};
 use crate::workspace::find_project_root;
 use anyhow::Result;
@@ -35,11 +35,10 @@ pub struct UpdateAdapterRequest {
     pub config: AdapterConfig,
 }
 
-
-fn adapter_dir() -> Result<PathBuf, StatusCode> {
+fn adapter_dir() -> Result<PathBuf, AppError> {
     let project_root = find_project_root().map_err(|err| {
         error!(error = ?err, "Failed to find project root");
-        StatusCode::INTERNAL_SERVER_ERROR
+        AppError::StatusCode(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
     Ok(project_root.join("adapters"))
 }
@@ -53,7 +52,7 @@ pub fn routes() -> Router {
         )
 }
 
-async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, StatusCode> {
+async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, AppError> {
     let adapters_dir = adapter_dir()?;
 
     if !adapters_dir.exists() {
@@ -62,10 +61,10 @@ async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, StatusCode> {
 
     let mut adapters = Vec::new();
 
-    let entries = fs::read_dir(&adapters_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let entries = fs::read_dir(&adapters_dir)?;
 
     for entry in entries {
-        let entry = entry.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let entry = entry?;
         let path = entry.path();
 
         if path.extension().and_then(|s| s.to_str()) == Some("yml")
@@ -97,53 +96,51 @@ async fn list_adapters() -> Result<Json<Vec<AdapterSummary>>, StatusCode> {
     Ok(Json(adapters))
 }
 
-async fn get_adapter(Path(name): Path<String>) -> Result<Json<AdapterDetails>, StatusCode> {
+async fn get_adapter(Path(name): Path<String>) -> Result<Json<AdapterDetails>, AppError> {
     let adapters_dir = adapter_dir()?;
     let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let content =
-        fs::read_to_string(&adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let config = parse_adapter_config(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let content = fs::read_to_string(&adapter_file)?;
+    let config = parse_adapter_config(&content)?;
 
     Ok(Json(AdapterDetails { name, config }))
 }
 
 async fn create_adapter(
     Json(req): Json<CreateAdapterRequest>,
-) -> Result<Json<AdapterDetails>, StatusCode> {
+) -> Result<Json<AdapterDetails>, AppError> {
     let adapters_dir = adapter_dir()?;
     let adapter_file = adapters_dir.join(format!("{}.yml", req.name));
 
     if adapter_file.exists() {
-        return Err(StatusCode::CONFLICT);
+        return app_error(StatusCode::CONFLICT);
     }
 
     if !adapters_dir.exists() {
-        fs::create_dir_all(&adapters_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::create_dir_all(&adapters_dir)?;
     }
 
-    let yaml_content =
-        serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let yaml_content = serde_yml::to_string(&req.config)?;
 
     let temp_file = adapters_dir.join(format!("{}.tmp", req.name));
-    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::write(&temp_file, &yaml_content)?;
 
     if let Err(e) = migrate::validate_migration().await {
         let _ = fs::remove_file(&temp_file);
         error!(error = %e, "Migration validation failed");
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    fs::rename(&temp_file, &adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+    fs::rename(&temp_file, &adapter_file)?;
+
     if let Err(e) = migrate::execute_async().await {
         error!(error = %e, "Migration failed after adapter creation");
     }
-    
+
     Ok(Json(AdapterDetails {
         name: req.name,
         config: req.config,
@@ -153,66 +150,64 @@ async fn create_adapter(
 async fn update_adapter(
     Path(name): Path<String>,
     Json(req): Json<UpdateAdapterRequest>,
-) -> Result<Json<AdapterDetails>, StatusCode> {
+) -> Result<Json<AdapterDetails>, AppError> {
     let adapters_dir = adapter_dir()?;
     let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let original_content =
-        fs::read_to_string(&adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let original_content = fs::read_to_string(&adapter_file)?;
 
-    let yaml_content =
-        serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let yaml_content = serde_yml::to_string(&req.config)?;
 
     let temp_file = adapters_dir.join(format!("{name}.tmp"));
-    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::write(&temp_file, &yaml_content)?;
 
     if let Err(e) = migrate::validate_migration().await {
         let _ = fs::remove_file(&temp_file);
-        fs::write(&adapter_file, original_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::write(&adapter_file, original_content)?;
         error!(error = %e, "Migration validation failed");
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    fs::rename(&temp_file, &adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+    fs::rename(&temp_file, &adapter_file)?;
+
     if let Err(e) = migrate::execute_async().await {
         error!(error = %e, "Migration failed after adapter update");
     }
-    
+
     Ok(Json(AdapterDetails {
         name,
         config: req.config,
     }))
 }
 
-async fn delete_adapter(Path(name): Path<String>) -> Result<StatusCode, StatusCode> {
+async fn delete_adapter(Path(name): Path<String>) -> Result<StatusCode, AppError> {
     let adapters_dir = adapter_dir()?;
     let adapter_file = adapters_dir.join(format!("{name}.yml"));
 
     if !adapter_file.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
     let backup_file = adapters_dir.join(format!("{name}.bak"));
-    fs::copy(&adapter_file, &backup_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    fs::remove_file(&adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::copy(&adapter_file, &backup_file)?;
+    fs::remove_file(&adapter_file)?;
 
     if let Err(e) = migrate::validate_migration().await {
-        fs::rename(&backup_file, &adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::rename(&backup_file, &adapter_file)?;
         error!(error = %e, "Migration validation failed");
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     let _ = fs::remove_file(&backup_file);
-    
+
     if let Err(e) = migrate::execute_async().await {
         error!(error = %e, "Migration failed after adapter deletion");
     }
-    
+
     Ok(StatusCode::NO_CONTENT)
 }
 

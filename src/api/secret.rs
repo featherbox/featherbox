@@ -1,3 +1,4 @@
+use crate::api::{AppError, app_error};
 use crate::secret::SecretManager;
 use anyhow::Result;
 use axum::extract::Path;
@@ -50,12 +51,10 @@ pub fn routes() -> Router {
         .route("/secrets/generate-key", post(generate_unique_secret_key))
 }
 
-async fn list_secrets() -> Result<Json<Vec<SecretSummary>>, StatusCode> {
-    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn list_secrets() -> Result<Json<Vec<SecretSummary>>, AppError> {
+    let manager = SecretManager::new()?;
 
-    let secrets = manager
-        .get_all_secrets()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let secrets = manager.get_all_secrets()?;
 
     let mut summaries = Vec::new();
     for (key, value) in secrets {
@@ -67,39 +66,30 @@ async fn list_secrets() -> Result<Json<Vec<SecretSummary>>, StatusCode> {
     Ok(Json(summaries))
 }
 
-async fn get_secret_info(Path(key): Path<String>) -> Result<Json<SecretSummary>, StatusCode> {
-    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn get_secret_info(Path(key): Path<String>) -> Result<Json<SecretSummary>, AppError> {
+    let manager = SecretManager::new()?;
 
-    match manager
-        .get_secret(&key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
+    match manager.get_secret(&key)? {
         Some(value) => {
             let masked_value = mask_secret_value(&value);
             Ok(Json(SecretSummary { key, masked_value }))
         }
-        None => Err(StatusCode::NOT_FOUND),
+        None => app_error(StatusCode::NOT_FOUND),
     }
 }
 
-async fn create_secret(Json(req): Json<CreateSecretRequest>) -> Result<StatusCode, StatusCode> {
+async fn create_secret(Json(req): Json<CreateSecretRequest>) -> Result<StatusCode, AppError> {
     if !is_valid_secret_key(&req.key) {
-        return Err(StatusCode::BAD_REQUEST);
+        return app_error(StatusCode::BAD_REQUEST);
     }
 
-    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manager = SecretManager::new()?;
 
-    if manager
-        .get_secret(&req.key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .is_some()
-    {
-        return Err(StatusCode::CONFLICT);
+    if manager.get_secret(&req.key)?.is_some() {
+        return app_error(StatusCode::CONFLICT);
     }
 
-    manager
-        .set_secret(&req.key, &req.value)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    manager.set_secret(&req.key, &req.value)?;
 
     Ok(StatusCode::CREATED)
 }
@@ -107,42 +97,34 @@ async fn create_secret(Json(req): Json<CreateSecretRequest>) -> Result<StatusCod
 async fn update_secret(
     Path(key): Path<String>,
     Json(req): Json<UpdateSecretRequest>,
-) -> Result<StatusCode, StatusCode> {
-    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<StatusCode, AppError> {
+    let manager = SecretManager::new()?;
 
-    if manager
-        .get_secret(&key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .is_none()
-    {
-        return Err(StatusCode::NOT_FOUND);
+    if manager.get_secret(&key)?.is_none() {
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    manager
-        .set_secret(&key, &req.value)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    manager.set_secret(&key, &req.value)?;
 
     Ok(StatusCode::OK)
 }
 
-async fn delete_secret(Path(key): Path<String>) -> Result<StatusCode, StatusCode> {
-    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn delete_secret(Path(key): Path<String>) -> Result<StatusCode, AppError> {
+    let manager = SecretManager::new()?;
 
-    let removed = manager
-        .delete_secret(&key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let removed = manager.delete_secret(&key)?;
 
     if removed {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(StatusCode::NOT_FOUND)
+        app_error(StatusCode::NOT_FOUND)
     }
 }
 
 async fn generate_unique_secret_key(
     Json(req): Json<GenerateSecretKeyRequest>,
-) -> Result<Json<GenerateSecretKeyResponse>, StatusCode> {
-    let manager = SecretManager::new().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<Json<GenerateSecretKeyResponse>, AppError> {
+    let manager = SecretManager::new()?;
 
     let base_key = generate_secret_key_for_connection(
         &req.connection_name,
@@ -150,8 +132,7 @@ async fn generate_unique_secret_key(
         &req.field_type,
     );
 
-    let unique_key = find_unique_secret_key(&manager, &base_key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let unique_key = find_unique_secret_key(&manager, &base_key)?;
 
     Ok(Json(GenerateSecretKeyResponse { key: unique_key }))
 }

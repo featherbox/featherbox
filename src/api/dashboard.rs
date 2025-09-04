@@ -1,3 +1,4 @@
+use crate::api::{AppError, app_error};
 use crate::config::Config;
 use crate::config::dashboard::{DashboardConfig, parse_dashboard_config};
 use crate::pipeline::ducklake::DuckLake;
@@ -24,10 +25,10 @@ pub fn router() -> Router<()> {
         .route("/dashboards/{name}/data", get(get_dashboard_data))
 }
 
-fn dashboards_dir() -> Result<PathBuf, StatusCode> {
+fn dashboards_dir() -> Result<PathBuf, AppError> {
     let project_root = find_project_root().map_err(|err| {
         error!(error = ?err, "Failed to find project root");
-        StatusCode::INTERNAL_SERVER_ERROR
+        AppError::StatusCode(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
     Ok(project_root.join("dashboards"))
 }
@@ -62,16 +63,15 @@ pub struct DashboardDataResponse {
     pub values: Vec<serde_json::Value>,
 }
 
-async fn list_dashboards() -> Result<Json<Vec<DashboardListItem>>, StatusCode> {
+async fn list_dashboards() -> Result<Json<Vec<DashboardListItem>>, AppError> {
     let dashboards_dir = dashboards_dir()?;
     let mut dashboards = Vec::new();
 
     if dashboards_dir.exists() {
-        let entries =
-            fs::read_dir(&dashboards_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let entries = fs::read_dir(&dashboards_dir)?;
 
         for entry in entries {
-            let entry = entry.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let entry = entry?;
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("yml")
@@ -98,30 +98,29 @@ async fn list_dashboards() -> Result<Json<Vec<DashboardListItem>>, StatusCode> {
     Ok(Json(dashboards))
 }
 
-async fn get_dashboard(Path(name): Path<String>) -> Result<Json<DashboardConfig>, StatusCode> {
+async fn get_dashboard(Path(name): Path<String>) -> Result<Json<DashboardConfig>, AppError> {
     let dashboards_dir = dashboards_dir()?;
     let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let config =
-        load_dashboard_config(&dashboard_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let config = load_dashboard_config(&dashboard_path)?;
 
     Ok(Json(config))
 }
 
 async fn create_dashboard(
     Json(request): Json<DashboardRequest>,
-) -> Result<Json<DashboardConfig>, StatusCode> {
+) -> Result<Json<DashboardConfig>, AppError> {
     let dashboards_dir = dashboards_dir()?;
-    fs::create_dir_all(&dashboards_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::create_dir_all(&dashboards_dir)?;
 
     let dashboard_path = dashboards_dir.join(format!("{}.yml", request.name));
 
     if dashboard_path.exists() {
-        return Err(StatusCode::CONFLICT);
+        return app_error(StatusCode::CONFLICT);
     }
 
     let config = DashboardConfig {
@@ -132,17 +131,16 @@ async fn create_dashboard(
             chart_type: match request.chart.chart_type.as_str() {
                 "line" => crate::config::dashboard::ChartType::Line,
                 "bar" => crate::config::dashboard::ChartType::Bar,
-                _ => return Err(StatusCode::BAD_REQUEST),
+                _ => return app_error(StatusCode::BAD_REQUEST),
             },
             x_column: request.chart.x_column,
             y_column: request.chart.y_column,
         },
     };
 
-    let yaml_content =
-        serde_yml::to_string(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let yaml_content = serde_yml::to_string(&config)?;
 
-    fs::write(&dashboard_path, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::write(&dashboard_path, yaml_content)?;
 
     Ok(Json(config))
 }
@@ -150,12 +148,12 @@ async fn create_dashboard(
 async fn update_dashboard(
     Path(name): Path<String>,
     Json(request): Json<DashboardRequest>,
-) -> Result<Json<DashboardConfig>, StatusCode> {
+) -> Result<Json<DashboardConfig>, AppError> {
     let dashboards_dir = dashboards_dir()?;
     let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
     let config = DashboardConfig {
@@ -166,75 +164,63 @@ async fn update_dashboard(
             chart_type: match request.chart.chart_type.as_str() {
                 "line" => crate::config::dashboard::ChartType::Line,
                 "bar" => crate::config::dashboard::ChartType::Bar,
-                _ => return Err(StatusCode::BAD_REQUEST),
+                _ => return app_error(StatusCode::BAD_REQUEST),
             },
             x_column: request.chart.x_column,
             y_column: request.chart.y_column,
         },
     };
 
-    let yaml_content =
-        serde_yml::to_string(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let yaml_content = serde_yml::to_string(&config)?;
 
-    fs::write(&dashboard_path, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::write(&dashboard_path, yaml_content)?;
 
     Ok(Json(config))
 }
 
-async fn delete_dashboard(Path(name): Path<String>) -> Result<StatusCode, StatusCode> {
+async fn delete_dashboard(Path(name): Path<String>) -> Result<StatusCode, AppError> {
     let dashboards_dir = dashboards_dir()?;
     let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    fs::remove_file(&dashboard_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    fs::remove_file(&dashboard_path)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_dashboard_data(
     Path(name): Path<String>,
-) -> Result<Json<DashboardDataResponse>, StatusCode> {
-    let project_root = find_project_root().map_err(|err| {
-        error!(error = ?err, "Failed to find project root");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+) -> Result<Json<DashboardDataResponse>, AppError> {
+    let project_root = find_project_root()?;
     let dashboards_dir = project_root.join("dashboards");
     let dashboard_path = dashboards_dir.join(format!("{}.yml", name));
 
     if !dashboard_path.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let dashboard_config =
-        load_dashboard_config(&dashboard_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let dashboard_config = load_dashboard_config(&dashboard_path)?;
 
     let queries_dir = project_root.join("queries");
     let query_path = queries_dir.join(format!("{}.yml", dashboard_config.query));
 
     if !query_path.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
-    let query_content =
-        fs::read_to_string(&query_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let query_content = fs::read_to_string(&query_path)?;
 
-    let query_config: crate::config::QueryConfig =
-        serde_yml::from_str(&query_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let query_config: crate::config::QueryConfig = serde_yml::from_str(&query_content)?;
 
-    let config = Config::load_from_directory(&project_root)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let config = Config::load_from_directory(&project_root)?;
 
-    let ducklake = DuckLake::from_config(&config)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ducklake = DuckLake::from_config(&config).await?;
 
     let describe_sql = format!("DESCRIBE ({})", query_config.sql);
-    let describe_results = ducklake
-        .query(&describe_sql)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let describe_results = ducklake.query(&describe_sql)?;
 
     let mut x_column_index = None;
     let mut y_column_index = None;
@@ -252,15 +238,13 @@ async fn get_dashboard_data(
     }
 
     if x_column_index.is_none() || y_column_index.is_none() {
-        return Err(StatusCode::BAD_REQUEST);
+        return app_error(StatusCode::BAD_REQUEST);
     }
 
     let x_idx = x_column_index.unwrap();
     let y_idx = y_column_index.unwrap();
 
-    let query_results = ducklake
-        .query(&query_config.sql)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let query_results = ducklake.query(&query_config.sql)?;
 
     let mut labels = Vec::new();
     let mut values = Vec::new();

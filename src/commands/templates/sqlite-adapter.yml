@@ -1,6 +1,0 @@
-connection: <CONNECTION_NAME>
-description: 'Generated SQLite adapter for {name}'
-source:
-  type: database
-  table_name: <TABLE_NAME>
-columns: []

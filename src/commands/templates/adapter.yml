@@ -1,8 +1,0 @@
-connection: <CONNECTION_NAME>
-description: 'Generated adapter for {name}'
-file:
-  path: <PATH_TO_DATA_FILE>
-format:
-  type: csv
-  has_header: true
-columns: []

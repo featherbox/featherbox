@@ -1,11 +1,12 @@
 use crate::{
+    api::AppError,
     config::Config,
     dependency::Graph,
     pipeline::{build::Pipeline, ducklake::DuckLake},
     workspace::find_project_root,
 };
 use anyhow::Result;
-use axum::{Router, extract::Path as AxumPath, http::StatusCode, response::Json, routing::post};
+use axum::{Router, extract::Path as AxumPath, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -92,7 +93,7 @@ fn create_execution_subgraph(graph: &Graph, target_node: &str) -> Result<Graph> 
     })
 }
 
-async fn handle_run() -> Result<Json<RunResponse>, StatusCode> {
+async fn handle_run() -> Result<Json<RunResponse>, AppError> {
     match execute_run_internal(None).await {
         Ok(pipeline_id) => Ok(Json(RunResponse {
             success: true,
@@ -112,7 +113,7 @@ async fn handle_run() -> Result<Json<RunResponse>, StatusCode> {
 
 async fn handle_run_target(
     AxumPath(target_node): AxumPath<String>,
-) -> Result<Json<RunResponse>, StatusCode> {
+) -> Result<Json<RunResponse>, AppError> {
     match execute_run_internal(Some(target_node.clone())).await {
         Ok(pipeline_id) => Ok(Json(RunResponse {
             success: true,

@@ -1,3 +1,4 @@
+use crate::api::{AppError, app_error};
 use crate::config::{Config, QueryConfig};
 use crate::pipeline::ducklake::DuckLake;
 use crate::workspace::find_project_root;
@@ -46,25 +47,15 @@ pub struct SaveQueryResponse {
     pub message: String,
 }
 
-#[derive(Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-}
-
 pub async fn execute_query_handler(
     Json(payload): Json<QueryRequest>,
-) -> Result<Json<QueryResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<QueryResponse>, AppError> {
     match execute_query_internal(&payload.sql).await {
         Ok((results, column_count)) => Ok(Json(QueryResponse {
             results,
             column_count,
         })),
-        Err(e) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+        Err(_e) => app_error(StatusCode::BAD_REQUEST),
     }
 }
 
@@ -84,22 +75,16 @@ async fn execute_query_internal(sql: &str) -> Result<(Vec<Vec<String>>, usize)> 
     Ok((results, column_count))
 }
 
-pub async fn list_queries_handler()
--> Result<Json<QueryListResponse>, (StatusCode, Json<ErrorResponse>)> {
+pub async fn list_queries_handler() -> Result<Json<QueryListResponse>, AppError> {
     match list_queries_internal().await {
         Ok(queries) => Ok(Json(QueryListResponse { queries })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+        Err(_e) => app_error(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
 pub async fn save_query_handler(
     Json(payload): Json<SaveQueryRequest>,
-) -> Result<Json<SaveQueryResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<SaveQueryResponse>, AppError> {
     match save_query_internal(&payload.name, &payload.sql, payload.description).await {
         Ok(_) => Ok(Json(SaveQueryResponse {
             message: format!("Query '{}' saved successfully", payload.name),
@@ -110,66 +95,46 @@ pub async fn save_query_handler(
             } else {
                 StatusCode::BAD_REQUEST
             };
-            Err((
-                status,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            ))
+            app_error(status)
         }
     }
 }
 
 pub async fn get_query_handler(
     AxumPath(name): AxumPath<String>,
-) -> Result<Json<QueryConfig>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<QueryConfig>, AppError> {
     match get_query_internal(&name).await {
         Ok(query) => Ok(Json(query)),
-        Err(e) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+        Err(_e) => app_error(StatusCode::NOT_FOUND),
     }
 }
 
 pub async fn update_query_handler(
     AxumPath(name): AxumPath<String>,
     Json(payload): Json<UpdateQueryRequest>,
-) -> Result<Json<SaveQueryResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<SaveQueryResponse>, AppError> {
     match update_query_internal(&name, payload.sql, payload.description).await {
         Ok(_) => Ok(Json(SaveQueryResponse {
             message: format!("Query '{}' updated successfully", name),
         })),
-        Err(e) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+        Err(_e) => app_error(StatusCode::NOT_FOUND),
     }
 }
 
 pub async fn delete_query_handler(
     AxumPath(name): AxumPath<String>,
-) -> Result<Json<SaveQueryResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<SaveQueryResponse>, AppError> {
     match delete_query_internal(&name).await {
         Ok(_) => Ok(Json(SaveQueryResponse {
             message: format!("Query '{}' deleted successfully", name),
         })),
-        Err(e) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+        Err(_e) => app_error(StatusCode::NOT_FOUND),
     }
 }
 
 pub async fn run_query_handler(
     AxumPath(name): AxumPath<String>,
-) -> Result<Json<QueryResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<QueryResponse>, AppError> {
     match run_query_internal(&name).await {
         Ok((results, column_count)) => Ok(Json(QueryResponse {
             results,
@@ -181,12 +146,7 @@ pub async fn run_query_handler(
             } else {
                 StatusCode::BAD_REQUEST
             };
-            Err((
-                status,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            ))
+            app_error(status)
         }
     }
 }

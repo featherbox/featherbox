@@ -1,5 +1,6 @@
 use super::{migrate, run};
 use crate::{
+    api::{AppError, app_error},
     config::Config,
     dependency::Graph,
     metadata::Metadata,
@@ -41,9 +42,8 @@ pub fn routes() -> Router {
         .nest("/pipeline", run::routes())
 }
 
-async fn handle_get_latest_status() -> Result<Json<PipelineStatusResponse>, StatusCode> {
-    let project_root =
-        crate::workspace::find_project_root().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn handle_get_latest_status() -> Result<Json<PipelineStatusResponse>, AppError> {
+    let project_root = crate::workspace::find_project_root()?;
 
     match Status::get_latest(&project_root).await {
         Ok(Some((_, status))) => {
@@ -65,18 +65,16 @@ async fn handle_get_latest_status() -> Result<Json<PipelineStatusResponse>, Stat
         }
         Err(e) => {
             eprintln!("Failed to get pipeline status: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            app_error(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
-async fn handle_get_graph() -> Result<Json<GraphResponse>, StatusCode> {
-    let project_root =
-        crate::workspace::find_project_root().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let config = Config::load_from_directory(&project_root)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn handle_get_graph() -> Result<Json<GraphResponse>, AppError> {
+    let project_root = crate::workspace::find_project_root()?;
+    let config = Config::load_from_directory(&project_root)?;
 
-    let graph = Graph::from_config(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let graph = Graph::from_config(&config)?;
 
     let metadata = Metadata::load(&project_root).await.unwrap_or_default();
 

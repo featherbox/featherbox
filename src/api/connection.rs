@@ -1,3 +1,4 @@
+use crate::api::{AppError, app_error};
 use crate::config::ProjectConfig;
 use crate::config::project::ConnectionConfig;
 use crate::secret::SecretManager;
@@ -41,7 +42,7 @@ pub fn routes() -> Router {
         )
 }
 
-async fn list_connections() -> Result<Json<Vec<ConnectionSummary>>, StatusCode> {
+async fn list_connections() -> Result<Json<Vec<ConnectionSummary>>, AppError> {
     let config = project_config()?;
 
     let mut connections = Vec::new();
@@ -71,42 +72,42 @@ async fn list_connections() -> Result<Json<Vec<ConnectionSummary>>, StatusCode> 
     Ok(Json(connections))
 }
 
-async fn get_connection(Path(name): Path<String>) -> Result<Json<ConnectionConfig>, StatusCode> {
+async fn get_connection(Path(name): Path<String>) -> Result<Json<ConnectionConfig>, AppError> {
     let config = project_config()?;
 
     match config.connections.get(&name) {
         Some(conn_config) => Ok(Json(conn_config.clone())),
-        None => Err(StatusCode::NOT_FOUND),
+        None => app_error(StatusCode::NOT_FOUND),
     }
 }
 
-fn project_config() -> Result<ProjectConfig, StatusCode> {
+fn project_config() -> Result<ProjectConfig, AppError> {
     match ProjectConfig::from_project() {
         Ok(config) => Ok(config),
         Err(err) => {
             error!(error = %err, "Failed to load project configuration");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            app_error(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
-fn export_config(config: &ProjectConfig) -> Result<(), StatusCode> {
+fn export_config(config: &ProjectConfig) -> Result<(), AppError> {
     match config.export_project() {
         Ok(()) => Ok(()),
         Err(err) => {
             error!(error = %err, "Failed to export project configuration");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            app_error(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
 async fn create_connection(
     Json(req): Json<CreateConnectionRequest>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, AppError> {
     let mut config = project_config()?;
 
     if config.connections.contains_key(&req.name) {
-        return Err(StatusCode::CONFLICT);
+        return app_error(StatusCode::CONFLICT);
     }
 
     config.connections.insert(req.name, req.config);
@@ -118,11 +119,11 @@ async fn create_connection(
 async fn update_connection(
     Path(name): Path<String>,
     Json(req): Json<UpdateConnectionRequest>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, AppError> {
     let mut config = project_config()?;
 
     if !config.connections.contains_key(&name) {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
     config.connections.insert(name, req.config);
@@ -131,11 +132,11 @@ async fn update_connection(
     Ok(StatusCode::OK)
 }
 
-async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, StatusCode> {
+async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, AppError> {
     let mut config = project_config()?;
 
     if !config.connections.contains_key(&name) {
-        return Err(StatusCode::NOT_FOUND);
+        return app_error(StatusCode::NOT_FOUND);
     }
 
     let connection_config = config.connections.get(&name).unwrap();
@@ -145,19 +146,19 @@ async fn delete_connection(Path(name): Path<String>) -> Result<StatusCode, Statu
     export_config(&config)?;
 
     let manager = SecretManager::new().map_err(|err| {
-        error!(error = ?err, "Failed to initialize SecretManager");
-        StatusCode::INTERNAL_SERVER_ERROR
+        error!(error = %err, "Failed to create secret manager");
+        AppError::StatusCode(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
 
     for secret_key in &secret_keys {
         match manager.delete_secret(secret_key) {
             Ok(true) => {}
             Ok(false) => {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return app_error(StatusCode::INTERNAL_SERVER_ERROR);
             }
             Err(err) => {
                 error!(error = %err, secret_key = %secret_key, "Failed to delete secret");
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return app_error(StatusCode::INTERNAL_SERVER_ERROR);
             }
         }
     }

@@ -405,14 +405,14 @@ mod tests {
         let original_hook = panic::take_hook();
 
         Box::new(move |info| {
-            if let Ok(mut client_guard) = cleanup_client.lock() {
-                if let Some(client) = client_guard.take() {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    if let Err(e) = rt.block_on(cleanup_test_bucket(&client)) {
-                        eprintln!("Panic cleanup failed for bucket {bucket_name}: {e}");
-                    } else {
-                        eprintln!("Emergency cleanup completed for bucket: {bucket_name}");
-                    }
+            if let Ok(mut client_guard) = cleanup_client.lock()
+                && let Some(client) = client_guard.take()
+            {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                if let Err(e) = rt.block_on(cleanup_test_bucket(&client)) {
+                    eprintln!("Panic cleanup failed for bucket {bucket_name}: {e}");
+                } else {
+                    eprintln!("Emergency cleanup completed for bucket: {bucket_name}");
                 }
             }
             original_hook(info);

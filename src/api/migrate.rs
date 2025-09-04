@@ -1,4 +1,5 @@
 use crate::{
+    api::{AppError, app_error},
     config::Config,
     dependency::{Graph, detect_changes, save_graph_with_changes},
     workspace::find_project_root,
@@ -51,7 +52,7 @@ pub async fn validate_migration() -> anyhow::Result<()> {
 
     let current_graph = Graph::from_config(&config)?;
     detect_changes(&project_root, &current_graph, &config).await?;
-    
+
     Ok(())
 }
 
@@ -76,7 +77,7 @@ pub fn routes() -> Router {
     Router::new().route("/migrate", post(handle_migrate))
 }
 
-async fn handle_migrate() -> Result<Json<MigrateResponse>, StatusCode> {
+async fn handle_migrate() -> Result<Json<MigrateResponse>, AppError> {
     match task::spawn_blocking(execute).await {
         Ok(result) => match result {
             Ok(graph_id) => Ok(Json(MigrateResponse {
@@ -99,7 +100,7 @@ async fn handle_migrate() -> Result<Json<MigrateResponse>, StatusCode> {
         },
         Err(e) => {
             error!(error = %e, "Migration task failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            app_error(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

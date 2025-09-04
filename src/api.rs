@@ -1,5 +1,9 @@
 use anyhow::Result;
-use axum::Router;
+use axum::{
+    Router,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use tower_http::cors::{Any, CorsLayer};
 
 mod adapter;
@@ -11,6 +15,36 @@ mod pipeline;
 mod query;
 mod run;
 mod secret;
+
+pub enum AppError {
+    StatusCode(StatusCode),
+    Exception(anyhow::Error),
+}
+
+pub fn app_error<T>(status_code: StatusCode) -> Result<T, AppError> {
+    Err(AppError::StatusCode(status_code))
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        match self {
+            AppError::StatusCode(status_code) => status_code.into_response(),
+            AppError::Exception(error) => {
+                tracing::error!("{}", error);
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        }
+    }
+}
+
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self::Exception(err.into())
+    }
+}
 
 pub async fn main() -> Result<()> {
     let cors = CorsLayer::new()

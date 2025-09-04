@@ -1,3 +1,0 @@
-description: 'Generated model for {name}'
-sql: |
-  SELECT COUNT(*) FROM source_table
