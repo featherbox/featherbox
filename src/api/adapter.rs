@@ -1,3 +1,4 @@
+use crate::api::migrate;
 use crate::config::adapter::{AdapterConfig, parse_adapter_config};
 use crate::workspace::find_project_root;
 use anyhow::Result;
@@ -33,6 +34,7 @@ pub struct CreateAdapterRequest {
 pub struct UpdateAdapterRequest {
     pub config: AdapterConfig,
 }
+
 
 fn adapter_dir() -> Result<PathBuf, StatusCode> {
     let project_root = find_project_root().map_err(|err| {
@@ -126,8 +128,22 @@ async fn create_adapter(
 
     let yaml_content =
         serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    fs::write(&adapter_file, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let temp_file = adapters_dir.join(format!("{}.tmp", req.name));
+    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Err(e) = migrate::validate_migration().await {
+        let _ = fs::remove_file(&temp_file);
+        error!(error = %e, "Migration validation failed");
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    fs::rename(&temp_file, &adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    if let Err(e) = migrate::execute_async().await {
+        error!(error = %e, "Migration failed after adapter creation");
+    }
+    
     Ok(Json(AdapterDetails {
         name: req.name,
         config: req.config,
@@ -145,10 +161,28 @@ async fn update_adapter(
         return Err(StatusCode::NOT_FOUND);
     }
 
+    let original_content =
+        fs::read_to_string(&adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let yaml_content =
         serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    fs::write(&adapter_file, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let temp_file = adapters_dir.join(format!("{name}.tmp"));
+    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Err(e) = migrate::validate_migration().await {
+        let _ = fs::remove_file(&temp_file);
+        fs::write(&adapter_file, original_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        error!(error = %e, "Migration validation failed");
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    fs::rename(&temp_file, &adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    if let Err(e) = migrate::execute_async().await {
+        error!(error = %e, "Migration failed after adapter update");
+    }
+    
     Ok(Json(AdapterDetails {
         name,
         config: req.config,
@@ -163,7 +197,22 @@ async fn delete_adapter(Path(name): Path<String>) -> Result<StatusCode, StatusCo
         return Err(StatusCode::NOT_FOUND);
     }
 
+    let backup_file = adapters_dir.join(format!("{name}.bak"));
+    fs::copy(&adapter_file, &backup_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     fs::remove_file(&adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Err(e) = migrate::validate_migration().await {
+        fs::rename(&backup_file, &adapter_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        error!(error = %e, "Migration validation failed");
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    let _ = fs::remove_file(&backup_file);
+    
+    if let Err(e) = migrate::execute_async().await {
+        error!(error = %e, "Migration failed after adapter deletion");
+    }
+    
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -395,5 +444,96 @@ mod tests {
         let response = server.delete("/adapters/nonexistent").await;
 
         response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_create_adapter_with_auto_migration() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let new_adapter = json!({
+            "name": "auto_migration_test",
+            "config": {
+                "description": "Test adapter with auto migration",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "test_data.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        let response = server.post("/adapters").json(&new_adapter).await;
+
+        response.assert_status_ok();
+        let adapter: Value = response.json();
+        assert_eq!(adapter["name"], "auto_migration_test");
+    }
+
+    #[tokio::test]
+    async fn test_update_adapter_with_auto_migration() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let create_adapter = json!({
+            "name": "update_migration_test",
+            "config": {
+                "description": "Original for migration test",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "original.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        server.post("/adapters").json(&create_adapter).await;
+
+        let update_config = json!({
+            "config": {
+                "description": "Updated for migration test",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "updated.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        let response = server
+            .put("/adapters/update_migration_test")
+            .json(&update_config)
+            .await;
+
+        response.assert_status_ok();
+        let adapter: Value = response.json();
+        assert_eq!(
+            adapter["config"]["description"],
+            "Updated for migration test"
+        );
     }
 }

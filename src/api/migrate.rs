@@ -1,6 +1,7 @@
 use crate::{
     config::Config,
     dependency::{Graph, detect_changes, save_graph_with_changes},
+    workspace::find_project_root,
 };
 use anyhow::Result;
 use axum::{Router, http::StatusCode, response::Json, routing::post};
@@ -18,7 +19,7 @@ pub struct MigrateResponse {
 pub fn execute() -> Result<Option<i32>> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let project_root = crate::workspace::find_project_root()?;
+        let project_root = find_project_root()?;
         let config = Config::load_from_directory(&project_root)?;
 
         if config.adapters.is_empty() && config.models.is_empty() {
@@ -27,6 +28,31 @@ pub fn execute() -> Result<Option<i32>> {
 
         migrate_from_config(&config, &project_root).await
     })
+}
+
+pub async fn execute_async() -> Result<Option<i32>> {
+    let project_root = find_project_root()?;
+    let config = Config::load_from_directory(&project_root)?;
+
+    if config.adapters.is_empty() && config.models.is_empty() {
+        return Ok(None);
+    }
+
+    migrate_from_config(&config, &project_root).await
+}
+
+pub async fn validate_migration() -> anyhow::Result<()> {
+    let project_root = find_project_root()?;
+    let config = Config::load_from_directory(&project_root)?;
+
+    if config.adapters.is_empty() && config.models.is_empty() {
+        return Ok(());
+    }
+
+    let current_graph = Graph::from_config(&config)?;
+    detect_changes(&project_root, &current_graph, &config).await?;
+    
+    Ok(())
 }
 
 pub async fn migrate_from_config(

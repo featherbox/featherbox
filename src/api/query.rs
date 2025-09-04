@@ -319,10 +319,10 @@ mod tests {
         std::fs::create_dir_all(&project_path).unwrap();
         std::fs::create_dir_all(project_path.join("queries")).unwrap();
         std::fs::create_dir_all(project_path.join("storage")).unwrap();
-        
+
         let db_path = project_path.join("test.db");
         let storage_path = project_path.join("storage");
-        
+
         let project_config = ProjectConfig {
             storage: crate::config::project::StorageConfig::LocalFile {
                 path: storage_path.to_string_lossy().to_string(),
@@ -338,7 +338,7 @@ mod tests {
             },
             connections: std::collections::HashMap::new(),
         };
-        
+
         let yaml_content = serde_yml::to_string(&project_config).unwrap();
         std::fs::write(project_path.join("project.yml"), yaml_content).unwrap();
         crate::workspace::set_project_dir_override(project_path.clone());

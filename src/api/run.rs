@@ -21,7 +21,6 @@ pub struct RunResponse {
     pub pipeline_id: Option<i32>,
 }
 
-
 async fn execute_run_internal(target_node: Option<String>) -> Result<i32> {
     let project_root = find_project_root()?;
     let config = Config::load_from_directory(&project_root)?;

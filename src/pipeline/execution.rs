@@ -208,8 +208,8 @@ impl Pipeline {
             if row.len() >= 2 {
                 let _count: i32 = row[1].parse().unwrap_or(0);
                 match row[0].as_str() {
-                    "SUCCESS" => {},
-                    "FAILED" => {},
+                    "SUCCESS" => {}
+                    "FAILED" => {}
                     _ => {}
                 }
             }

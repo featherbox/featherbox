@@ -1,3 +1,4 @@
+use crate::api::migrate;
 use crate::config::model::{ModelConfig, parse_model_config};
 use crate::workspace::find_project_root;
 use anyhow::Result;
@@ -34,6 +35,7 @@ pub struct CreateModelRequest {
 pub struct UpdateModelRequest {
     pub config: ModelConfig,
 }
+
 
 fn models_dir() -> Result<PathBuf, StatusCode> {
     let project_root = find_project_root().map_err(|err| {
@@ -142,8 +144,25 @@ async fn create_model(
 
     let yaml_content =
         serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    fs::write(&model_file, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let temp_file = models_dir.join(format!("{}.tmp", req.path));
+    if let Some(parent) = temp_file.parent() {
+        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Err(e) = migrate::validate_migration().await {
+        let _ = fs::remove_file(&temp_file);
+        error!(error = %e, "Migration validation failed");
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    fs::rename(&temp_file, &model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    if let Err(e) = migrate::execute_async().await {
+        error!(error = %e, "Migration failed after model creation");
+    }
+    
     Ok(Json(ModelDetails {
         name: req.name,
         path: req.path,
@@ -162,9 +181,17 @@ async fn update_model(
         return Err(StatusCode::NOT_FOUND);
     }
 
+    let original_content =
+        fs::read_to_string(&model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let yaml_content =
         serde_yml::to_string(&req.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    fs::write(&model_file, yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let temp_file = models_dir.join(format!("{model_path}.tmp"));
+    if let Some(parent) = temp_file.parent() {
+        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    fs::write(&temp_file, &yaml_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let name = PathBuf::from(&model_path)
         .file_name()
@@ -172,6 +199,19 @@ async fn update_model(
         .unwrap_or(&model_path)
         .to_string();
 
+    if let Err(e) = migrate::validate_migration().await {
+        let _ = fs::remove_file(&temp_file);
+        fs::write(&model_file, original_content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        error!(error = %e, "Migration validation failed");
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    fs::rename(&temp_file, &model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    if let Err(e) = migrate::execute_async().await {
+        error!(error = %e, "Migration failed after model update");
+    }
+    
     Ok(Json(ModelDetails {
         name,
         path: model_path,
@@ -187,7 +227,25 @@ async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, Stat
         return Err(StatusCode::NOT_FOUND);
     }
 
+    let backup_file = models_dir.join(format!("{model_path}.bak"));
+    if let Some(parent) = backup_file.parent() {
+        fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    fs::copy(&model_file, &backup_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     fs::remove_file(&model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Err(e) = migrate::validate_migration().await {
+        fs::rename(&backup_file, &model_file).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        error!(error = %e, "Migration validation failed");
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    let _ = fs::remove_file(&backup_file);
+    
+    if let Err(e) = migrate::execute_async().await {
+        error!(error = %e, "Migration failed after model deletion");
+    }
+    
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -270,14 +328,40 @@ mod tests {
     #[tokio::test]
     async fn test_update_model_success() {
         setup_test_project();
-        let server = create_test_server(routes);
+        let server = create_test_server(|| {
+            Router::new()
+                .merge(routes())
+                .merge(crate::api::adapter::routes())
+        });
+
+        let create_adapter = json!({
+            "name": "test_source_adapter",
+            "config": {
+                "description": "Test adapter for model test",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "test_source.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        server.post("/adapters").json(&create_adapter).await;
 
         let create_model = json!({
             "name": "update_test_model",
             "path": "staging/update_test_model",
             "config": {
                 "description": "Original description",
-                "sql": "SELECT * FROM original_table"
+                "sql": "SELECT * FROM test_source_adapter"
             }
         });
 
@@ -286,7 +370,7 @@ mod tests {
         let update_config = json!({
             "config": {
                 "description": "Updated description",
-                "sql": "SELECT * FROM updated_table"
+                "sql": "SELECT * FROM test_source_adapter"
             }
         });
 
@@ -352,5 +436,86 @@ mod tests {
         let response = server.delete("/models/staging/nonexistent").await;
 
         response.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_create_model_with_auto_migration() {
+        setup_test_project();
+        let server = create_test_server(routes);
+
+        let new_model = json!({
+            "name": "auto_migration_test",
+            "path": "staging/auto_migration_test",
+            "config": {
+                "description": "Test model with auto migration",
+                "sql": "SELECT * FROM test_adapter"
+            }
+        });
+
+        let response = server.post("/models").json(&new_model).await;
+
+        response.assert_status_ok();
+        let model: Value = response.json();
+        assert_eq!(model["name"], "auto_migration_test");
+        assert_eq!(model["path"], "staging/auto_migration_test");
+    }
+
+    #[tokio::test]
+    async fn test_update_model_with_auto_migration() {
+        setup_test_project();
+        let server = create_test_server(|| {
+            Router::new()
+                .merge(routes())
+                .merge(crate::api::adapter::routes())
+        });
+
+        let create_adapter = json!({
+            "name": "migration_test_adapter",
+            "config": {
+                "description": "Test adapter for migration test",
+                "connection": "test_connection",
+                "source": {
+                    "type": "file",
+                    "file": {
+                        "path": "migration_test.csv"
+                    },
+                    "format": {
+                        "type": "csv",
+                        "has_header": true,
+                        "delimiter": ","
+                    }
+                },
+                "columns": []
+            }
+        });
+
+        server.post("/adapters").json(&create_adapter).await;
+
+        let create_model = json!({
+            "name": "update_migration_test",
+            "path": "staging/update_migration_test",
+            "config": {
+                "description": "Original for migration test",
+                "sql": "SELECT * FROM migration_test_adapter"
+            }
+        });
+
+        server.post("/models").json(&create_model).await;
+
+        let update_config = json!({
+            "config": {
+                "description": "Updated for migration test",
+                "sql": "SELECT * FROM migration_test_adapter"
+            }
+        });
+
+        let response = server
+            .put("/models/staging/update_migration_test")
+            .json(&update_config)
+            .await;
+
+        response.assert_status_ok();
+        let model: Value = response.json();
+        assert_eq!(model["config"]["description"], "Updated for migration test");
     }
 }
