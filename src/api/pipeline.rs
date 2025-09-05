@@ -1,31 +1,23 @@
+use std::collections::HashMap;
+
 use super::{migrate, run};
 use crate::{
-    api::{AppError, app_error},
-    config::Config,
-    dependency::Graph,
-    metadata::Metadata,
-    status::{PipelineStatusInfo, Status},
+    api::AppError,
+    metadata::{Metadata, Node},
+    status::{PipelineStatus, StatusManager},
 };
 use anyhow::Result;
-use axum::{Router, http::StatusCode, response::Json, routing::get};
+use axum::{Router, response::Json, routing::get};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct PipelineStatusResponse {
-    pub pipeline: PipelineStatusInfo,
+    pub pipeline: Option<PipelineStatus>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GraphResponse {
-    pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GraphNode {
-    pub name: String,
-    pub status: Option<String>,
-    pub last_updated_at: Option<String>,
+    pub nodes: HashMap<String, Node>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,82 +37,16 @@ pub fn routes() -> Router {
 async fn handle_get_latest_status() -> Result<Json<PipelineStatusResponse>, AppError> {
     let project_root = crate::workspace::find_project_root()?;
 
-    match Status::get_latest(&project_root).await {
-        Ok(Some((_, status))) => {
-            let pipeline_info = status.to_pipeline_info();
-            Ok(Json(PipelineStatusResponse {
-                pipeline: pipeline_info,
-            }))
-        }
-        Ok(None) => {
-            let empty_pipeline = PipelineStatusInfo {
-                status: "idle".to_string(),
-                started_at: None,
-                completed_at: None,
-                tasks: vec![],
-            };
-            Ok(Json(PipelineStatusResponse {
-                pipeline: empty_pipeline,
-            }))
-        }
-        Err(e) => {
-            eprintln!("Failed to get pipeline status: {}", e);
-            app_error(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    let status = StatusManager::find_latest_status(&project_root).await?;
+
+    Ok(Json(PipelineStatusResponse { pipeline: status }))
 }
 
 async fn handle_get_graph() -> Result<Json<GraphResponse>, AppError> {
     let project_root = crate::workspace::find_project_root()?;
-    let config = Config::load_from_directory(&project_root)?;
-
-    let graph = Graph::from_config(&config)?;
-
     let metadata = Metadata::load(&project_root).await.unwrap_or_default();
 
-    let status = Status::get_latest(&project_root)
-        .await
-        .unwrap_or(None)
-        .map(|(_, s)| s);
-
-    let nodes: Vec<GraphNode> = graph
-        .nodes
-        .iter()
-        .map(|node| {
-            let status_str = if let Some(ref status) = status {
-                status.states.get(&node.name).map(|s| {
-                    match s.phase {
-                        crate::status::Phase::Running => "running",
-                        crate::status::Phase::Completed => "completed",
-                        crate::status::Phase::Failed => "failed",
-                    }
-                    .to_string()
-                })
-            } else {
-                None
-            };
-
-            let last_updated = metadata
-                .get_node(&node.name)
-                .and_then(|n| n.last_updated_at)
-                .map(|dt| dt.to_rfc3339());
-
-            GraphNode {
-                name: node.name.clone(),
-                status: status_str,
-                last_updated_at: last_updated,
-            }
-        })
-        .collect();
-
-    let edges: Vec<GraphEdge> = graph
-        .edges
-        .iter()
-        .map(|edge| GraphEdge {
-            from: edge.from.clone(),
-            to: edge.to.clone(),
-        })
-        .collect();
-
-    Ok(Json(GraphResponse { nodes, edges }))
+    Ok(Json(GraphResponse {
+        nodes: metadata.nodes,
+    }))
 }

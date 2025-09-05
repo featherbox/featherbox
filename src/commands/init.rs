@@ -56,20 +56,15 @@ impl ProjectBuilder {
             )
         })?;
 
-        fs::create_dir_all(base_path.join("adapters"))
-            .context("Failed to create adapters directory")?;
-        fs::create_dir_all(base_path.join("models"))
-            .context("Failed to create models directory")?;
-        fs::create_dir_all(base_path.join("models/staging"))
-            .context("Failed to create models/staging directory")?;
-        fs::create_dir_all(base_path.join("models/marts"))
-            .context("Failed to create models/marts directory")?;
-        fs::create_dir_all(base_path.join("queries"))
-            .context("Failed to create queries directory")?;
-        fs::create_dir_all(base_path.join("dashboards"))
-            .context("Failed to create dashboards directory")?;
-        fs::create_dir_all(base_path.join("sample_data"))
-            .context("Failed to create sample_data directory")?;
+        fs::create_dir_all(base_path.join("adapters"))?;
+        fs::create_dir_all(base_path.join("models"))?;
+        fs::create_dir_all(base_path.join("models/staging"))?;
+        fs::create_dir_all(base_path.join("models/marts"))?;
+        fs::create_dir_all(base_path.join("queries"))?;
+        fs::create_dir_all(base_path.join("dashboards"))?;
+        fs::create_dir_all(base_path.join("sample_data"))?;
+        // metadata + status
+        fs::create_dir_all(base_path.join(".data").join("status"))?;
 
         Ok(())
     }
@@ -289,7 +284,7 @@ impl ProjectBuilder {
         // Staging: app_logs model
         let app_logs_config = ModelConfig {
             description: Some("Cleaned application logs".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     timestamp::TIMESTAMP as event_time,
     user_id,
     action,
@@ -307,7 +302,7 @@ WHERE duration > 0"
         // Marts: user_activity_summary model
         let user_activity_config = ModelConfig {
             description: Some("User activity summary".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     u.user_id,
     u.name,
     u.email,
@@ -330,7 +325,7 @@ GROUP BY u.user_id, u.name, u.email"
         // Marts: product_performance model
         let product_performance_config = ModelConfig {
             description: Some("Product performance metrics".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     p.product_id,
     p.name as product_name,
     p.category,
@@ -364,7 +359,7 @@ ORDER BY total_revenue DESC"
         let top_products_config = QueryConfig {
             name: "top_products".to_string(),
             description: Some("Top 5 products by revenue".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     product_name,
     category,
     total_revenue,
@@ -382,7 +377,7 @@ LIMIT 5"
         let active_users_config = QueryConfig {
             name: "active_users".to_string(),
             description: Some("Most active users by action count".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     name,
     email,
     total_actions,
@@ -410,7 +405,7 @@ LIMIT 10"
         let revenue_query = QueryConfig {
             name: "revenue_trend".to_string(),
             description: Some("Daily revenue trend query".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     DATE(order_date) as date,
     SUM(total_amount) as daily_revenue
 FROM orders
@@ -426,7 +421,7 @@ ORDER BY date"
         let category_query = QueryConfig {
             name: "category_distribution".to_string(),
             description: Some("Product sales by category query".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     category,
     SUM(total_quantity_sold) as units_sold
 FROM marts.product_performance
@@ -444,7 +439,7 @@ ORDER BY units_sold DESC"
         let device_query = QueryConfig {
             name: "device_distribution".to_string(),
             description: Some("User actions by device type query".to_string()),
-            sql: "SELECT 
+            sql: "SELECT
     device,
     COUNT(*) as action_count
 FROM staging_app_logs

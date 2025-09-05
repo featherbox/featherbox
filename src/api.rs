@@ -64,9 +64,7 @@ pub async fn main() -> Result<()> {
     let app = Router::new().nest("/api", api_routes).layer(cors);
 
     let port = 3015;
-    let listener = tokio::net::TcpListener::bind(format!("localhost:{}", port))
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to bind to port {}: {}", port, e))?;
+    let listener = tokio::net::TcpListener::bind(format!("localhost:{}", port)).await?;
 
     println!("API server listening on http://localhost:{}", port);
     axum::serve(listener, app).await?;

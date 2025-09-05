@@ -6,17 +6,33 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Status {
-    #[serde(flatten)]
-    pub states: HashMap<String, State>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct State {
+pub struct TaskStatus {
     pub phase: Phase,
-    pub started_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub error: Option<ErrorInfo>,
+}
+
+impl Default for TaskStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskStatus {
+    pub fn start(&mut self, started_at: DateTime<Utc>) {
+        self.phase = Phase::Running;
+        self.started_at = Some(started_at);
+    }
+
+    pub fn new() -> Self {
+        Self {
+            started_at: None,
+            phase: Phase::Waiting,
+            completed_at: None,
+            error: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -25,53 +41,68 @@ pub enum Phase {
     Running,
     Completed,
     Failed,
+    Waiting,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorInfo {
     pub message: String,
-    pub code: String,
     pub at: DateTime<Utc>,
 }
 
-impl Status {
-    pub fn new() -> Self {
-        Self {
-            states: HashMap::new(),
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineStatus {
+    pub phase: Phase,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub tasks: HashMap<String, TaskStatus>,
+}
 
-    pub async fn create_new(project_dir: &Path) -> Result<(PathBuf, Self)> {
+pub struct StatusManager {
+    pub path: PathBuf,
+}
+
+impl StatusManager {
+    pub fn new(project_dir: &Path) -> Self {
         let status_dir = Self::get_status_dir(project_dir);
-        fs::create_dir_all(&status_dir).await?;
-
         let now = Utc::now();
         let filename = now.format("%Y-%m-%d-%H-%M-%S.json").to_string();
         let path = status_dir.join(filename);
 
-        let status = Self::new();
-        status.save(&path).await?;
-
-        Ok((path, status))
+        Self { path }
     }
 
-    pub async fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
+    pub async fn start(
+        &self,
+        started_at: DateTime<Utc>,
+        table_list: &[String],
+    ) -> Result<PipelineStatus> {
+        let status = PipelineStatus {
+            phase: Phase::Running,
+            started_at: Some(started_at),
+            completed_at: None,
+            tasks: HashMap::from_iter(
+                table_list
+                    .to_owned()
+                    .into_iter()
+                    .map(|table| (table, TaskStatus::new())),
+            ),
+        };
 
-        let content = fs::read_to_string(path).await?;
-        let status: Self = serde_json::from_str(&content)?;
+        self.save(&status).await?;
+
         Ok(status)
     }
 
-    pub async fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
+    async fn load(&self) -> Result<PipelineStatus> {
+        let content = fs::read_to_string(&self.path).await?;
+        let status: PipelineStatus = serde_json::from_str(&content)?;
+        Ok(status)
+    }
 
-        let content = serde_json::to_string_pretty(self)?;
-        fs::write(path, content).await?;
+    async fn save(&self, pipeline_status: &PipelineStatus) -> Result<()> {
+        let content = serde_json::to_string_pretty(pipeline_status)?;
+        fs::write(&self.path, content).await?;
         Ok(())
     }
 
@@ -79,7 +110,7 @@ impl Status {
         project_dir.join(".data").join("status")
     }
 
-    pub async fn get_latest(project_dir: &Path) -> Result<Option<(PathBuf, Self)>> {
+    pub async fn find_latest_status(project_dir: &Path) -> Result<Option<PipelineStatus>> {
         let status_dir = Self::get_status_dir(project_dir);
 
         if !status_dir.exists() {
@@ -104,146 +135,69 @@ impl Status {
         }
 
         if let Some(path) = latest_file {
-            let status = Self::load(&path).await?;
-            Ok(Some((path, status)))
+            let content = fs::read_to_string(&path).await?;
+            let status: PipelineStatus = serde_json::from_str(&content)?;
+
+            Ok(Some(status))
         } else {
             Ok(None)
         }
     }
 
-    pub fn start_task(&mut self, table_name: String) {
-        self.states.insert(
-            table_name,
-            State {
-                phase: Phase::Running,
-                started_at: Utc::now(),
-                completed_at: None,
-                error: None,
-            },
-        );
-    }
+    pub async fn start_tasks(&mut self, tables: &[String]) -> Result<()> {
+        let mut status = self.load().await?;
 
-    pub fn complete_task(&mut self, table_name: &str) {
-        if let Some(state) = self.states.get_mut(table_name) {
-            state.phase = Phase::Completed;
-            state.completed_at = Some(Utc::now());
-            state.error = None;
+        for table in tables {
+            status.tasks.get_mut(table).unwrap().start(Utc::now());
         }
+
+        self.save(&status).await?;
+
+        Ok(())
     }
 
-    pub fn fail_task(&mut self, table_name: &str, error_message: String, error_code: String) {
-        if let Some(state) = self.states.get_mut(table_name) {
-            state.phase = Phase::Failed;
-            state.error = Some(ErrorInfo {
+    pub async fn is_waiting(&self, table_name: &str) -> Result<bool> {
+        let status = self.load().await?;
+
+        Ok(status.tasks.get(table_name).unwrap().phase == Phase::Waiting)
+    }
+
+    pub async fn complete_task(&mut self, table_name: &str) -> Result<()> {
+        let mut status = self.load().await?;
+
+        if let Some(task) = status.tasks.get_mut(table_name) {
+            task.phase = Phase::Completed;
+            task.completed_at = Some(Utc::now());
+            task.error = None;
+        }
+
+        self.save(&status).await?;
+
+        Ok(())
+    }
+
+    pub async fn completed_tasks(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
+        let status = self.load().await?;
+
+        Ok(status
+            .tasks
+            .clone()
+            .into_iter()
+            .filter(|(_, task)| task.phase == Phase::Completed)
+            .map(|(table, task)| (table, task.completed_at.unwrap()))
+            .collect())
+    }
+
+    pub async fn fail_task(&mut self, table_name: &str, error_message: String) -> Result<()> {
+        let mut status = self.load().await?;
+        if let Some(task) = status.tasks.get_mut(table_name) {
+            task.phase = Phase::Failed;
+            task.error = Some(ErrorInfo {
                 message: error_message,
-                code: error_code,
                 at: Utc::now(),
             });
         }
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.states
-            .values()
-            .any(|state| state.phase == Phase::Running)
-    }
-
-    pub fn all_completed(&self) -> bool {
-        !self.states.is_empty()
-            && self
-                .states
-                .values()
-                .all(|state| state.phase == Phase::Completed)
-    }
-
-    pub fn has_failures(&self) -> bool {
-        self.states
-            .values()
-            .any(|state| state.phase == Phase::Failed)
-    }
-
-    pub fn get_failed_tables(&self) -> Vec<String> {
-        self.states
-            .iter()
-            .filter(|(_, state)| state.phase == Phase::Failed)
-            .map(|(name, _)| name.clone())
-            .collect()
-    }
-
-    pub fn get_completed_tables(&self) -> HashMap<String, DateTime<Utc>> {
-        self.states
-            .iter()
-            .filter(|(_, state)| state.phase == Phase::Completed)
-            .filter_map(|(name, state)| state.completed_at.map(|ts| (name.clone(), ts)))
-            .collect()
-    }
-}
-
-impl Default for Status {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineStatusInfo {
-    pub status: String,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub tasks: Vec<TaskStatusInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskStatusInfo {
-    pub table_name: String,
-    pub status: String,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub error_message: Option<String>,
-}
-
-impl Status {
-    pub fn to_pipeline_info(&self) -> PipelineStatusInfo {
-        let overall_status = if self.is_running() {
-            "running"
-        } else if self.has_failures() {
-            "failed"
-        } else if self.all_completed() {
-            "completed"
-        } else {
-            "pending"
-        };
-
-        let started_at = self.states.values().map(|s| s.started_at).min();
-
-        let completed_at = if !self.is_running() {
-            self.states.values().filter_map(|s| s.completed_at).max()
-        } else {
-            None
-        };
-
-        let tasks = self
-            .states
-            .iter()
-            .map(|(name, state)| TaskStatusInfo {
-                table_name: name.clone(),
-                status: match state.phase {
-                    Phase::Running => "running",
-                    Phase::Completed => "completed",
-                    Phase::Failed => "failed",
-                }
-                .to_string(),
-                started_at: Some(state.started_at),
-                completed_at: state.completed_at,
-                error_message: state.error.as_ref().map(|e| e.message.clone()),
-            })
-            .collect();
-
-        PipelineStatusInfo {
-            status: overall_status.to_string(),
-            started_at,
-            completed_at,
-            tasks,
-        }
+        self.save(&status).await?;
+        Ok(())
     }
 }

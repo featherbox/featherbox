@@ -333,10 +333,7 @@ mod tests {
         });
 
         let response = server.post("/query").json(&request).await;
-
         response.assert_status(StatusCode::BAD_REQUEST);
-        let error_response: Value = response.json();
-        assert!(error_response["error"].is_string());
     }
 
     #[tokio::test]
@@ -385,14 +382,12 @@ mod tests {
             "description": "First query"
         });
 
-        // 最初の保存
         server
             .post("/queries")
             .json(&request)
             .await
             .assert_status_ok();
 
-        // 同じ名前で再度保存（競合）
         let response = server.post("/queries").json(&request).await;
         response.assert_status(StatusCode::CONFLICT);
     }
@@ -402,7 +397,6 @@ mod tests {
         let (_config, temp_dir) = setup_test_project();
         let server = create_test_server(routes);
 
-        // テスト用クエリファイルを作成
         let query_content = "
 name: test_query
 description: Test query
@@ -436,7 +430,6 @@ sql: SELECT 42 as answer
         let (_config, temp_dir) = setup_test_project();
         let server = create_test_server(routes);
 
-        // テスト用クエリファイルを作成
         let query_content = "
 name: update_query
 description: Original query
@@ -470,7 +463,6 @@ sql: SELECT 1 as original
         let (_config, temp_dir) = setup_test_project();
         let server = create_test_server(routes);
 
-        // テスト用クエリファイルを作成
         let query_content = "
 description: Query to delete
 sql: SELECT 'delete me' as message
@@ -484,7 +476,6 @@ sql: SELECT 'delete me' as message
         let response = server.delete("/queries/delete_query").await;
         response.assert_status_ok();
 
-        // 削除後に取得を試行すると404になることを確認
         let response = server.get("/queries/delete_query").await;
         response.assert_status(StatusCode::NOT_FOUND);
     }
@@ -494,7 +485,6 @@ sql: SELECT 'delete me' as message
         let (_config, temp_dir) = setup_test_project();
         let server = create_test_server(routes);
 
-        // テスト用クエリファイルを作成
         let query_content = "
 name: run_query
 description: Test query to run

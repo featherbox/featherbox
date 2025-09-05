@@ -6,12 +6,12 @@ use crate::{
         adapter::Adapter,
         build::{Action, Pipeline},
         ducklake::DuckLake,
-        logger::Logger,
         model::Model,
     },
-    status::Status,
+    status::StatusManager,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
+use chrono::Utc;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -23,7 +23,6 @@ struct ExecutionContext {
     project_dir: PathBuf,
     graph: Arc<Graph>,
     config: Arc<Config>,
-    logger: Arc<Logger>,
     adapters: Arc<HashMap<String, Adapter>>,
     models: Arc<HashMap<String, Model>>,
 }
@@ -31,7 +30,6 @@ struct ExecutionContext {
 enum TaskResult {
     Success {
         table_name: String,
-        execution_time_ms: u64,
         execution_start_time: chrono::DateTime<chrono::Utc>,
     },
     Failed {
@@ -50,7 +48,6 @@ impl Pipeline {
         project_dir: &Path,
     ) -> Result<()> {
         let shared_ducklake = Arc::new(ducklake.clone());
-        let shared_logger = Arc::new(Logger::new(Arc::clone(&shared_ducklake)).await?);
 
         let mut adapters = HashMap::new();
         for (table_name, adapter_config) in &config.adapters {
@@ -66,52 +63,58 @@ impl Pipeline {
         }
         let shared_models = Arc::new(models);
 
-        let (status_path, status) = Status::create_new(project_dir).await?;
+        let mut status_manager = StatusManager::new(project_dir);
+        status_manager
+            .start(
+                Utc::now(),
+                &self
+                    .levels
+                    .iter()
+                    .flatten()
+                    .map(|action| action.table_name.clone())
+                    .collect::<Vec<String>>(),
+            )
+            .await?;
 
         let context = ExecutionContext {
             project_dir: project_dir.to_path_buf(),
             graph: Arc::new(graph.clone()),
             config: Arc::new(config.clone()),
-            logger: shared_logger.clone(),
             adapters: shared_adapters,
             models: shared_models,
         };
 
-        context
-            .logger
-            .log_pipeline_event(
-                0,
-                "PIPELINE_START",
-                &format!(
-                    "Pipeline execution started with {} levels",
-                    self.levels.len()
-                ),
-                None,
-            )
-            .context("Failed to log pipeline start")?;
-
         let mut failed_tasks = HashSet::new();
 
         for level in &self.levels {
+            let mut filtered_level = Vec::new();
+            for action in level.clone().into_iter() {
+                if status_manager.is_waiting(&action.table_name).await? {
+                    filtered_level.push(action);
+                }
+            }
+            let level = filtered_level;
+
+            status_manager
+                .start_tasks(
+                    &level
+                        .iter()
+                        .map(|action| action.table_name.clone())
+                        .collect::<Vec<String>>(),
+                )
+                .await?;
+
             let results = self
-                .execute_level(level, &context, &mut failed_tasks, &status_path)
+                .execute_level(&level, &context, &mut failed_tasks)
                 .await?;
 
             for result in results {
                 match result {
                     TaskResult::Success {
                         table_name,
-                        execution_time_ms,
                         execution_start_time,
                     } => {
-                        let mut status = Status::load(&status_path).await?;
-                        status.complete_task(&table_name);
-                        status.save(&status_path).await?;
-
-                        context
-                            .logger
-                            .log_task_execution(0, &table_name, "SUCCESS", None, execution_time_ms)
-                            .context("Failed to log successful task execution")?;
+                        status_manager.complete_task(&table_name).await?;
 
                         if let Err(e) = crate::dependency::update_node_timestamp(
                             &context.project_dir,
@@ -132,20 +135,9 @@ impl Pipeline {
                             "Task failed for table '{table_name}': {error} ({execution_time_ms}ms)"
                         );
 
-                        let mut status = Status::load(&status_path).await?;
-                        status.fail_task(&table_name, error.to_string(), "ERR_EXEC".to_string());
-                        status.save(&status_path).await?;
-
-                        context
-                            .logger
-                            .log_task_execution(
-                                0,
-                                &table_name,
-                                "FAILED",
-                                Some(&error.to_string()),
-                                execution_time_ms,
-                            )
-                            .context("Failed to log failed task execution")?;
+                        status_manager
+                            .fail_task(&table_name, error.to_string())
+                            .await?;
 
                         failed_tasks.insert(table_name.clone());
                         self.mark_downstream_as_failed(
@@ -161,63 +153,16 @@ impl Pipeline {
         if !failed_tasks.is_empty() {
             let error_message =
                 format!("Pipeline execution had {} failed tasks", failed_tasks.len());
-            context
-                .logger
-                .log_pipeline_event(
-                    0,
-                    "PIPELINE_FAILED",
-                    &error_message,
-                    Some(&format!("Failed tasks: {failed_tasks:?}")),
-                )
-                .context("Failed to log pipeline failure")?;
-
-            self.print_pipeline_summary(&context.logger)?;
 
             return Err(anyhow::anyhow!(error_message));
         }
 
-        let completed_tables = status.get_completed_tables();
+        let completed_tables = status_manager.completed_tasks().await?;
         let mut metadata = Metadata::load(project_dir).await?;
         for (table_name, completed_at) in completed_tables {
             metadata.update_node_timestamp(&table_name, completed_at);
         }
         metadata.save(project_dir).await?;
-
-        context
-            .logger
-            .log_pipeline_event(
-                0,
-                "PIPELINE_SUCCESS",
-                "Pipeline execution completed successfully",
-                None,
-            )
-            .context("Failed to log pipeline success")?;
-
-        self.print_pipeline_summary(&context.logger)?;
-
-        Ok(())
-    }
-
-    pub fn print_pipeline_summary(&self, logger: &Logger) -> Result<()> {
-        let task_summary_query =
-            "SELECT status, COUNT(*) as count FROM db.__featherbox_task_logs GROUP BY status";
-
-        let task_results = logger.query_logs(task_summary_query)?;
-
-        for row in &task_results {
-            if row.len() >= 2 {
-                let _count: i32 = row[1].parse().unwrap_or(0);
-                match row[0].as_str() {
-                    "SUCCESS" => {}
-                    "FAILED" => {}
-                    _ => {}
-                }
-            }
-        }
-
-        let failed_tasks_query = "SELECT table_name, error_message FROM db.__featherbox_task_logs WHERE status = 'FAILED'";
-
-        let _failed_tasks = logger.query_logs(failed_tasks_query)?;
 
         Ok(())
     }
@@ -227,7 +172,6 @@ impl Pipeline {
         actions: &[Action],
         context: &ExecutionContext,
         failed_tasks: &mut HashSet<String>,
-        status_path: &Path,
     ) -> Result<Vec<TaskResult>> {
         let mut task_handles = Vec::new();
 
@@ -236,24 +180,12 @@ impl Pipeline {
                 continue;
             }
 
-            let should_skip =
-                self.should_skip_task(&action.table_name, &context.graph, failed_tasks);
-            if should_skip {
+            let dependency_failed =
+                self.dependency_failed(&action.table_name, &context.graph, failed_tasks);
+            if dependency_failed {
                 failed_tasks.insert(action.table_name.clone());
-
-                let mut status = Status::load(status_path).await?;
-                status.fail_task(
-                    &action.table_name,
-                    "Skipped due to upstream failure".to_string(),
-                    "ERR_SKIP".to_string(),
-                );
-                status.save(status_path).await?;
                 continue;
             }
-
-            let mut status = Status::load(status_path).await?;
-            status.start_task(action.table_name.clone());
-            status.save(status_path).await?;
 
             let handle = self.spawn_task(action, context)?;
             task_handles.push(handle);
@@ -266,15 +198,6 @@ impl Pipeline {
                 Err(join_error) => {
                     let error_message = format!("Task join error: {join_error}");
                     eprintln!("{error_message}");
-                    context
-                        .logger
-                        .log_pipeline_event(
-                            0,
-                            "TASK_JOIN_ERROR",
-                            &error_message,
-                            Some(&join_error.to_string()),
-                        )
-                        .ok();
                 }
             }
         }
@@ -282,7 +205,7 @@ impl Pipeline {
         Ok(results)
     }
 
-    fn should_skip_task(
+    fn dependency_failed(
         &self,
         table_name: &str,
         graph: &Graph,
@@ -315,7 +238,6 @@ impl Pipeline {
                 {
                     Ok(_) => TaskResult::Success {
                         table_name,
-                        execution_time_ms: start_time.elapsed().as_millis() as u64,
                         execution_start_time,
                     },
                     Err(error) => TaskResult::Failed {
@@ -343,7 +265,6 @@ impl Pipeline {
                 match model.execute_transform(&table_name).await {
                     Ok(_) => TaskResult::Success {
                         table_name,
-                        execution_time_ms: start_time.elapsed().as_millis() as u64,
                         execution_start_time: dependency_timestamp.unwrap_or(chrono::Utc::now()),
                     },
                     Err(error) => TaskResult::Failed {
@@ -527,12 +448,12 @@ mod tests {
 
         let pipeline = Pipeline { levels: vec![] };
 
-        assert!(!pipeline.should_skip_task("A", &graph, &failed_tasks));
-        assert!(pipeline.should_skip_task("B", &graph, &failed_tasks));
-        assert!(!pipeline.should_skip_task("C", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("A", &graph, &failed_tasks));
+        assert!(pipeline.dependency_failed("B", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("C", &graph, &failed_tasks));
 
         failed_tasks.insert("B".to_string());
-        assert!(pipeline.should_skip_task("C", &graph, &failed_tasks));
+        assert!(pipeline.dependency_failed("C", &graph, &failed_tasks));
 
         Ok(())
     }
@@ -678,20 +599,20 @@ mod tests {
         let mut failed_tasks = HashSet::new();
         let pipeline = Pipeline { levels: vec![] };
 
-        assert!(!pipeline.should_skip_task("A", &graph, &failed_tasks));
-        assert!(!pipeline.should_skip_task("B", &graph, &failed_tasks));
-        assert!(!pipeline.should_skip_task("C", &graph, &failed_tasks));
-        assert!(!pipeline.should_skip_task("D", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("A", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("B", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("C", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("D", &graph, &failed_tasks));
 
         failed_tasks.insert("A".to_string());
-        assert!(pipeline.should_skip_task("C", &graph, &failed_tasks));
-        assert!(!pipeline.should_skip_task("D", &graph, &failed_tasks));
+        assert!(pipeline.dependency_failed("C", &graph, &failed_tasks));
+        assert!(!pipeline.dependency_failed("D", &graph, &failed_tasks));
 
         failed_tasks.insert("B".to_string());
-        assert!(pipeline.should_skip_task("C", &graph, &failed_tasks));
+        assert!(pipeline.dependency_failed("C", &graph, &failed_tasks));
 
         failed_tasks.remove("A");
-        assert!(pipeline.should_skip_task("C", &graph, &failed_tasks));
+        assert!(pipeline.dependency_failed("C", &graph, &failed_tasks));
 
         Ok(())
     }

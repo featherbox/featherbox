@@ -3,6 +3,4 @@ pub mod build;
 pub mod ducklake;
 pub mod execution;
 pub mod file_processor;
-pub mod logger;
 pub mod model;
-pub mod status;
