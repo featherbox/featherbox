@@ -3,11 +3,12 @@ use crate::{
     config::Config,
     dependency::Graph,
     pipeline::{build::Pipeline, ducklake::DuckLake},
-    workspace::find_project_root,
 };
 use anyhow::Result;
-use axum::{Router, extract::Path as AxumPath, response::Json, routing::post};
+use axum::{Extension, Router, extract::Path as AxumPath, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::error;
 
 #[derive(Serialize, Deserialize)]
@@ -22,16 +23,13 @@ pub struct RunResponse {
     pub pipeline_id: Option<i32>,
 }
 
-async fn execute_run_internal(target_node: Option<String>) -> Result<i32> {
-    let project_root = find_project_root()?;
-    let config = Config::load()?;
-
+async fn execute_run_internal(config: &Config, target_node: Option<String>) -> Result<i32> {
     if config.adapters.is_empty() && config.models.is_empty() {
         return Err(anyhow::anyhow!("No adapters or models found"));
     }
 
-    let current_graph = Graph::from_config(&config)?;
-    let ducklake = DuckLake::from_config(&config).await?;
+    let current_graph = Graph::from_config(config)?;
+    let ducklake = DuckLake::from_config(config).await?;
 
     let pipeline = if let Some(target) = target_node {
         let execution_graph = create_execution_subgraph(&current_graph, &target)?;
@@ -40,10 +38,10 @@ async fn execute_run_internal(target_node: Option<String>) -> Result<i32> {
         Pipeline::from_graph(&current_graph)
     };
 
-    crate::dependency::save_graph(&project_root, &current_graph).await?;
+    crate::dependency::save_graph(&config.project_dir, &current_graph).await?;
 
     pipeline
-        .execute(&current_graph, &config, &ducklake, &project_root)
+        .execute(&current_graph, config, &ducklake, &config.project_dir)
         .await?;
 
     Ok(1)
@@ -93,8 +91,11 @@ fn create_execution_subgraph(graph: &Graph, target_node: &str) -> Result<Graph> 
     })
 }
 
-async fn handle_run() -> Result<Json<RunResponse>, AppError> {
-    match execute_run_internal(None).await {
+async fn handle_run(
+    Extension(config): Extension<Arc<Mutex<Config>>>,
+) -> Result<Json<RunResponse>, AppError> {
+    let config = config.lock().await;
+    match execute_run_internal(&config, None).await {
         Ok(pipeline_id) => Ok(Json(RunResponse {
             success: true,
             message: "Pipeline execution completed successfully".to_string(),
@@ -112,9 +113,11 @@ async fn handle_run() -> Result<Json<RunResponse>, AppError> {
 }
 
 async fn handle_run_target(
+    Extension(config): Extension<Arc<Mutex<Config>>>,
     AxumPath(target_node): AxumPath<String>,
 ) -> Result<Json<RunResponse>, AppError> {
-    match execute_run_internal(Some(target_node.clone())).await {
+    let config = config.lock().await;
+    match execute_run_internal(&config, Some(target_node.clone())).await {
         Ok(pipeline_id) => Ok(Json(RunResponse {
             success: true,
             message: format!(

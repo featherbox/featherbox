@@ -1,170 +1,74 @@
 use crate::{
-    config::{
-        Config,
-        adapter::AdapterConfig,
-        model::ModelConfig,
-        project::{ConnectionConfig, DatabaseConfig, DatabaseType, ProjectConfig, StorageConfig},
-        query::QueryConfig,
-    },
+    config::{Config, project::ProjectConfig},
     dependency::graph::{Edge, Graph, Node},
 };
 use anyhow::Result;
-
-#[cfg(test)]
-use crate::workspace::set_project_dir_override;
-
-#[cfg(test)]
-use axum::Router;
-
-#[cfg(test)]
+use axum::{Extension, Router};
 use axum_test::TestServer;
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{fs, path::Path, sync::Arc};
 use tempfile::TempDir;
+use tokio::sync::Mutex;
 
-pub fn setup_test_project() -> Result<TempDir> {
-    let temp_dir = tempfile::tempdir()?;
-    let project_path = temp_dir.path();
-
-    fs::create_dir_all(project_path.join("adapters"))?;
-    fs::create_dir_all(project_path.join("models"))?;
-    fs::write(project_path.join("project.yml"), "test")?;
-
-    Ok(temp_dir)
+pub struct TestManager {
+    temp_dir: TempDir,
+    config: Arc<Mutex<Config>>,
 }
 
-pub fn create_project_structure(project_path: &Path) -> Result<()> {
-    fs::create_dir_all(project_path.join("adapters"))?;
-    fs::create_dir_all(project_path.join("models").join("staging"))?;
-    fs::create_dir_all(project_path.join("models").join("marts"))?;
-    Ok(())
-}
+impl TestManager {
+    pub fn new() -> Self {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir.path().to_path_buf();
+        let mut config = Config::new(project_dir.clone());
+        config
+            .add_project_setting(&ProjectConfig::default())
+            .unwrap()
+            .save()
+            .unwrap();
 
-pub fn create_default_project_config() -> ProjectConfig {
-    ProjectConfig {
-        storage: StorageConfig::LocalFile {
-            path: "/tmp/foo/storage".to_string(),
-        },
-        database: DatabaseConfig {
-            ty: DatabaseType::Sqlite,
-            path: Some("test.db".to_string()),
-            host: None,
-            port: None,
-            database: None,
-            password: None,
-            username: None,
-        },
-        connections: HashMap::new(),
+        Self {
+            temp_dir,
+            config: Arc::new(Mutex::new(config)),
+        }
+    }
+
+    pub fn directory(&self) -> &Path {
+        self.temp_dir.path()
+    }
+
+    pub async fn config(&self) -> tokio::sync::MutexGuard<'_, Config> {
+        self.config.lock().await
+    }
+
+    pub fn setup_project<F>(&self, routes: F) -> TestServer
+    where
+        F: FnOnce() -> Router,
+    {
+        let app = routes().layer(Extension(self.config.clone()));
+
+        TestServer::new(app).unwrap()
+    }
+
+    pub fn create_server<F>(&self, routes: F) -> TestServer
+    where
+        F: FnOnce() -> Router,
+    {
+        let app = routes();
+        TestServer::new(app).expect("Failed to create test server")
     }
 }
 
-pub fn create_project_config_with_connections(
-    connections: HashMap<String, ConnectionConfig>,
-) -> ProjectConfig {
-    ProjectConfig {
-        storage: StorageConfig::LocalFile {
-            path: "/tmp/foo/storage".to_string(),
-        },
-        database: DatabaseConfig {
-            ty: DatabaseType::Sqlite,
-            path: Some("test.db".to_string()),
-            host: None,
-            port: None,
-            database: None,
-            password: None,
-            username: None,
-        },
-        connections,
+impl Default for TestManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-#[cfg(test)]
-pub fn create_test_project() -> Result<ProjectConfig> {
-    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-    let project_path = temp_dir.path().to_path_buf();
-    set_project_dir_override(project_path.clone());
-
-    let config = ProjectConfig {
-        storage: StorageConfig::LocalFile {
-            path: project_path.join("storage").to_string_lossy().to_string(),
-        },
-        database: DatabaseConfig {
-            ty: DatabaseType::Sqlite,
-            path: Some(project_path.join("app.db").to_string_lossy().to_string()),
-            host: None,
-            port: None,
-            database: None,
-            username: None,
-            password: None,
-        },
-        connections: HashMap::new(),
-    };
-
-    config.create_project()?;
-    std::mem::forget(temp_dir);
-
-    Ok(config)
-}
-
-#[cfg(test)]
 pub fn create_test_server<F>(routes: F) -> TestServer
 where
     F: FnOnce() -> Router,
 {
     let app = routes();
     TestServer::new(app).expect("Failed to create test server")
-}
-
-pub fn setup_test_db(temp_dir: &TempDir) -> Result<String> {
-    let project_path = temp_dir.path();
-    let db_path = project_path.join("test.db");
-
-    create_project_structure(project_path)?;
-
-    fs::write(project_path.join("project.yml"), "test")?;
-
-    Ok(db_path.to_string_lossy().to_string())
-}
-
-pub fn create_test_adapter_yaml(name: &str, table_name: &str) -> String {
-    format!(
-        r#"name: {name}
-type: csv
-path: data/{name}.csv
-destination:
-  schema: staging
-  table: {table_name}
-"#
-    )
-}
-
-pub fn create_test_model_yaml(name: &str, sql: &str) -> String {
-    format!(
-        r#"name: {name}
-sql: {sql}
-"#
-    )
-}
-
-pub fn write_test_adapter(project_path: &Path, name: &str, content: &str) -> Result<()> {
-    let adapter_path = project_path.join("adapters").join(format!("{name}.yml"));
-    fs::write(adapter_path, content)?;
-    Ok(())
-}
-
-pub fn write_test_model(
-    project_path: &Path,
-    subdir: &str,
-    name: &str,
-    content: &str,
-) -> Result<()> {
-    let model_path = project_path
-        .join("models")
-        .join(subdir)
-        .join(format!("{name}.yml"));
-    fs::write(model_path, content)?;
-    Ok(())
 }
 
 pub struct TestGraphBuilder {
@@ -203,59 +107,6 @@ impl TestGraphBuilder {
         Graph {
             nodes: self.nodes,
             edges: self.edges,
-        }
-    }
-}
-
-pub struct TestProjectConfigBuilder {
-    storage: StorageConfig,
-    database: DatabaseConfig,
-    connections: HashMap<String, ConnectionConfig>,
-}
-
-impl Default for TestProjectConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TestProjectConfigBuilder {
-    pub fn new() -> Self {
-        Self {
-            storage: StorageConfig::LocalFile {
-                path: "/tmp/test_storage".to_string(),
-            },
-            database: DatabaseConfig {
-                ty: DatabaseType::Sqlite,
-                path: Some("test.db".to_string()),
-                host: None,
-                port: None,
-                database: None,
-                password: None,
-                username: None,
-            },
-            connections: HashMap::new(),
-        }
-    }
-
-    pub fn with_sqlite_db(mut self, path: impl Into<String>) -> Self {
-        self.database = DatabaseConfig {
-            ty: DatabaseType::Sqlite,
-            path: Some(path.into()),
-            host: None,
-            port: None,
-            database: None,
-            password: None,
-            username: None,
-        };
-        self
-    }
-
-    pub fn build(self) -> ProjectConfig {
-        ProjectConfig {
-            storage: self.storage,
-            database: self.database,
-            connections: self.connections,
         }
     }
 }
@@ -429,82 +280,4 @@ macro_rules! assert_result_contains_error {
             }
         }
     };
-}
-
-pub struct TestConfigBuilder {
-    project: ProjectConfig,
-    adapters: HashMap<String, AdapterConfig>,
-    models: HashMap<String, ModelConfig>,
-    queries: HashMap<String, QueryConfig>,
-    project_root: PathBuf,
-}
-
-impl Default for TestConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TestConfigBuilder {
-    pub fn new() -> Self {
-        Self {
-            project: create_default_project_config(),
-            adapters: HashMap::new(),
-            models: HashMap::new(),
-            queries: HashMap::new(),
-            project_root: PathBuf::from("/tmp"),
-        }
-    }
-
-    pub fn with_project(mut self, project: ProjectConfig) -> Self {
-        self.project = project;
-        self
-    }
-
-    pub fn with_project_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.project_root = root.into();
-        self
-    }
-
-    pub fn add_model(mut self, name: impl Into<String>, sql: impl Into<String>) -> Self {
-        self.models.insert(
-            name.into(),
-            ModelConfig {
-                description: None,
-                sql: sql.into(),
-            },
-        );
-        self
-    }
-
-    pub fn add_model_with_description(
-        mut self,
-        name: impl Into<String>,
-        sql: impl Into<String>,
-        description: impl Into<String>,
-    ) -> Self {
-        self.models.insert(
-            name.into(),
-            ModelConfig {
-                description: Some(description.into()),
-                sql: sql.into(),
-            },
-        );
-        self
-    }
-
-    pub fn add_adapter(mut self, name: impl Into<String>, adapter: AdapterConfig) -> Self {
-        self.adapters.insert(name.into(), adapter);
-        self
-    }
-
-    pub fn build(self) -> Config {
-        Config {
-            project: self.project,
-            adapters: self.adapters,
-            models: self.models,
-            queries: self.queries,
-            dashboards: HashMap::new(),
-        }
-    }
 }

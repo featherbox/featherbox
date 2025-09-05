@@ -1,13 +1,11 @@
 pub mod graph;
 
-pub use graph::*;
-
-use anyhow::Result;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-
 use crate::config::{AdapterConfig, Config, ModelConfig};
 use crate::metadata::Metadata;
+use anyhow::Result;
+pub use graph::*;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 pub async fn detect_changes(
     project_dir: &Path,
@@ -204,8 +202,9 @@ pub fn calculate_affected_nodes(
 pub async fn save_graph_with_changes(
     project_dir: &std::path::Path,
     current_graph: &graph::Graph,
-) -> Result<()> {
-    save_graph(project_dir, current_graph).await
+) -> Result<Option<i32>> {
+    save_graph(project_dir, current_graph).await?;
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -236,6 +235,7 @@ mod tests {
             models: HashMap::new(),
             queries: HashMap::new(),
             dashboards: HashMap::new(),
+            project_dir: todo!(),
         }
     }
 

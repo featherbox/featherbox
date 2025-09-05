@@ -1,47 +1,32 @@
-use crate::api::{AppError, app_error, migrate};
-use crate::config::model::{ModelConfig, parse_model_config};
-use crate::workspace::find_project_root;
+use crate::api::{AppError, app_error};
+use crate::config::Config;
+use crate::config::model::ModelConfig;
+use crate::core::graph::{Graph, dependent_tables};
 use anyhow::Result;
+use axum::Extension;
 use axum::extract::Path;
 use axum::response::Json;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use tracing::error;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Serialize, Deserialize)]
 pub struct ModelSummary {
     pub name: String,
-    pub path: String,
     pub description: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ModelDetails {
     pub name: String,
-    pub path: String,
     pub config: ModelConfig,
 }
 
 #[derive(Deserialize)]
 pub struct CreateModelRequest {
     pub name: String,
-    pub path: String,
     pub config: ModelConfig,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateModelRequest {
-    pub config: ModelConfig,
-}
-
-fn models_dir() -> Result<PathBuf, AppError> {
-    let project_root = find_project_root().map_err(|err| {
-        error!(error = ?err, "Failed to find project root");
-        AppError::StatusCode(StatusCode::INTERNAL_SERVER_ERROR)
-    })?;
-    Ok(project_root.join("models"))
 }
 
 pub fn routes() -> Router {
@@ -53,190 +38,102 @@ pub fn routes() -> Router {
         )
 }
 
-async fn list_models() -> Result<Json<Vec<ModelSummary>>, AppError> {
-    let models_dir = models_dir()?;
+async fn list_models(
+    Extension(config): Extension<Arc<Mutex<Config>>>,
+) -> Result<Json<Vec<ModelSummary>>, AppError> {
+    let config = config.lock().await;
 
-    if !models_dir.exists() {
-        return Ok(Json(vec![]));
-    }
+    let models: Vec<ModelSummary> = config
+        .models
+        .clone()
+        .into_iter()
+        .map(|(name, config)| ModelSummary {
+            name,
+            description: config.description,
+        })
+        .collect();
 
-    let mut models = Vec::new();
-    collect_models(&models_dir, &models_dir, &mut models)?;
-
-    models.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(Json(models))
 }
 
-fn collect_models(
-    base_dir: &PathBuf,
-    current_dir: &PathBuf,
-    models: &mut Vec<ModelSummary>,
-) -> Result<(), AppError> {
-    let entries = fs::read_dir(current_dir)?;
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            collect_models(base_dir, &path, models)?;
-        } else if path.extension().and_then(|s| s.to_str()) == Some("yml")
-            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-        {
-            let relative_path = path.strip_prefix(base_dir)?;
-            let model_path = relative_path.to_string_lossy().replace(".yml", "");
-
-            if let Ok(content) = fs::read_to_string(&path)
-                && let Ok(config) = parse_model_config(&content)
-            {
-                models.push(ModelSummary {
-                    name: stem.to_string(),
-                    path: model_path,
-                    description: config.description,
-                });
-            }
-        }
+async fn get_model(
+    Extension(config): Extension<Arc<Mutex<Config>>>,
+    Path(name): Path<String>,
+) -> Result<Json<ModelConfig>, AppError> {
+    let config = config.lock().await;
+    if let Some(model_config) = config.models.get(&name) {
+        Ok(Json(model_config.clone()))
+    } else {
+        app_error(StatusCode::NOT_FOUND)
     }
+}
+
+async fn create_model(
+    Extension(config): Extension<Arc<Mutex<Config>>>,
+    Json(model): Json<CreateModelRequest>,
+) -> Result<(), AppError> {
+    let mut config = config.lock().await;
+
+    if config.models.contains_key(&model.name) {
+        return app_error(StatusCode::CONFLICT);
+    }
+
+    let dependencies = dependent_tables(&model.config.sql)
+        .map_err(|_| AppError::from(anyhow::anyhow!("Failed to parse SQL")))?;
+
+    let mut graph = Graph::load(&config.project_dir).await?;
+    let deps: Vec<&str> = dependencies.iter().map(|s| s.as_str()).collect();
+    graph.create_node(&model.name, &deps);
+    graph.save(&config.project_dir).await?;
+
+    let model_file = config.upsert_model(&model.name, &model.config)?;
+    model_file.save()?;
 
     Ok(())
 }
 
-async fn get_model(Path(model_path): Path<String>) -> Result<Json<ModelDetails>, AppError> {
-    let models_dir = models_dir()?;
-    let model_file = models_dir.join(format!("{model_path}.yml"));
-
-    if !model_file.exists() {
-        return app_error(StatusCode::NOT_FOUND);
-    }
-
-    let content = fs::read_to_string(&model_file)?;
-    let config = parse_model_config(&content)?;
-
-    let name = PathBuf::from(&model_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&model_path)
-        .to_string();
-
-    Ok(Json(ModelDetails {
-        name,
-        path: model_path,
-        config,
-    }))
-}
-
-async fn create_model(Json(req): Json<CreateModelRequest>) -> Result<Json<ModelDetails>, AppError> {
-    let models_dir = models_dir()?;
-    let model_file = models_dir.join(format!("{}.yml", req.path));
-
-    if model_file.exists() {
-        return app_error(StatusCode::CONFLICT);
-    }
-
-    if let Some(parent) = model_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let yaml_content = serde_yml::to_string(&req.config)?;
-
-    let temp_file = models_dir.join(format!("{}.tmp", req.path));
-    if let Some(parent) = temp_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&temp_file, &yaml_content)?;
-
-    if let Err(e) = migrate::validate_migration().await {
-        let _ = fs::remove_file(&temp_file);
-        error!(error = %e, "Migration validation failed");
-        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    fs::rename(&temp_file, &model_file)?;
-
-    if let Err(e) = migrate::execute().await {
-        error!(error = %e, "Migration failed after model creation");
-    }
-
-    Ok(Json(ModelDetails {
-        name: req.name,
-        path: req.path,
-        config: req.config,
-    }))
-}
-
 async fn update_model(
-    Path(model_path): Path<String>,
-    Json(req): Json<UpdateModelRequest>,
-) -> Result<Json<ModelDetails>, AppError> {
-    let models_dir = models_dir()?;
-    let model_file = models_dir.join(format!("{model_path}.yml"));
+    Extension(config): Extension<Arc<Mutex<Config>>>,
+    Path(name): Path<String>,
+    Json(model): Json<ModelConfig>,
+) -> Result<(), AppError> {
+    let mut config = config.lock().await;
 
-    if !model_file.exists() {
+    if !config.models.contains_key(&name) {
         return app_error(StatusCode::NOT_FOUND);
-    }
+    };
 
-    let original_content = fs::read_to_string(&model_file)?;
+    let dependencies = dependent_tables(&model.sql)
+        .map_err(|_| AppError::from(anyhow::anyhow!("Failed to parse SQL")))?;
 
-    let yaml_content = serde_yml::to_string(&req.config)?;
+    let mut graph = Graph::load(&config.project_dir).await?;
+    let deps: Vec<&str> = dependencies.iter().map(|s| s.as_str()).collect();
+    graph.update_dependencies(&name, &deps);
+    graph.update_node(&name);
+    graph.save(&config.project_dir).await?;
 
-    let temp_file = models_dir.join(format!("{model_path}.tmp"));
-    if let Some(parent) = temp_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&temp_file, &yaml_content)?;
+    let model_file = config.upsert_model(&name, &model)?;
+    model_file.save()?;
 
-    let name = PathBuf::from(&model_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&model_path)
-        .to_string();
-
-    if let Err(e) = migrate::validate_migration().await {
-        let _ = fs::remove_file(&temp_file);
-        fs::write(&model_file, original_content)?;
-        error!(error = %e, "Migration validation failed");
-        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    fs::rename(&temp_file, &model_file)?;
-
-    if let Err(e) = migrate::execute().await {
-        error!(error = %e, "Migration failed after model update");
-    }
-
-    Ok(Json(ModelDetails {
-        name,
-        path: model_path,
-        config: req.config,
-    }))
+    Ok(())
 }
 
-async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, AppError> {
-    let models_dir = models_dir()?;
-    let model_file = models_dir.join(format!("{model_path}.yml"));
+async fn delete_model(
+    Extension(config): Extension<Arc<Mutex<Config>>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let mut config = config.lock().await;
 
-    if !model_file.exists() {
+    if !config.models.contains_key(&name) {
         return app_error(StatusCode::NOT_FOUND);
-    }
+    };
 
-    let backup_file = models_dir.join(format!("{model_path}.bak"));
-    if let Some(parent) = backup_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(&model_file, &backup_file)?;
-    fs::remove_file(&model_file)?;
+    let mut graph = Graph::load(&config.project_dir).await?;
+    graph.delete_node(&name);
+    graph.save(&config.project_dir).await?;
 
-    if let Err(e) = migrate::validate_migration().await {
-        fs::rename(&backup_file, &model_file)?;
-        error!(error = %e, "Migration validation failed");
-        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    let _ = fs::remove_file(&backup_file);
-
-    if let Err(e) = migrate::execute().await {
-        error!(error = %e, "Migration failed after model deletion");
-    }
+    let model_file = config.delete_model(&name)?;
+    model_file.save()?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -244,270 +141,163 @@ async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, AppE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_project;
-    use crate::test_helpers::create_test_server;
-    use serde_json::{Value, json};
-
-    fn setup_test_project() {
-        create_test_project().unwrap();
-    }
+    use crate::test_helpers::TestManager;
+    use anyhow::Result;
+    use serde_json::json;
 
     #[tokio::test]
-    async fn test_list_models_success() {
-        setup_test_project();
-        let server = create_test_server(routes);
+    async fn test_create_model() -> Result<()> {
+        let test = TestManager::new();
+        let server = test.setup_project(routes);
 
-        let response = server.get("/models").await;
+        let users_adapter = crate::config::adapter::AdapterConfig {
+            connection: "test_connection".to_string(),
+            description: Some("Users table".to_string()),
+            source: crate::config::adapter::AdapterSource::Database {
+                table_name: "users".to_string(),
+            },
+            columns: vec![],
+        };
 
-        response.assert_status_ok();
-        let models: Value = response.json();
-        assert!(models.is_array());
-    }
+        {
+            let mut config = test.config().await;
+            let adapter_file = config.upsert_adapter("users", &users_adapter)?;
+            adapter_file.save()?;
+        }
 
-    #[tokio::test]
-    async fn test_get_model_not_found() {
-        setup_test_project();
-        let server = create_test_server(routes);
-
-        let response = server.get("/models/nonexistent").await;
-
-        response.assert_status(StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_create_model_success() {
-        setup_test_project();
-        let server = create_test_server(routes);
+        let mut graph = Graph::load(test.directory()).await?;
+        graph.create_node("users", &[]);
+        graph.save(test.directory()).await?;
 
         let new_model = json!({
-            "name": "test_model",
-            "path": "staging/test_model",
+            "name": "active_users",
             "config": {
-                "description": "Test SQL model",
-                "sql": "SELECT * FROM test_table"
+                "description": "Active users model",
+                "sql": "SELECT * FROM users WHERE active = true"
             }
         });
 
         let response = server.post("/models").json(&new_model).await;
-
         response.assert_status_ok();
-        let model: Value = response.json();
-        assert_eq!(model["name"], "test_model");
-        assert_eq!(model["path"], "staging/test_model");
+
+        let graph = Graph::load(test.directory()).await?;
+        assert!(graph.has_node("active_users"));
+
+        let upstream = graph.upstream("active_users");
+        assert_eq!(upstream, vec!["users"]);
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_create_model_conflict() {
-        setup_test_project();
-        let server = create_test_server(routes);
+    async fn test_update_model() -> Result<()> {
+        let test = TestManager::new();
+        let server = test.setup_project(routes);
 
-        let model_config = json!({
-            "name": "duplicate_model",
-            "path": "staging/duplicate_model",
-            "config": {
-                "description": "Duplicate model",
-                "sql": "SELECT * FROM test_table"
-            }
+        let users_adapter = crate::config::adapter::AdapterConfig {
+            connection: "test_connection".to_string(),
+            description: Some("Users table".to_string()),
+            source: crate::config::adapter::AdapterSource::Database {
+                table_name: "users".to_string(),
+            },
+            columns: vec![],
+        };
+
+        let orders_adapter = crate::config::adapter::AdapterConfig {
+            connection: "test_connection".to_string(),
+            description: Some("Orders table".to_string()),
+            source: crate::config::adapter::AdapterSource::Database {
+                table_name: "orders".to_string(),
+            },
+            columns: vec![],
+        };
+
+        {
+            let mut config = test.config().await;
+            config.upsert_adapter("users", &users_adapter)?.save()?;
+            config.upsert_adapter("orders", &orders_adapter)?.save()?;
+        }
+
+        let mut graph = Graph::load(test.directory()).await?;
+        graph.create_node("users", &[]);
+        graph.create_node("orders", &[]);
+        graph.save(test.directory()).await?;
+
+        let original_model = ModelConfig {
+            description: Some("Original model".to_string()),
+            sql: "SELECT * FROM users".to_string(),
+        };
+
+        {
+            let mut config = test.config().await;
+            let model_file = config.upsert_model("test_model", &original_model)?;
+            model_file.save()?;
+        }
+
+        let mut graph = Graph::load(test.directory()).await?;
+        graph.create_node("test_model", &["users"]);
+        graph.set_current_time("test_model");
+        graph.save(test.directory()).await?;
+
+        let updated_config = json!({
+            "description": "Updated model",
+            "sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id"
         });
 
-        let _first_response = server.post("/models").json(&model_config).await;
-
-        let second_response = server.post("/models").json(&model_config).await;
-
-        second_response.assert_status(StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn test_update_model_success() {
-        setup_test_project();
-        let server = create_test_server(|| {
-            Router::new()
-                .merge(routes())
-                .merge(crate::api::adapter::routes())
-        });
-
-        let create_adapter = json!({
-            "name": "test_source_adapter",
-            "config": {
-                "description": "Test adapter for model test",
-                "connection": "test_connection",
-                "source": {
-                    "type": "file",
-                    "file": {
-                        "path": "test_source.csv"
-                    },
-                    "format": {
-                        "type": "csv",
-                        "has_header": true,
-                        "delimiter": ","
-                    }
-                },
-                "columns": []
-            }
-        });
-
-        server.post("/adapters").json(&create_adapter).await;
-
-        let create_model = json!({
-            "name": "update_test_model",
-            "path": "staging/update_test_model",
-            "config": {
-                "description": "Original description",
-                "sql": "SELECT * FROM test_source_adapter"
-            }
-        });
-
-        server.post("/models").json(&create_model).await;
-
-        let update_config = json!({
-            "config": {
-                "description": "Updated description",
-                "sql": "SELECT * FROM test_source_adapter"
-            }
-        });
-
-        let response = server
-            .put("/models/staging/update_test_model")
-            .json(&update_config)
-            .await;
-
+        let response = server.put("/models/test_model").json(&updated_config).await;
         response.assert_status_ok();
-        let model: Value = response.json();
-        assert_eq!(model["config"]["description"], "Updated description");
+
+        let get_response = server.get("/models/test_model").await;
+        get_response.assert_status_ok();
+
+        let model_config: ModelConfig = get_response.json();
+        assert_eq!(model_config.description, Some("Updated model".to_string()));
+        assert!(model_config.sql.contains("JOIN orders"));
+
+        let graph = Graph::load(test.directory()).await?;
+        assert!(graph.has_node("test_model"));
+
+        let mut upstream = graph.upstream("test_model");
+        upstream.sort();
+        assert_eq!(upstream, vec!["orders", "users"]);
+
+        assert!(graph.get_node("test_model").unwrap().updated_at.is_none());
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_update_model_not_found() {
-        setup_test_project();
-        let server = create_test_server(routes);
+    async fn test_delete_model() -> Result<()> {
+        let test = TestManager::new();
+        let server = test.setup_project(routes);
 
-        let update_config = json!({
-            "config": {
-                "description": "Updated description",
-                "sql": "SELECT * FROM updated_table"
-            }
-        });
+        let model_config = ModelConfig {
+            description: Some("Model to delete".to_string()),
+            sql: "SELECT * FROM test_table".to_string(),
+        };
 
-        let response = server
-            .put("/models/staging/nonexistent")
-            .json(&update_config)
-            .await;
+        {
+            let mut config = test.config().await;
+            let model_file = config.upsert_model("model_to_delete", &model_config)?;
+            model_file.save()?;
+        }
 
-        response.assert_status(StatusCode::NOT_FOUND);
-    }
+        let mut graph = Graph::load(test.directory()).await?;
+        graph.create_node("model_to_delete", &[]);
+        graph.save(test.directory()).await?;
 
-    #[tokio::test]
-    async fn test_delete_model_success() {
-        setup_test_project();
-        let server = create_test_server(routes);
+        let get_response = server.get("/models/model_to_delete").await;
+        get_response.assert_status_ok();
 
-        let create_model = json!({
-            "name": "delete_test_model",
-            "path": "staging/delete_test_model",
-            "config": {
-                "description": "To be deleted",
-                "sql": "SELECT * FROM delete_table"
-            }
-        });
+        let delete_response = server.delete("/models/model_to_delete").await;
+        delete_response.assert_status(StatusCode::NO_CONTENT);
 
-        server.post("/models").json(&create_model).await;
+        let get_response_after = server.get("/models/model_to_delete").await;
+        get_response_after.assert_status(StatusCode::NOT_FOUND);
 
-        let response = server.delete("/models/staging/delete_test_model").await;
+        let graph = Graph::load(test.directory()).await?;
+        assert!(!graph.has_node("model_to_delete"));
 
-        response.assert_status(StatusCode::NO_CONTENT);
-
-        let get_response = server.get("/models/staging/delete_test_model").await;
-        get_response.assert_status(StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_not_found() {
-        setup_test_project();
-        let server = create_test_server(routes);
-
-        let response = server.delete("/models/staging/nonexistent").await;
-
-        response.assert_status(StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_create_model_with_auto_migration() {
-        setup_test_project();
-        let server = create_test_server(routes);
-
-        let new_model = json!({
-            "name": "auto_migration_test",
-            "path": "staging/auto_migration_test",
-            "config": {
-                "description": "Test model with auto migration",
-                "sql": "SELECT * FROM test_adapter"
-            }
-        });
-
-        let response = server.post("/models").json(&new_model).await;
-
-        response.assert_status_ok();
-        let model: Value = response.json();
-        assert_eq!(model["name"], "auto_migration_test");
-        assert_eq!(model["path"], "staging/auto_migration_test");
-    }
-
-    #[tokio::test]
-    async fn test_update_model_with_auto_migration() {
-        setup_test_project();
-        let server = create_test_server(|| {
-            Router::new()
-                .merge(routes())
-                .merge(crate::api::adapter::routes())
-        });
-
-        let create_adapter = json!({
-            "name": "migration_test_adapter",
-            "config": {
-                "description": "Test adapter for migration test",
-                "connection": "test_connection",
-                "source": {
-                    "type": "file",
-                    "file": {
-                        "path": "migration_test.csv"
-                    },
-                    "format": {
-                        "type": "csv",
-                        "has_header": true,
-                        "delimiter": ","
-                    }
-                },
-                "columns": []
-            }
-        });
-
-        server.post("/adapters").json(&create_adapter).await;
-
-        let create_model = json!({
-            "name": "update_migration_test",
-            "path": "staging/update_migration_test",
-            "config": {
-                "description": "Original for migration test",
-                "sql": "SELECT * FROM migration_test_adapter"
-            }
-        });
-
-        server.post("/models").json(&create_model).await;
-
-        let update_config = json!({
-            "config": {
-                "description": "Updated for migration test",
-                "sql": "SELECT * FROM migration_test_adapter"
-            }
-        });
-
-        let response = server
-            .put("/models/staging/update_migration_test")
-            .json(&update_config)
-            .await;
-
-        response.assert_status_ok();
-        let model: Value = response.json();
-        assert_eq!(model["config"]["description"], "Updated for migration test");
+        Ok(())
     }
 }

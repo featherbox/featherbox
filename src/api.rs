@@ -1,15 +1,19 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
-    Router,
+    Extension, Router,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
+
+use crate::config::Config;
 
 mod adapter;
 mod connection;
 mod dashboard;
-mod migrate;
 mod model;
 mod pipeline;
 mod query;
@@ -47,22 +51,25 @@ where
     }
 }
 
-pub async fn main() -> Result<()> {
+pub async fn main(config: Config) -> Result<()> {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let api_routes = Router::new()
+    let routes = Router::new()
         .merge(adapter::routes())
         .merge(connection::routes())
         .merge(dashboard::router())
         .merge(model::routes())
         .merge(query::routes())
-        .merge(secret::routes())
+        // .merge(secret::routes())
         .merge(pipeline::routes());
 
-    let app = Router::new().nest("/api", api_routes).layer(cors);
+    let app = Router::new()
+        .nest("/api", routes)
+        .layer(cors)
+        .layer(Extension(Arc::new(Mutex::new(config))));
 
     let port = 3015;
     let listener = tokio::net::TcpListener::bind(format!("localhost:{}", port)).await?;

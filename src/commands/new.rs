@@ -1,22 +1,20 @@
 use anyhow::{Context, Result};
-use std::fs;
+use std::{fs, path::Path};
 
-use crate::workspace::project_dir;
-
-pub fn create_gitignore() -> Result<()> {
+pub fn create_gitignore(project_dir: &Path) -> Result<()> {
     let gitignore_content = ".secret.key\nstorage/\ndatabase.db\nsample_data/\n";
 
-    fs::write(project_dir()?.join(".gitignore"), gitignore_content)
+    fs::write(project_dir.join(".gitignore"), gitignore_content)
         .context("Failed to write .gitignore")?;
 
     Ok(())
 }
 
-pub fn create_secret_key() -> Result<()> {
+pub fn create_secret_key(project_dir: &Path) -> Result<()> {
     use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
     use ring::rand::{SecureRandom, SystemRandom};
 
-    let key_path = project_dir()?.join(".secret.key");
+    let key_path = project_dir.join(".secret.key");
 
     let mut key_bytes = [0u8; 32];
     let rng = SystemRandom::new();
@@ -26,7 +24,7 @@ pub fn create_secret_key() -> Result<()> {
     let key_base64 = BASE64.encode(key_bytes);
 
     let key_content = format!(
-        "# FeatherBox Secret Key\n# DO NOT share publicly\n\n\n{}",
+        "# FeatherBox Secret Key\n# DO NOT share publicly\n\n{}",
         key_base64
     );
 

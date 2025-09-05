@@ -422,6 +422,7 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
+            project_dir: todo!(),
         };
 
         let graph = Graph::from_config(&config).unwrap();
@@ -498,6 +499,7 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
+            project_dir: todo!(),
         };
 
         let result = Graph::from_config(&config);
@@ -546,6 +548,7 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
+            project_dir: todo!(),
         };
 
         let result = Graph::from_config(&config);
@@ -612,6 +615,7 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
+            project_dir: todo!(),
         };
 
         let result = Graph::from_config(&config);
@@ -657,6 +661,7 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
+            project_dir: todo!(),
         };
 
         let result = Graph::from_config(&config);

@@ -30,16 +30,13 @@ pub struct DuckLake {
 
 impl DuckLake {
     pub async fn new(catalog_config: CatalogConfig, storage_config: StorageConfig) -> Result<Self> {
-        let temp_dir =
-            tempfile::tempdir().context("Failed to create temporary directory for DuckDB")?;
+        let temp_dir = tempfile::tempdir()?;
         let temp_db_path = temp_dir.path().join("shared.db");
 
-        let manager = DuckdbConnectionManager::file(&temp_db_path)
-            .context("Failed to create DuckDB connection manager")?;
+        let manager = DuckdbConnectionManager::file(&temp_db_path)?;
         let pool = Pool::builder()
-            .max_size(1)
-            .build(manager)
-            .context("Failed to create connection pool")?;
+            .max_size(num_cpus::get() as u32)
+            .build(manager)?;
 
         let instance = Self {
             catalog_config,

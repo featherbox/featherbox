@@ -1,11 +1,6 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs};
-
-use crate::{
-    secret::expand_secrets_in_text,
-    workspace::{find_project_root, project_dir},
-};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -17,88 +12,6 @@ pub struct ProjectConfig {
 impl ProjectConfig {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn from_project() -> Result<Self> {
-        let project_root = find_project_root()?;
-        let project_yml = project_root.join("project.yml");
-        if !project_yml.exists() {
-            return Err(anyhow!("project.yml not found"));
-        }
-        let content = fs::read_to_string(&project_yml)?;
-        let expanded_content = expand_secrets_in_text(&content)?;
-        parse_project_config(&expanded_content)
-    }
-
-    pub fn create_project(&self) -> Result<()> {
-        let project_root = project_dir()?;
-        let project_yml = project_root.join("project.yml");
-
-        let yaml_content = serde_yml::to_string(&self)?;
-        fs::write(&project_yml, yaml_content)?;
-        Ok(())
-    }
-
-    pub fn export_project(&self) -> Result<()> {
-        let project_root = find_project_root()?;
-        let project_yml = project_root.join("project.yml");
-
-        let yaml_content = serde_yml::to_string(&self)?;
-        fs::write(&project_yml, yaml_content)?;
-        Ok(())
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        if let StorageConfig::LocalFile { path } = &self.storage
-            && path.is_empty()
-        {
-            return Err(anyhow::anyhow!("Storage path cannot be empty"));
-        }
-
-        if let StorageConfig::S3(s3_config) = &self.storage {
-            if s3_config.bucket.is_empty() {
-                return Err(anyhow::anyhow!("S3 bucket name cannot be empty"));
-            }
-            if s3_config.region.is_empty() {
-                return Err(anyhow::anyhow!("S3 region cannot be empty"));
-            }
-        }
-
-        match self.database.ty {
-            DatabaseType::Sqlite => {
-                if self.database.path.as_ref().is_none_or(|p| p.is_empty()) {
-                    return Err(anyhow::anyhow!("SQLite database path cannot be empty"));
-                }
-            }
-            DatabaseType::Mysql | DatabaseType::Postgresql => {
-                if self.database.host.as_ref().is_none_or(|h| h.is_empty()) {
-                    return Err(anyhow::anyhow!("Database host cannot be empty"));
-                }
-                if self.database.database.as_ref().is_none_or(|d| d.is_empty()) {
-                    return Err(anyhow::anyhow!("Database name cannot be empty"));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn add_sample_connections(&mut self) -> Result<()> {
-        self.connections.insert(
-            "local_files".to_string(),
-            ConnectionConfig::LocalFile {
-                base_path: "./sample_data".to_string(),
-            },
-        );
-
-        self.connections.insert(
-            "sample_db".to_string(),
-            ConnectionConfig::Sqlite {
-                path: "./sample_data/app.db".to_string(),
-            },
-        );
-
-        Ok(())
     }
 }
 

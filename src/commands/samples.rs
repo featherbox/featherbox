@@ -1,28 +1,28 @@
-use crate::{
-    config::{
-        AdapterConfig, Config, DashboardConfig, ModelConfig, QueryConfig,
-        adapter::{AdapterSource, FileConfig, FormatConfig},
-        dashboard::{ChartConfig, ChartType},
-    },
-    workspace::project_dir,
+use std::path::Path;
+
+use crate::config::{
+    AdapterConfig, Config, DashboardConfig, ModelConfig, QueryConfig,
+    adapter::{AdapterSource, FileConfig, FormatConfig},
+    dashboard::{ChartConfig, ChartType},
 };
 use anyhow::Result;
 use rusqlite::Connection;
-use std::fs;
 
-pub fn create_samples() -> Result<()> {
-    create_sample_data()?;
-    let mut config = Config::load()?;
-    create_sample_connection(&mut config)?;
-    create_sample_adapters(&mut config)?;
-    create_sample_models(&mut config)?;
-    create_sample_queries(&mut config)?;
-    create_sample_dashboards(&mut config)?;
+pub fn create_samples(config: &mut Config) -> Result<()> {
+    config.load()?;
+    create_sample_data(&config.project_dir)?;
+    create_sample_connection(config)?;
+    create_sample_adapters(config)?;
+    create_sample_models(config)?;
+    create_sample_queries(config)?;
+    create_sample_dashboards(config)?;
     Ok(())
 }
 
-fn create_sample_data() -> Result<()> {
-    let sample_dir = project_dir()?.join("sample_data");
+fn create_sample_data(project_dir: &Path) -> Result<()> {
+    use std::fs;
+
+    let sample_dir = project_dir.join("sample_data");
     fs::create_dir(&sample_dir)?;
 
     let users_csv = sample_dir.join("users.csv");
@@ -141,8 +141,6 @@ fn create_sample_connection(config: &mut Config) -> Result<()> {
 }
 
 fn create_sample_adapters(config: &mut Config) -> Result<()> {
-    let adapters_dir = project_dir()?.join("adapters");
-
     // Users CSV adapter
     let users_config = AdapterConfig {
         connection: "local_files".to_string(),
@@ -162,7 +160,7 @@ fn create_sample_adapters(config: &mut Config) -> Result<()> {
         },
         columns: vec![],
     };
-    config.upsert_adapter("users", &users_config)?;
+    config.upsert_adapter("users", &users_config)?.save()?;
 
     // App logs JSON adapter
     let app_logs_config = AdapterConfig {
@@ -183,8 +181,9 @@ fn create_sample_adapters(config: &mut Config) -> Result<()> {
         },
         columns: vec![],
     };
-    let app_logs_yaml = serde_yml::to_string(&app_logs_config)?;
-    fs::write(adapters_dir.join("app_logs.yml"), app_logs_yaml)?;
+    config
+        .upsert_adapter("app_logs", &app_logs_config)?
+        .save()?;
 
     // Products database adapter
     let products_config = AdapterConfig {
@@ -195,8 +194,7 @@ fn create_sample_adapters(config: &mut Config) -> Result<()> {
         },
         columns: vec![],
     };
-    let products_yaml = serde_yml::to_string(&products_config)?;
-    fs::write(adapters_dir.join("products.yml"), products_yaml)?;
+    config.upsert_adapter("product", &products_config)?.save()?;
 
     // Orders database adapter
     let orders_config = AdapterConfig {
@@ -207,8 +205,7 @@ fn create_sample_adapters(config: &mut Config) -> Result<()> {
         },
         columns: vec![],
     };
-    let orders_yaml = serde_yml::to_string(&orders_config)?;
-    fs::write(adapters_dir.join("orders.yml"), orders_yaml)?;
+    config.upsert_adapter("orders", &orders_config)?.save()?;
 
     Ok(())
 }
@@ -228,7 +225,9 @@ FROM app_logs
 WHERE duration > 0"
             .to_string(),
     };
-    config.upsert_model("staging/app_logs", &app_logs_config)?;
+    config
+        .upsert_model("staging/app_logs", &app_logs_config)?
+        .save()?;
 
     // Marts: user_activity_summary model
     let user_activity_config = ModelConfig {
@@ -246,7 +245,9 @@ LEFT JOIN staging_app_logs l ON u.user_id = l.user_id
 GROUP BY u.user_id, u.name, u.email"
             .to_string(),
     };
-    config.upsert_model("marts/user_activity_summary", &user_activity_config)?;
+    config
+        .upsert_model("marts/user_activity_summary", &user_activity_config)?
+        .save()?;
 
     // Marts: product_performance model
     let product_performance_config = ModelConfig {
@@ -267,7 +268,9 @@ GROUP BY p.product_id, p.name, p.category, p.price, p.stock
 ORDER BY total_revenue DESC"
             .to_string(),
     };
-    config.upsert_model("marts/product_performance", &product_performance_config)?;
+    config
+        .upsert_model("marts/product_performance", &product_performance_config)?
+        .save()?;
 
     Ok(())
 }
@@ -287,7 +290,9 @@ ORDER BY total_revenue DESC
 LIMIT 5"
             .to_string(),
     };
-    config.upsert_query("top_products", &top_products_config)?;
+    config
+        .upsert_query("top_products", &top_products_config)?
+        .save()?;
 
     // Active users query
     let active_users_config = QueryConfig {
@@ -305,7 +310,9 @@ ORDER BY total_actions DESC
 LIMIT 10"
             .to_string(),
     };
-    config.upsert_query("active_users", &active_users_config)?;
+    config
+        .upsert_query("active_users", &active_users_config)?
+        .save()?;
 
     Ok(())
 }
@@ -324,7 +331,9 @@ GROUP BY DATE(order_date)
 ORDER BY date"
             .to_string(),
     };
-    config.upsert_query("revenue_trend", &revenue_query)?;
+    config
+        .upsert_query("revenue_trend", &revenue_query)?
+        .save()?;
 
     let category_query = QueryConfig {
         name: "category_distribution".to_string(),
@@ -337,7 +346,9 @@ GROUP BY category
 ORDER BY units_sold DESC"
             .to_string(),
     };
-    config.upsert_query("category_distribution", &category_query)?;
+    config
+        .upsert_query("category_distribution", &category_query)?
+        .save()?;
 
     let revenue_config = DashboardConfig {
         name: "revenue_trend".to_string(),
@@ -349,7 +360,9 @@ ORDER BY units_sold DESC"
             y_column: "daily_revenue".to_string(),
         },
     };
-    config.upsert_dashboard("revenue_trend", &revenue_config)?;
+    config
+        .upsert_dashboard("revenue_trend", &revenue_config)?
+        .save()?;
 
     let category_config = DashboardConfig {
         name: "category_distribution".to_string(),
@@ -361,7 +374,9 @@ ORDER BY units_sold DESC"
             y_column: "units_sold".to_string(),
         },
     };
-    config.upsert_dashboard("category_distribution", &category_config)?;
+    config
+        .upsert_dashboard("category_distribution", &category_config)?
+        .save()?;
 
     Ok(())
 }

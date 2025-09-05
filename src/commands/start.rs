@@ -1,34 +1,20 @@
-use anyhow::{Context, Result};
-use std::path::Path;
+use anyhow::Result;
 use std::process::Command;
 use tokio::task::JoinHandle;
 
-pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
-    let project_path = Path::new(project_name);
+use crate::config::Config;
 
-    if !project_path.exists() {
+pub async fn execute_start(config: Config, port: u16) -> Result<()> {
+    if !config.project_dir.join("project.yml").exists() {
         return Err(anyhow::anyhow!(
-            "Project '{}' not found. Use 'featherbox new {}' to create it.",
-            project_name,
-            project_name
+            "The directory is not a valid Featherbox project (missing project.yml)",
         ));
     }
 
-    if !project_path.join("project.yml").exists() {
-        return Err(anyhow::anyhow!(
-            "Directory '{}' is not a valid Featherbox project (missing project.yml)",
-            project_name
-        ));
-    }
+    println!("Starting Featherbox for project ...");
 
-    println!("Starting Featherbox for project '{project_name}'...");
-
-    // Change to project directory
-    std::env::set_current_dir(project_path)
-        .with_context(|| format!("Failed to change to project directory: {project_name}"))?;
-
-    // Start the API server in the background
-    let api_handle: JoinHandle<Result<()>> = tokio::spawn(async move { crate::api::main().await });
+    let api_handle: JoinHandle<Result<()>> =
+        tokio::spawn(async move { crate::api::main(config).await });
 
     // Wait a moment for the API server to start
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -39,7 +25,7 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
         tokio::spawn(async move { crate::ui::start_ui_server().await });
 
     // Wait a moment for the UI server to start
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     println!("✓ Opening browser at http://localhost:8015");
 
@@ -77,12 +63,10 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
     }
 
     println!("\n🚀 Featherbox is running!");
-    println!("   Project: {project_name}");
     println!("   API: http://localhost:{port}");
     println!("   UI: http://localhost:8015");
     println!("\nPress Ctrl+C to stop");
 
-    // Handle shutdown
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("\nShutting down...");
@@ -90,15 +74,15 @@ pub async fn execute_start(project_name: &str, port: u16) -> Result<()> {
         api_result = api_handle => {
             match api_result {
                 Ok(Ok(())) => println!("API server stopped"),
-                Ok(Err(e)) => println!("API server error: {e}"),
-                Err(e) => println!("API server task error: {e}"),
+                Ok(Err(e)) => eprintln!("API server error: {e}"),
+                Err(e) => eprintln!("API server task error: {e}"),
             }
         }
         ui_result = ui_handle => {
             match ui_result {
                 Ok(Ok(())) => println!("UI server stopped"),
-                Ok(Err(e)) => println!("UI server error: {e}"),
-                Err(e) => println!("UI server task error: {e}"),
+                Ok(Err(e)) => eprintln!("UI server error: {e}"),
+                Err(e) => eprintln!("UI server task error: {e}"),
             }
         }
     }

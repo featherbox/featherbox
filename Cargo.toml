@@ -3,10 +3,6 @@ name = "featherbox"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "featherbox"
-path = "src/lib.rs"
-
 [[bin]]
 name = "featherbox"
 path = "src/main.rs"
@@ -38,6 +34,8 @@ tower = { version = "0.5.1", features = ["util"] }
 rust-embed = { version = "8.5.0", features = ["include-exclude"] }
 mime_guess = "2.0.5"
 rusqlite = "0.32"
+num_cpus = "1.0"
+tokio-util = "0.7.16"
 
 [build-dependencies]
 anyhow = "1.0"
