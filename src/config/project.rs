@@ -26,7 +26,7 @@ impl ProjectConfig {
             return Err(anyhow!("project.yml not found"));
         }
         let content = fs::read_to_string(&project_yml)?;
-        let expanded_content = expand_secrets_in_text(&content, &project_root)?;
+        let expanded_content = expand_secrets_in_text(&content)?;
         parse_project_config(&expanded_content)
     }
 

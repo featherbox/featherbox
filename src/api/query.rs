@@ -60,8 +60,7 @@ pub async fn execute_query_handler(
 }
 
 async fn execute_query_internal(sql: &str) -> Result<(Vec<Vec<String>>, usize)> {
-    let project_root = find_project_root()?;
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
 
     let ducklake = DuckLake::from_config(&config).await?;
     let results = ducklake.query(sql)?;
@@ -152,8 +151,7 @@ pub async fn run_query_handler(
 }
 
 async fn list_queries_internal() -> Result<HashMap<String, QueryConfig>> {
-    let project_root = find_project_root()?;
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
     Ok(config.queries)
 }
 
@@ -186,8 +184,7 @@ async fn save_query_internal(name: &str, sql: &str, description: Option<String>)
 }
 
 async fn get_query_internal(name: &str) -> Result<QueryConfig> {
-    let project_root = find_project_root()?;
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
 
     config
         .queries
@@ -209,7 +206,7 @@ async fn update_query_internal(
         return Err(anyhow::anyhow!("Query '{}' not found.", name));
     }
 
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
     let mut query_config = config
         .queries
         .get(name)
@@ -243,8 +240,7 @@ async fn delete_query_internal(name: &str) -> Result<()> {
 }
 
 async fn run_query_internal(name: &str) -> Result<(Vec<Vec<String>>, usize)> {
-    let project_root = find_project_root()?;
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
     let sql = config
         .queries
         .get(name)

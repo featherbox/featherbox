@@ -1,4 +1,6 @@
+use crate::api::migrate::migrate_from_config;
 use crate::api::{AppError, app_error, migrate};
+use crate::config::Config;
 use crate::config::adapter::{AdapterConfig, parse_adapter_config};
 use crate::workspace::find_project_root;
 use anyhow::Result;
@@ -36,10 +38,7 @@ pub struct UpdateAdapterRequest {
 }
 
 fn adapter_dir() -> Result<PathBuf, AppError> {
-    let project_root = find_project_root().map_err(|err| {
-        error!(error = ?err, "Failed to find project root");
-        AppError::StatusCode(StatusCode::INTERNAL_SERVER_ERROR)
-    })?;
+    let project_root = find_project_root()?;
     Ok(project_root.join("adapters"))
 }
 
@@ -120,26 +119,12 @@ async fn create_adapter(
         return app_error(StatusCode::CONFLICT);
     }
 
-    if !adapters_dir.exists() {
-        fs::create_dir_all(&adapters_dir)?;
-    }
+    let project_root = find_project_root()?;
+    let mut config = Config::load()?;
+    let adapter_file = config.upsert_adapter(&req.name, &req.config)?;
+    migrate_from_config(&config, &project_root).await?;
 
-    let yaml_content = serde_yml::to_string(&req.config)?;
-
-    let temp_file = adapters_dir.join(format!("{}.tmp", req.name));
-    fs::write(&temp_file, &yaml_content)?;
-
-    if let Err(e) = migrate::validate_migration().await {
-        let _ = fs::remove_file(&temp_file);
-        error!(error = %e, "Migration validation failed");
-        return app_error(StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    fs::rename(&temp_file, &adapter_file)?;
-
-    if let Err(e) = migrate::execute_async().await {
-        error!(error = %e, "Migration failed after adapter creation");
-    }
+    adapter_file.save()?;
 
     Ok(Json(AdapterDetails {
         name: req.name,
@@ -174,7 +159,7 @@ async fn update_adapter(
 
     fs::rename(&temp_file, &adapter_file)?;
 
-    if let Err(e) = migrate::execute_async().await {
+    if let Err(e) = migrate::execute().await {
         error!(error = %e, "Migration failed after adapter update");
     }
 
@@ -204,7 +189,7 @@ async fn delete_adapter(Path(name): Path<String>) -> Result<StatusCode, AppError
 
     let _ = fs::remove_file(&backup_file);
 
-    if let Err(e) = migrate::execute_async().await {
+    if let Err(e) = migrate::execute().await {
         error!(error = %e, "Migration failed after adapter deletion");
     }
 

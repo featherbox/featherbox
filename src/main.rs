@@ -1,5 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use featherbox::{
+    commands::{
+        new::{create_gitignore, create_secret_key},
+        samples::create_samples,
+    },
+    config::{Config, ProjectConfig},
+};
 
 pub mod api;
 pub mod commands;
@@ -25,8 +32,6 @@ struct Cli {
 enum Commands {
     New {
         project_name: String,
-        #[arg(long, help = "Path to secret key file")]
-        secret_key_path: Option<String>,
     },
     Start {
         project_name: String,
@@ -44,23 +49,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let result = match &cli.command {
-        Commands::New {
-            project_name,
-            secret_key_path: _,
-        } => {
-            let config = crate::config::ProjectConfig::new();
-            config.validate()?;
+        Commands::New { project_name } => {
+            let mut config = Config::new();
+            config
+                .add_project_setting(&ProjectConfig::default())?
+                .save()?;
 
-            let builder = commands::init::ProjectBuilder::new(project_name.clone(), &config)?;
-            builder.create_project_directory()?;
-            builder.create_secret_key()?;
-            builder.save_project_config()?;
-            builder.create_gitignore()?;
-            builder.create_sample_data()?;
-            builder.create_sample_adapters()?;
-            builder.create_sample_models()?;
-            builder.create_sample_queries()?;
-            builder.create_sample_dashboards()?;
+            create_secret_key()?;
+            create_gitignore()?;
+            create_samples()?;
 
             println!("✓ Project '{project_name}' created successfully");
             println!("  Run 'featherbox start {project_name}' to open the project");

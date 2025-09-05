@@ -24,7 +24,7 @@ pub struct RunResponse {
 
 async fn execute_run_internal(target_node: Option<String>) -> Result<i32> {
     let project_root = find_project_root()?;
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
 
     if config.adapters.is_empty() && config.models.is_empty() {
         return Err(anyhow::anyhow!("No adapters or models found"));

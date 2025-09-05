@@ -153,7 +153,7 @@ async fn create_model(Json(req): Json<CreateModelRequest>) -> Result<Json<ModelD
 
     fs::rename(&temp_file, &model_file)?;
 
-    if let Err(e) = migrate::execute_async().await {
+    if let Err(e) = migrate::execute().await {
         error!(error = %e, "Migration failed after model creation");
     }
 
@@ -200,7 +200,7 @@ async fn update_model(
 
     fs::rename(&temp_file, &model_file)?;
 
-    if let Err(e) = migrate::execute_async().await {
+    if let Err(e) = migrate::execute().await {
         error!(error = %e, "Migration failed after model update");
     }
 
@@ -234,7 +234,7 @@ async fn delete_model(Path(model_path): Path<String>) -> Result<StatusCode, AppE
 
     let _ = fs::remove_file(&backup_file);
 
-    if let Err(e) = migrate::execute_async().await {
+    if let Err(e) = migrate::execute().await {
         error!(error = %e, "Migration failed after model deletion");
     }
 

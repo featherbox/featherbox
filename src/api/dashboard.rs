@@ -215,7 +215,7 @@ async fn get_dashboard_data(
 
     let query_config: crate::config::QueryConfig = serde_yml::from_str(&query_content)?;
 
-    let config = Config::load_from_directory(&project_root)?;
+    let config = Config::load()?;
 
     let ducklake = DuckLake::from_config(&config).await?;
 

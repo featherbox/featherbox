@@ -83,8 +83,8 @@ impl StatusManager {
             completed_at: None,
             tasks: HashMap::from_iter(
                 table_list
-                    .to_owned()
-                    .into_iter()
+                    .iter()
+                    .cloned()
                     .map(|table| (table, TaskStatus::new())),
             ),
         };

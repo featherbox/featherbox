@@ -505,7 +505,6 @@ impl TestConfigBuilder {
             models: self.models,
             queries: self.queries,
             dashboards: HashMap::new(),
-            project_root: self.project_root,
         }
     }
 }

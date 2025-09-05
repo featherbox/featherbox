@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{migrate, run};
+use super::run;
 use crate::{
     api::AppError,
     metadata::{Metadata, Node},
@@ -30,7 +30,7 @@ pub fn routes() -> Router {
     Router::new()
         .route("/pipeline/status", get(handle_get_latest_status))
         .route("/graph", get(handle_get_graph))
-        .nest("/pipeline", migrate::routes())
+        // .nest("/pipeline", migrate::routes())
         .nest("/pipeline", run::routes())
 }
 

@@ -422,7 +422,6 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
-            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let graph = Graph::from_config(&config).unwrap();
@@ -499,7 +498,6 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
-            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let result = Graph::from_config(&config);
@@ -548,7 +546,6 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
-            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let result = Graph::from_config(&config);
@@ -615,7 +612,6 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
-            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let result = Graph::from_config(&config);
@@ -661,7 +657,6 @@ mod tests {
             models,
             queries: HashMap::new(),
             dashboards: HashMap::new(),
-            project_root: std::path::PathBuf::from("/tmp"),
         };
 
         let result = Graph::from_config(&config);

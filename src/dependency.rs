@@ -204,11 +204,8 @@ pub fn calculate_affected_nodes(
 pub async fn save_graph_with_changes(
     project_dir: &std::path::Path,
     current_graph: &graph::Graph,
-    _config: &Config,
-    _changes: Option<&graph::GraphChanges>,
-) -> Result<i32> {
-    save_graph(project_dir, current_graph).await?;
-    Ok(1)
+) -> Result<()> {
+    save_graph(project_dir, current_graph).await
 }
 
 #[cfg(test)]
@@ -239,7 +236,6 @@ mod tests {
             models: HashMap::new(),
             queries: HashMap::new(),
             dashboards: HashMap::new(),
-            project_root: std::path::PathBuf::from("."),
         }
     }
 

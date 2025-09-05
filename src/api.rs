@@ -31,6 +31,7 @@ impl IntoResponse for AppError {
             AppError::StatusCode(status_code) => status_code.into_response(),
             AppError::Exception(error) => {
                 tracing::error!("{}", error);
+                eprintln!("{}", error);
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
         }
